@@ -71,6 +71,42 @@ def test_resolve_provider_plan_uses_chimera_client_affinity() -> None:
     assert [candidate.provider_id for candidate in plan.candidates[:3]] == ["openai", "anthropic", "dry_run"]
 
 
+def test_resolve_provider_plan_uses_hermes_inference_provider_without_runtime_alias() -> None:
+    plan = resolve_enhancement_provider_plan(
+        {
+            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "openai,anthropic,google,dry_run",
+            "CHIMERA_CLIENT": "hermes",
+            "HERMES_INFERENCE_PROVIDER": "gemini",
+            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
+            "CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF": "oauth:anthropic-memory",
+            "CHIMERA_MEMORY_ENHANCEMENT_GOOGLE_CREDENTIAL_REF": "oauth:google-memory",
+        }
+    )
+
+    assert plan.provider_affinity == "google"
+    assert plan.selected.provider_id == "google"
+    assert [candidate.provider_id for candidate in plan.candidates[:4]] == [
+        "google",
+        "openai",
+        "anthropic",
+        "dry_run",
+    ]
+
+
+def test_hermes_client_name_alone_does_not_imply_a_provider() -> None:
+    plan = resolve_enhancement_provider_plan(
+        {
+            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "openai,anthropic,dry_run",
+            "CHIMERA_CLIENT": "hermes",
+            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
+            "CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF": "oauth:anthropic-memory",
+        }
+    )
+
+    assert plan.provider_affinity == ""
+    assert plan.selected.provider_id == "openai"
+
+
 def test_provider_affinity_does_not_create_credential_ref(tmp_path) -> None:
     plan = resolve_enhancement_provider_plan(
         {

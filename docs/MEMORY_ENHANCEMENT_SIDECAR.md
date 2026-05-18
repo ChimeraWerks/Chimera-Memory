@@ -136,13 +136,16 @@ Provider affinity can move one provider to the front of that order:
 CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY=anthropic
 CHIMERA_MEMORY_USER_LLM_PROVIDER=claude
 CHIMERA_MEMORY_ACTIVE_LLM_PROVIDER=claude-code
+HERMES_INFERENCE_PROVIDER=gemini
 PERSONIFYAGENTS_LLM_PROVIDER=chatgpt
 CHIMERA_CLIENT=codex
 ```
 
 Affinity is only a provider/model preference signal. It lets CM say "this user
 is already using Claude, so prefer the Anthropic memory model" or "this user is
-using ChatGPT/Codex, so prefer the OpenAI memory model." It does not create a
+using ChatGPT/Codex, so prefer the OpenAI memory model." Hermes is treated as a
+runtime, not a provider; set `HERMES_INFERENCE_PROVIDER` when a Hermes runtime
+should bias toward its current inference backend. Affinity does not create a
 credential, read an interactive runtime token, or authorize CM to reuse a user
 OAuth session. Cloud providers still become available only through the
 credential reference rules below.
@@ -185,6 +188,7 @@ CHIMERA_MEMORY_ENHANCEMENT_OPENAI_COMPATIBLE_CREDENTIAL_REF
 CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY
 CHIMERA_MEMORY_USER_LLM_PROVIDER
 CHIMERA_MEMORY_ACTIVE_LLM_PROVIDER
+HERMES_INFERENCE_PROVIDER
 PERSONIFYAGENTS_LLM_PROVIDER
 CHIMERA_CLIENT
 CHIMERA_MEMORY_ENHANCEMENT_MAX_INPUT_TOKENS
