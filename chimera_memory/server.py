@@ -645,6 +645,8 @@ def create_server():
         include_synthesis: bool = False,
         source_kind: str = "",
         source_uri: str = "",
+        project_id: str = "",
+        scope: str = "auto",
     ) -> str:
         """Full-text search across all persona memory files. Returns paths, snippets, and metadata."""
         _ensure_memory_indexed()
@@ -657,13 +659,17 @@ def create_server():
             include_synthesis=include_synthesis,
             source_kind=source_kind or None,
             source_uri=source_uri or None,
+            project_id=project_id or None,
+            scope=scope,
         )
         if not results:
             return "No memories found matching your query."
         lines = []
         for r in results:
             imp = f" [importance:{r['importance']}]" if r.get("importance") else ""
-            lines.append(f"**{r['relative_path']}** ({r['persona']}){imp}")
+            scope_text = r.get("memory_scope") or "persona"
+            project_text = f":{r.get('project_id')}" if r.get("project_id") else ""
+            lines.append(f"**{r['relative_path']}** ({r['persona']} | {scope_text}{project_text}){imp}")
             lines.append(f"  {r.get('snippet', '')}")
             lines.append("")
         return "\n".join(lines)
@@ -678,6 +684,8 @@ def create_server():
         include_synthesis: bool = False,
         source_kind: str = "",
         source_uri: str = "",
+        project_id: str = "",
+        scope: str = "auto",
     ) -> str:
         """Query memories by frontmatter fields (type, importance, status, tags, etc)."""
         _ensure_memory_indexed()
@@ -688,13 +696,17 @@ def create_server():
                          sort_order=sort_order, limit=limit,
                          include_synthesis=include_synthesis,
                          source_kind=source_kind or None,
-                         source_uri=source_uri or None)
+                         source_uri=source_uri or None,
+                         project_id=project_id or None,
+                         scope=scope)
         if not results:
             return "No memories match your criteria."
         lines = []
         for r in results:
             imp = r.get("importance", "?")
-            lines.append(f"[{imp}] {r['relative_path']} ({r['persona']}) — {r.get('type', '?')} — {r.get('about', '')}")
+            scope_text = r.get("memory_scope") or "persona"
+            project_text = f":{r.get('project_id')}" if r.get("project_id") else ""
+            lines.append(f"[{imp}] {r['relative_path']} ({r['persona']} | {scope_text}{project_text}) — {r.get('type', '?')} — {r.get('about', '')}")
         return "\n".join(lines)
 
     @server.tool()
@@ -703,6 +715,8 @@ def create_server():
         persona: str | None = None,
         limit: int = 10,
         include_synthesis: bool = False,
+        project_id: str = "",
+        scope: str = "auto",
     ) -> str:
         """Semantic recall: find memories most similar to a concept or question. Uses embeddings."""
         _ensure_memory_indexed()
@@ -713,12 +727,16 @@ def create_server():
             persona,
             limit,
             include_synthesis=include_synthesis,
+            project_id=project_id or None,
+            scope=scope,
         )
         if not results:
             return "No similar memories found."
         lines = []
         for r in results:
-            lines.append(f"[{r.get('similarity', 0):.3f}] {r['relative_path']} ({r['persona']}) — {r.get('about', '')}")
+            scope_text = r.get("memory_scope") or "persona"
+            project_text = f":{r.get('project_id')}" if r.get("project_id") else ""
+            lines.append(f"[{r.get('similarity', 0):.3f}] {r['relative_path']} ({r['persona']} | {scope_text}{project_text}) — {r.get('about', '')}")
         return "\n".join(lines)
 
     @server.tool()

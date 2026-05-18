@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS memory_files (
     fm_can_use_as_instruction INTEGER DEFAULT 1,
     fm_can_use_as_evidence INTEGER DEFAULT 1,
     fm_requires_user_confirmation INTEGER DEFAULT 0,
-    fm_exclude_from_default_search INTEGER DEFAULT 0
+    fm_exclude_from_default_search INTEGER DEFAULT 0,
+    memory_scope TEXT DEFAULT 'persona',
+    project_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_mf_persona ON memory_files(persona);
@@ -98,6 +100,9 @@ CREATE INDEX IF NOT EXISTS idx_mf_default_search
 ON memory_files(persona, fm_importance DESC)
 WHERE fm_exclude_from_default_search = 0 OR fm_exclude_from_default_search IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_mf_memory_scope
+ON memory_files(memory_scope, persona, project_id);
+
 CREATE TRIGGER IF NOT EXISTS memory_files_ai_updated_at
 AFTER INSERT ON memory_files
 WHEN NEW.updated_at IS NULL
@@ -117,7 +122,7 @@ AFTER UPDATE OF
     fm_provenance_status, fm_confidence, fm_lifecycle_status,
     fm_review_status, fm_sensitivity_tier, fm_can_use_as_instruction,
     fm_can_use_as_evidence, fm_requires_user_confirmation,
-    fm_exclude_from_default_search
+    fm_exclude_from_default_search, memory_scope, project_id
 ON memory_files
 BEGIN
     UPDATE memory_files
@@ -532,6 +537,8 @@ def _migrate_memory_files_schema(conn: sqlite3.Connection) -> None:
         "fm_exclude_from_default_search",
         "fm_exclude_from_default_search INTEGER",
     )
+    _ensure_memory_file_column(conn, columns, "memory_scope", "memory_scope TEXT")
+    _ensure_memory_file_column(conn, columns, "project_id", "project_id TEXT")
     conn.execute(
         """
         UPDATE memory_files
@@ -549,6 +556,21 @@ def _migrate_memory_files_schema(conn: sqlite3.Connection) -> None:
                fm_can_use_as_instruction = COALESCE(fm_can_use_as_instruction, 1),
                fm_can_use_as_evidence = COALESCE(fm_can_use_as_evidence, 1),
                fm_requires_user_confirmation = COALESCE(fm_requires_user_confirmation, 0),
-               fm_exclude_from_default_search = COALESCE(fm_exclude_from_default_search, 0)
+               fm_exclude_from_default_search = COALESCE(fm_exclude_from_default_search, 0),
+               memory_scope = COALESCE(
+                   memory_scope,
+                   CASE
+                       WHEN persona IN ('shared', 'global') THEN 'global'
+                       WHEN persona LIKE 'project:%' THEN 'project'
+                       ELSE 'persona'
+                   END
+               ),
+               project_id = COALESCE(
+                   project_id,
+                   CASE
+                       WHEN persona LIKE 'project:%' THEN substr(persona, 9)
+                       ELSE NULL
+                   END
+               )
         """
     )
