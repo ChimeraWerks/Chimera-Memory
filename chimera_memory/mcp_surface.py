@@ -13,6 +13,7 @@ PERSONA_MEMORY_TOOLS = frozenset(
     {
         "memory_recall",
         "memory_remember",
+        "memory_promote_snapshot",
         "memory_review",
         "memory_diagnose",
     }

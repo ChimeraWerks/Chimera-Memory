@@ -92,8 +92,8 @@ The long MCP surface should not be the default persona belt. Normal personas sho
 
 Current v1 MCP status:
 
-- Implemented: `memory_recall`, `memory_remember`, `memory_review`, `memory_diagnose`.
-- Planned v2: `memory_promote_snapshot`; the policy exists, but the write-authority workflow is not implemented yet.
+- Implemented: `memory_recall`, `memory_remember`, `memory_promote_snapshot`, `memory_review`, `memory_diagnose`.
+- `memory_promote_snapshot` previews by default. Writes require `write=true` and an explicit `approved_by` value, reject duplicate targets, copy the source body/frontmatter, and stamp `promoted_from` provenance with a source content hash.
 - Compatibility: default MCP surface is still `full`, so legacy/admin tools remain registered unless a server opts into filtering.
 - Runtime filtering: set `CHIMERA_MEMORY_MCP_SURFACE=persona` to expose the persona memory belt plus transcript recall tools. Set `CHIMERA_MEMORY_MCP_SURFACE=persona_memory` for only the memory belt. Unknown values fall back to `full`.
 

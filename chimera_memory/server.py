@@ -830,6 +830,58 @@ def create_server():
         )
 
     @server.tool()
+    def memory_promote_snapshot(
+        source_file_path: str,
+        destination_scope: str = "project",
+        persona: str | None = None,
+        project_id: str = "",
+        target_relative_path: str = "",
+        write: bool = False,
+        approved_by: str = "",
+    ) -> str:
+        """Promote a persona memory upward as a project/global snapshot. Preview by default."""
+        _ensure_memory_indexed()
+        from .memory import memory_promote_snapshot as _promote_snapshot
+
+        selected_persona = (persona or os.environ.get("TRANSCRIPT_PERSONA") or "").strip()
+        if not selected_persona:
+            return "Promote failed: persona is required"
+        personas_dir = Path(os.environ.get("CHIMERA_PERSONAS_DIR", "C:/Github/ChimeraPersonas/personas"))
+        result = _promote_snapshot(
+            _get_memory_conn(),
+            personas_dir,
+            persona=selected_persona,
+            source_file_path=source_file_path,
+            destination_scope=destination_scope,
+            project_id=project_id,
+            target_relative_path=target_relative_path,
+            write=write,
+            approved_by=approved_by,
+            actor="mcp",
+        )
+        if not result.get("ok"):
+            return f"Promote failed: {result.get('error', 'unknown error')}"
+
+        approval_text = f" approved_by={approved_by.strip()}" if approved_by.strip() else ""
+        if not result.get("written"):
+            return (
+                "Promote preview only. Re-run with write=true and approved_by=<reviewer> to persist. "
+                f"source={result.get('source_relative_path', '')} "
+                f"target={result.get('target_relative_path', '')} "
+                f"scope={result.get('destination_scope', '')}"
+                f"{approval_text}"
+            )
+
+        project_text = f":{result.get('project_id')}" if result.get("project_id") else ""
+        return (
+            f"Promoted snapshot {result['target_relative_path']} "
+            f"({result['destination_scope']}{project_text}). "
+            f"source={selected_persona}/{result['source_relative_path']} "
+            f"indexed={bool(result.get('indexed'))}"
+            f"{approval_text}"
+        )
+
+    @server.tool()
     def memory_stats(persona: str | None = None) -> str:
         """Get memory corpus statistics: file counts by type, status, persona."""
         _ensure_memory_indexed()
@@ -2593,7 +2645,7 @@ def create_server():
                     "Persona-facing memory tools:",
                     "1. memory_recall - retrieve usable memory.",
                     "2. memory_remember - preview or write authored memory.",
-                    "3. memory_promote_snapshot - planned v2; not implemented in this server yet.",
+                    "3. memory_promote_snapshot - preview or write approved project/global snapshots.",
                     "4. memory_review - list or apply review actions.",
                     "5. memory_diagnose - stats, zones, traces, gaps, provider plan, and guard checks.",
                     "",

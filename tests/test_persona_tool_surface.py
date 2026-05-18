@@ -26,20 +26,20 @@ def _isolate_config(monkeypatch, tmp_path: Path) -> None:
 def test_persona_facing_alias_tools_are_registered_additively() -> None:
     functions = _server_functions()
 
-    assert {"memory_recall", "memory_remember", "memory_review", "memory_diagnose"} <= functions
+    assert {"memory_recall", "memory_remember", "memory_promote_snapshot", "memory_review", "memory_diagnose"} <= functions
 
     # Compatibility tools stay registered until a later MCP filtering slice.
     assert {"memory_authored_writeback", "memory_review_pending", "memory_review_action"} <= functions
 
 
-def test_promote_snapshot_is_documented_as_v2_not_implemented() -> None:
+def test_promote_snapshot_is_documented_as_implemented() -> None:
     functions = _server_functions()
     doc = (ROOT / "docs" / "FEDERATED_MEMORY_SCOPE.md").read_text(encoding="utf-8")
     server_source = (ROOT / "chimera_memory" / "server.py").read_text(encoding="utf-8")
 
-    assert "memory_promote_snapshot" not in functions
-    assert "Planned v2: `memory_promote_snapshot`" in doc
-    assert "memory_promote_snapshot - planned v2" in server_source
+    assert "memory_promote_snapshot" in functions
+    assert "Implemented: `memory_recall`, `memory_remember`, `memory_promote_snapshot`" in doc
+    assert "memory_promote_snapshot - preview or write approved project/global snapshots" in server_source
 
 
 def test_memory_diagnose_owns_zone_and_trace_inspection() -> None:
@@ -63,7 +63,7 @@ def test_default_mcp_surface_keeps_legacy_tools_registered(monkeypatch, tmp_path
 
     tools = _tool_names(create_server())
 
-    assert {"memory_recall", "memory_remember", "memory_review", "memory_diagnose"} <= tools
+    assert {"memory_recall", "memory_remember", "memory_promote_snapshot", "memory_review", "memory_diagnose"} <= tools
     assert {"memory_authored_writeback", "memory_import_chatgpt_export", "transcript_backfill"} <= tools
 
 
@@ -76,6 +76,7 @@ def test_persona_mcp_surface_filters_admin_tools(monkeypatch, tmp_path: Path) ->
     assert {
         "memory_recall",
         "memory_remember",
+        "memory_promote_snapshot",
         "memory_review",
         "memory_diagnose",
         "discord_recall_index",

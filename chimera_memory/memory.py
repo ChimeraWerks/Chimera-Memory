@@ -1671,6 +1671,38 @@ def memory_authored_writeback(
     }
 
 
+def memory_promote_snapshot(
+    conn: sqlite3.Connection,
+    personas_dir: Path,
+    *,
+    persona: str,
+    source_file_path: str,
+    destination_scope: str = "project",
+    project_id: str = "",
+    target_relative_path: str = "",
+    write: bool = False,
+    approved_by: str = "",
+    actor: str = "agent",
+) -> dict:
+    """Preview or write a private memory snapshot into project/global scope."""
+    from .memory_promotion import memory_promote_snapshot as _memory_promote_snapshot
+
+    return _memory_promote_snapshot(
+        conn,
+        personas_dir,
+        persona=persona,
+        source_file_path=source_file_path,
+        destination_scope=destination_scope,
+        project_id=project_id,
+        target_relative_path=target_relative_path,
+        write=write,
+        approved_by=approved_by,
+        actor=actor,
+        index_file_func=index_file,
+        record_audit_event_func=record_memory_audit_event,
+    )
+
+
 def memory_legacy_frontmatter_retrofit(
     conn: sqlite3.Connection,
     personas_dir: Path,
