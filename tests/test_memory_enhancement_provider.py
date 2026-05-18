@@ -56,6 +56,21 @@ def test_resolve_provider_plan_uses_user_llm_provider_affinity() -> None:
     assert safe_provider_receipt(plan)["provider_affinity"] == "anthropic"
 
 
+def test_resolve_provider_plan_uses_chimera_client_affinity() -> None:
+    plan = resolve_enhancement_provider_plan(
+        {
+            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "anthropic,openai,dry_run",
+            "CHIMERA_CLIENT": "codex",
+            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
+            "CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF": "oauth:anthropic-memory",
+        }
+    )
+
+    assert plan.provider_affinity == "openai"
+    assert plan.selected.provider_id == "openai"
+    assert [candidate.provider_id for candidate in plan.candidates[:3]] == ["openai", "anthropic", "dry_run"]
+
+
 def test_provider_affinity_does_not_create_credential_ref(tmp_path) -> None:
     plan = resolve_enhancement_provider_plan(
         {
