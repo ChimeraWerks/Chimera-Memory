@@ -106,6 +106,7 @@ def test_init_memory_tables_migrates_legacy_memory_files_schema() -> None:
     assert "memory_file_edges" in _table_names(conn)
     assert "memory_file_source_refs" in _table_names(conn)
     assert "memory_file_artifacts" in _table_names(conn)
+    assert "memory_active_harness_leases" in _table_names(conn)
 
 
 def test_index_file_writes_content_fingerprint_and_updates_timestamp(tmp_path: Path) -> None:

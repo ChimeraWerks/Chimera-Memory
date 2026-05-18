@@ -202,6 +202,30 @@ ON memory_audit_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_memory_audit_events_persona
 ON memory_audit_events(persona);
 
+CREATE TABLE IF NOT EXISTS memory_active_harness_leases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lease_id TEXT UNIQUE NOT NULL,
+    created_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'released')),
+    persona TEXT,
+    process_id INTEGER,
+    hostname TEXT,
+    runtime_name TEXT,
+    client TEXT,
+    db_path TEXT,
+    persona_root TEXT,
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_active_harness_persona
+ON memory_active_harness_leases(persona, status, last_seen_at);
+
+CREATE INDEX IF NOT EXISTS idx_memory_active_harness_db
+ON memory_active_harness_leases(db_path, status, last_seen_at);
+
 CREATE TABLE IF NOT EXISTS memory_review_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     action_id TEXT UNIQUE NOT NULL,

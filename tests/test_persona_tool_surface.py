@@ -50,6 +50,7 @@ def test_memory_diagnose_owns_zone_and_trace_inspection() -> None:
         "zones",
         "traces",
         "trace_analyze",
+        "harness",
         "provider_plan",
         "consolidation",
         "whereami",

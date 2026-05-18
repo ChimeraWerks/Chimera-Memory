@@ -597,6 +597,36 @@ def create_server():
 
     # ─── Curated Memory Tools ────────────────────────────────────────
 
+    def _refresh_active_harness_lease(conn, db) -> None:
+        import time as _time
+
+        last_refresh = float(_state.get("active_harness_last_refresh", 0.0) or 0.0)
+        now = _time.time()
+        if now - last_refresh < 60:
+            return
+        from .memory_active_harness import register_active_harness
+
+        lease = register_active_harness(
+            conn,
+            persona=(
+                _identity.persona_id
+                or _config.get("persona")
+                or os.environ.get("TRANSCRIPT_PERSONA")
+                or ""
+            ),
+            db_path=db.db_path,
+            lease_id=_state.get("active_harness_lease_id"),
+            runtime_name="chimera-memory-mcp",
+            client=str(_config.get("client") or os.environ.get("CHIMERA_CLIENT") or ""),
+            persona_root=_identity.persona_root,
+            metadata={"mcp_surface": _mcp_surface},
+        )
+        _state["active_harness_lease_id"] = lease["lease_id"]
+        _state["active_harness_lease"] = lease
+        _state["active_harness_last_refresh"] = now
+        for warning in lease.get("warnings", []):
+            log.warning("active harness warning: %s", warning)
+
     def _get_memory_conn():
         """Get a connection with memory tables initialized."""
         if "memory_conn" not in _state:
@@ -605,6 +635,7 @@ def create_server():
             conn = db._connect()
             init_memory_tables(conn)
             _state["memory_conn"] = conn
+        _refresh_active_harness_lease(_state["memory_conn"], _get_db())
         return _state["memory_conn"]
 
     def _ensure_memory_indexed():
@@ -2635,7 +2666,7 @@ def create_server():
         limit: int = 20,
         include_items: bool = False,
     ) -> str:
-        """Persona-facing diagnostics hub for stats, zones, traces, gaps, provider plan, and guard checks."""
+        """Persona-facing diagnostics hub for stats, zones, traces, harnesses, gaps, provider plan, and guard checks."""
         normalized_mode = (mode or "stats").strip().lower().replace("-", "_")
         if normalized_mode in {"tools", "tool_surface", "surface"}:
             return "\n".join(
@@ -2647,7 +2678,7 @@ def create_server():
                     "2. memory_remember - preview or write authored memory.",
                     "3. memory_promote_snapshot - preview or write approved project/global snapshots.",
                     "4. memory_review - list or apply review actions.",
-                    "5. memory_diagnose - stats, zones, traces, gaps, provider plan, and guard checks.",
+                    "5. memory_diagnose - stats, zones, traces, harnesses, gaps, provider plan, and guard checks.",
                     "",
                     "Legacy/admin tools remain available through the full surface for operator workflows.",
                 ]
@@ -2676,6 +2707,25 @@ def create_server():
                 persona=persona,
                 limit=limit,
             )
+        if normalized_mode in {"harness", "lease", "active_harness", "active_lease"}:
+            from .memory_active_harness import active_harness_report
+
+            resolved = resolve_memory_whereami()
+            current_persona = (
+                persona
+                or _identity.persona_id
+                or _config.get("persona")
+                or os.environ.get("TRANSCRIPT_PERSONA")
+                or None
+            )
+            report = active_harness_report(
+                _get_memory_conn(),
+                persona=current_persona,
+                db_path=str(resolved["resolved"].get("db_path") or ""),
+                limit=limit,
+            )
+            report["current_lease"] = _state.get("active_harness_lease", {})
+            return json.dumps(report, indent=2)
         if normalized_mode in {"gaps", "gap"}:
             return memory_gaps(persona=persona)
         if normalized_mode in {"provider", "provider_plan", "enhancement_provider_plan"}:
@@ -2691,7 +2741,7 @@ def create_server():
             return memory_whereami()
         return (
             "Unsupported diagnose mode. Use tools, stats, zones, traces, trace_analyze, "
-            "audit, gaps, provider_plan, consolidation, guard, or whereami."
+            "audit, harness, gaps, provider_plan, consolidation, guard, or whereami."
         )
 
     return server
