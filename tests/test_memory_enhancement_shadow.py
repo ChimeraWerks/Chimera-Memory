@@ -8,6 +8,11 @@ from chimera_memory.memory import (
     init_memory_tables,
     memory_audit_query,
 )
+from chimera_memory.memory_enhancement_queue import (
+    memory_enhancement_claim_next,
+    memory_enhancement_complete,
+    memory_enhancement_enqueue,
+)
 from chimera_memory.memory_enhancement_shadow import (
     memory_enhancement_shadow_enabled,
     memory_enhancement_shadow_enqueue,
@@ -124,3 +129,31 @@ def test_shadow_report_compares_completed_metadata(tmp_path: Path, monkeypatch) 
     assert comparison["topic_overlap_count"] >= 2
     assert comparison["summary_present"] is True
     assert "Shadow pilot should enqueue" not in str(report)
+
+
+def test_shadow_report_treats_episode_and_episodic_as_type_match(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    memory_file = tmp_path / "episode.md"
+    memory_file.write_text("---\ntype: episode\n---\nA real remembered session.\n", encoding="utf-8")
+    assert index_file(conn, "asa", "memory/episodes/episode.md", memory_file)
+    enqueued = memory_enhancement_enqueue(conn, file_path="memory/episodes/episode.md")
+    claimed = memory_enhancement_claim_next(conn, persona="asa")
+
+    memory_enhancement_complete(
+        conn,
+        job_id=claimed["job_id"],
+        status="succeeded",
+        response_payload={
+            "memory_type": "episodic",
+            "summary": "A real remembered session.",
+            "topics": ["shadow-pilot"],
+        },
+    )
+    report = memory_enhancement_shadow_report(conn, persona="asa", limit=5)
+
+    assert enqueued["ok"] is True
+    assert report["totals"]["type_mismatches"] == 0
+    assert report["jobs"][0]["comparison"]["frontmatter_type"] == "episode"
+    assert report["jobs"][0]["comparison"]["enhanced_type"] == "episodic"
+    assert report["jobs"][0]["comparison"]["type_match"] is True

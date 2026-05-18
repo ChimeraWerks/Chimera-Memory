@@ -434,6 +434,11 @@ def _clean_entity_type(value: Any) -> str:
     return entity_type if entity_type in ALLOWED_ENTITY_TYPES else ""
 
 
+def _clean_memory_type(value: Any) -> str:
+    memory_type = _MEMORY_TYPE_ALIASES.get(_lookup_key(value), _clean_text(value))
+    return memory_type if memory_type in ALLOWED_MEMORY_TYPES else ""
+
+
 def _display_from_key(key: str) -> str:
     special_tokens = {
         "ai": "AI",
@@ -993,8 +998,8 @@ def _authored_enrichment_text(memory_payload: Mapping[str, Any], rows: Sequence[
 
 
 def _memory_type_from_rows(rows: Sequence[Mapping[str, str]], explicit: Any = None) -> str:
-    raw_type = _MEMORY_TYPE_ALIASES.get(_lookup_key(explicit), _clean_text(explicit))
-    if raw_type in ALLOWED_MEMORY_TYPES:
+    raw_type = _clean_memory_type(explicit)
+    if raw_type:
         return raw_type
     types = [str(row.get("memory_type") or "") for row in rows if row.get("memory_type")]
     unique = list(dict.fromkeys(types))
@@ -1259,8 +1264,7 @@ def normalize_memory_enhancement_response(
     sensitivity_context: Any = None,
 ) -> dict[str, Any]:
     """Normalize sidecar output into governance-safe metadata."""
-    raw_type = _clean_text(payload.get("memory_type") or payload.get("type"))
-    memory_type = raw_type if raw_type in ALLOWED_MEMORY_TYPES else ""
+    memory_type = _clean_memory_type(payload.get("memory_type") or payload.get("type"))
     sensitivity_tier = _clean_sensitivity_tier(payload.get("sensitivity_tier") or "standard")
     if _contains_restricted_sensitivity_signal(payload, sensitivity_context):
         sensitivity_tier = "restricted"

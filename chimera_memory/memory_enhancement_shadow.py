@@ -17,6 +17,10 @@ from .memory_observability import _json_object, record_memory_audit_event
 
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
+MEMORY_TYPE_ALIASES = {
+    "episode": "episodic",
+    "episodes": "episodic",
+}
 
 
 def _split_csv(value: object) -> set[str]:
@@ -117,6 +121,11 @@ def _normalized_text(value: object) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
+def _comparable_memory_type(value: object) -> str:
+    key = str(value or "").strip().lower()
+    return MEMORY_TYPE_ALIASES.get(key, key)
+
+
 def _entity_counts(result_payload: Mapping[str, Any]) -> dict[str, int]:
     return {
         "people": len(_json_list(result_payload.get("people"))),
@@ -135,6 +144,8 @@ def _comparison(row: sqlite3.Row | tuple) -> dict[str, Any]:
     enhanced_topics = set(tag.lower() for tag in _json_list(result_payload.get("topics")))
     current_type = str(row[10] or "")
     enhanced_type = str(result_payload.get("memory_type") or "")
+    current_type_key = _comparable_memory_type(current_type)
+    enhanced_type_key = _comparable_memory_type(enhanced_type)
     current_sensitivity = str(row[14] or "standard")
     enhanced_sensitivity = str(result_payload.get("sensitivity_tier") or "")
     current_about = _normalized_text(row[13])
@@ -143,7 +154,7 @@ def _comparison(row: sqlite3.Row | tuple) -> dict[str, Any]:
     return {
         "frontmatter_type": current_type,
         "enhanced_type": enhanced_type,
-        "type_match": bool(enhanced_type) and enhanced_type == current_type,
+        "type_match": bool(enhanced_type_key) and enhanced_type_key == current_type_key,
         "frontmatter_sensitivity": current_sensitivity,
         "enhanced_sensitivity": enhanced_sensitivity,
         "sensitivity_escalated": current_sensitivity != "restricted" and enhanced_sensitivity == "restricted",

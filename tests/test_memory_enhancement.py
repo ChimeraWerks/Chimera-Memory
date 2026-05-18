@@ -75,6 +75,17 @@ def test_normalize_memory_enhancement_response_enforces_governance_defaults() ->
     assert normalized["requires_user_confirmation"] is True
 
 
+def test_normalize_memory_enhancement_response_aliases_episode_type() -> None:
+    normalized = normalize_memory_enhancement_response(
+        {
+            "memory_type": "episode",
+            "summary": "Legacy persona frontmatter uses episode.",
+        }
+    )
+
+    assert normalized["memory_type"] == "episodic"
+
+
 def test_normalize_memory_enhancement_response_normalizes_typed_entities_and_actions() -> None:
     normalized = normalize_memory_enhancement_response(
         {
