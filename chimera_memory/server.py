@@ -2597,7 +2597,7 @@ def create_server():
                     "4. memory_review - list or apply review actions.",
                     "5. memory_diagnose - stats, zones, traces, gaps, provider plan, and guard checks.",
                     "",
-                    "Legacy/admin tools remain available for compatibility until MCP surface filtering lands.",
+                    "Legacy/admin tools remain available through the full surface for operator workflows.",
                 ]
             )
         if normalized_mode in {"stats", "corpus"}:
