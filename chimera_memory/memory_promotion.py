@@ -114,9 +114,9 @@ def _destination_root(destination_scope: str, project_id: str) -> dict:
     selected_project_id = safe_project_id(project_id) or current_project_id()
     if not selected_project_id:
         return {"ok": False, "error": "project_id is required for project promotion"}
-    root = project_memory_root()
+    root = project_memory_root(selected_project_id)
     if root is None:
-        return {"ok": False, "error": "CHIMERA_MEMORY_PROJECT_ROOT is required for project promotion"}
+        return {"ok": False, "error": "CHIMERA_MEMORY_PROJECT_ROOT or CHIMERA_MEMORY_PROJECT_ROOTS is required for project promotion"}
     return {
         "ok": True,
         "root": root,

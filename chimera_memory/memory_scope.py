@@ -7,6 +7,7 @@ global memory is safe to include everywhere.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -55,13 +56,9 @@ def current_project_id() -> str | None:
     explicit = os.environ.get("CHIMERA_MEMORY_PROJECT_ID", "").strip()
     if explicit:
         return safe_project_id(explicit)
-    root = project_memory_root()
+    root = _single_project_memory_root()
     if root is not None:
-        if root.name == "memory" and root.parent.name:
-            return safe_project_id(root.parent.parent.name if root.parent.name == ".chimera-memory" else root.parent.name)
-        if root.name == ".chimera-memory" and root.parent.name:
-            return safe_project_id(root.parent.name)
-        return safe_project_id(root.name)
+        return _project_id_from_root(root)
     return None
 
 
@@ -72,11 +69,75 @@ def global_memory_root() -> Path:
     return Path.home() / ".claude" / "global-memory"
 
 
-def project_memory_root() -> Path | None:
+def project_memory_root(project_id: object = "") -> Path | None:
+    selected_project_id = safe_project_id(project_id)
+    if selected_project_id:
+        mapped = _project_memory_root_map().get(selected_project_id)
+        if mapped is not None:
+            return mapped
+
+    root = _single_project_memory_root()
+    if root is None:
+        return None
+    if not selected_project_id:
+        return root
+    inferred = _project_id_from_root(root)
+    return root if inferred == selected_project_id else None
+
+
+def project_memory_roots() -> tuple[tuple[str, Path], ...]:
+    roots: dict[str, Path] = {}
+    root = _single_project_memory_root()
+    if root is not None:
+        project_id = _project_id_from_root(root)
+        if project_id:
+            roots[project_id] = root
+    roots.update(_project_memory_root_map())
+    return tuple(sorted(roots.items()))
+
+
+def _single_project_memory_root() -> Path | None:
     override = os.environ.get("CHIMERA_MEMORY_PROJECT_ROOT", "").strip()
     if not override:
         return None
     return Path(override).expanduser()
+
+
+def _project_memory_root_map() -> dict[str, Path]:
+    raw = os.environ.get("CHIMERA_MEMORY_PROJECT_ROOTS", "").strip()
+    if not raw:
+        return {}
+
+    items: list[tuple[object, object]] = []
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            items = list(parsed.items())
+    else:
+        for chunk in raw.split(";"):
+            if "=" not in chunk:
+                continue
+            project_id, root = chunk.split("=", 1)
+            items.append((project_id, root))
+
+    result: dict[str, Path] = {}
+    for project_id, root in items:
+        safe_id = safe_project_id(project_id)
+        root_text = str(root or "").strip()
+        if safe_id and root_text:
+            result[safe_id] = Path(root_text).expanduser()
+    return result
+
+
+def _project_id_from_root(root: Path) -> str | None:
+    if root.name == "memory" and root.parent.name:
+        return safe_project_id(root.parent.parent.name if root.parent.name == ".chimera-memory" else root.parent.name)
+    if root.name == ".chimera-memory" and root.parent.name:
+        return safe_project_id(root.parent.name)
+    return safe_project_id(root.name)
 
 
 def infer_memory_scope(
@@ -169,4 +230,3 @@ def scope_filter_sql(
         policy["includes"].append("project")
 
     return "(" + " OR ".join(conditions) + ")", params, policy
-

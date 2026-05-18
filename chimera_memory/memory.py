@@ -89,10 +89,9 @@ from .memory_authored_writeback import (
 from .memory_review import REVIEW_ACTIONS, memory_review_action as _db_memory_review_action, memory_review_pending
 from .memory_scope import (
     MEMORY_SCOPE_AUTO,
-    current_project_id,
     global_memory_root,
     infer_memory_scope,
-    project_memory_root,
+    project_memory_roots,
     scope_filter_sql,
 )
 from .memory_schema import init_memory_tables
@@ -394,10 +393,9 @@ def discover_files(personas_dir: Path) -> list[tuple[str, str, Path]]:
     if global_dir.exists() and global_dir.resolve() != shared_dir.resolve():
         _walk_for_files(global_dir, "global", global_dir, results)
 
-    project_dir = project_memory_root()
-    project_id = current_project_id()
-    if project_dir and project_id and project_dir.exists():
-        _walk_project_memory_files(project_dir, f"project:{project_id}", results)
+    for project_id, project_dir in project_memory_roots():
+        if project_dir.exists():
+            _walk_project_memory_files(project_dir, f"project:{project_id}", results)
 
     return results
 
@@ -2123,8 +2121,7 @@ def start_memory_watcher(db, personas_dir: Path):
     personas_dir = Path(personas_dir)
     shared_dir = personas_dir.parent / "shared"
     global_dir = global_memory_root()
-    project_dir = project_memory_root()
-    project_id = current_project_id()
+    project_roots = project_memory_roots()
 
     try:
         personas_root = personas_dir.resolve()
@@ -2138,10 +2135,13 @@ def start_memory_watcher(db, personas_dir: Path):
         global_root = global_dir.resolve()
     except OSError:
         global_root = global_dir
-    try:
-        project_root = project_dir.resolve() if project_dir else None
-    except OSError:
-        project_root = project_dir
+    resolved_project_roots: list[tuple[str, Path, Path]] = []
+    for project_id, project_dir in project_roots:
+        try:
+            project_root = project_dir.resolve()
+        except OSError:
+            project_root = project_dir
+        resolved_project_roots.append((project_id, project_dir, project_root))
 
     import os as _os
     _scope_persona = _os.environ.get("TRANSCRIPT_PERSONA", "").strip()
@@ -2175,17 +2175,18 @@ def start_memory_watcher(db, personas_dir: Path):
             except ValueError:
                 pass
 
-        if project_root is not None and project_id and project_dir and project_dir.exists():
+        for project_id, project_dir, project_root in resolved_project_roots:
+            if not project_dir.exists():
+                continue
             try:
                 rel = resolved.relative_to(project_root)
             except ValueError:
-                rel = None
-            if rel is not None:
-                parts = rel.parts
-                if parts and parts[0] in PROJECT_MEMORY_DIRS:
-                    return (f"project:{project_id}", str(rel).replace("\\", "/"))
-                if not any((project_root / name).exists() for name in PROJECT_MEMORY_DIRS):
-                    return (f"project:{project_id}", str(rel).replace("\\", "/"))
+                continue
+            parts = rel.parts
+            if parts and parts[0] in PROJECT_MEMORY_DIRS:
+                return (f"project:{project_id}", str(rel).replace("\\", "/"))
+            if not any((project_root / name).exists() for name in PROJECT_MEMORY_DIRS):
+                return (f"project:{project_id}", str(rel).replace("\\", "/"))
 
         # personas/<persona>/<sub>/** â†’ persona=<sub>, rel relative to <sub>
         try:

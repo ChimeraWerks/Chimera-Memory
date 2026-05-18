@@ -112,6 +112,43 @@ def test_promote_snapshot_writes_project_scope_with_provenance(tmp_path: Path, m
     ]
 
 
+def test_promote_snapshot_uses_project_root_map(tmp_path: Path, monkeypatch) -> None:
+    personas_dir = tmp_path / "personas"
+    source = personas_dir / "developer" / "asa" / "memory" / "procedural" / "source.md"
+    pc_root = tmp_path / "ProjectChimera" / ".chimera-memory"
+    pa_root = tmp_path / "PersonifyAgents" / ".chimera-memory"
+    _write_memory(source, marker="mapped project promotion marker")
+    monkeypatch.setenv(
+        "CHIMERA_MEMORY_PROJECT_ROOTS",
+        f"ProjectChimera={pc_root};PersonifyAgents={pa_root}",
+    )
+
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    assert index_file(conn, "asa", "memory/procedural/source.md", source)
+
+    result = memory_promote_snapshot(
+        conn,
+        personas_dir,
+        persona="asa",
+        source_file_path="memory/procedural/source.md",
+        destination_scope="project",
+        project_id="PersonifyAgents",
+        write=True,
+        approved_by="charles",
+    )
+
+    target = pa_root / "memory" / "procedural" / "source.md"
+    assert result["ok"] is True
+    assert result["written"] is True
+    assert target.exists()
+    assert not (pc_root / "memory" / "procedural" / "source.md").exists()
+
+    frontmatter = _frontmatter(target)
+    assert frontmatter["memory_scope"] == "project"
+    assert frontmatter["project_id"] == "PersonifyAgents"
+
+
 def test_promote_snapshot_rejects_duplicate_target(tmp_path: Path, monkeypatch) -> None:
     personas_dir = tmp_path / "personas"
     source = personas_dir / "developer" / "asa" / "memory" / "procedural" / "source.md"

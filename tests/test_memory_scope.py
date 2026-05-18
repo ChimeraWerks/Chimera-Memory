@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from chimera_memory.memory import full_reindex, index_file, init_memory_tables, memory_query, memory_search
+from chimera_memory.memory_scope import project_memory_root, project_memory_roots
 
 
 def _write(path: Path, marker: str, frontmatter: str = "") -> None:
@@ -134,3 +135,48 @@ def test_full_reindex_discovers_global_and_current_project_layers(tmp_path: Path
         ("project:ProjectChimera", "memory/status.md", "ProjectChimera"),
     }
     assert memory_search(conn, "sarah", persona="asa", project_id="ProjectChimera") == []
+
+
+def test_project_root_map_resolves_multiple_project_layers(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path
+    personas = root / "personas"
+    pc_root = root / "ProjectChimera" / ".chimera-memory"
+    pa_root = root / "PersonifyAgents" / ".chimera-memory"
+
+    _write(personas / "developer" / "asa" / "memory" / "asa.md", "multi project marker asa")
+    _write(
+        pc_root / "memory" / "status.md",
+        "multi project marker pc",
+        "type: procedural\nmemory_scope: project\nproject_id: ProjectChimera\n",
+    )
+    _write(
+        pa_root / "memory" / "status.md",
+        "multi project marker pa",
+        "type: procedural\nmemory_scope: project\nproject_id: PersonifyAgents\n",
+    )
+
+    monkeypatch.setenv("TRANSCRIPT_PERSONA", "asa")
+    monkeypatch.setenv(
+        "CHIMERA_MEMORY_PROJECT_ROOTS",
+        f"ProjectChimera={pc_root};PersonifyAgents={pa_root}",
+    )
+
+    assert project_memory_root("ProjectChimera") == pc_root
+    assert project_memory_root("PersonifyAgents") == pa_root
+    assert dict(project_memory_roots()) == {
+        "PersonifyAgents": pa_root,
+        "ProjectChimera": pc_root,
+    }
+
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    full_reindex(conn, personas, embed=False)
+
+    assert _paths(memory_search(conn, "multi project marker", persona="asa", project_id="ProjectChimera", limit=10)) == {
+        ("asa", "memory/asa.md", None),
+        ("project:ProjectChimera", "memory/status.md", "ProjectChimera"),
+    }
+    assert _paths(memory_search(conn, "multi project marker", persona="asa", project_id="PersonifyAgents", limit=10)) == {
+        ("asa", "memory/asa.md", None),
+        ("project:PersonifyAgents", "memory/status.md", "PersonifyAgents"),
+    }

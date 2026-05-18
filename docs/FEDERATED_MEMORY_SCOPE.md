@@ -88,7 +88,7 @@ The long MCP surface should not be the default persona belt. Normal personas sho
 2. `memory_remember` ... write authored memory.
 3. `memory_promote_snapshot` ... publish upward.
 4. `memory_review` ... handle pending memories and review actions.
-5. `memory_diagnose` ... stats, zones, traces, gaps, provider plan, and retrieval analysis.
+5. `memory_diagnose` ... stats, zones, traces, harnesses, gaps, provider plan, and retrieval analysis.
 
 Current v1 MCP status:
 
@@ -96,5 +96,13 @@ Current v1 MCP status:
 - `memory_promote_snapshot` previews by default. Writes require `write=true` and an explicit `approved_by` value, reject duplicate targets, copy the source body/frontmatter, and stamp `promoted_from` provenance with a source content hash.
 - Compatibility: default MCP surface is still `full`, so legacy/admin tools remain registered unless a server opts into filtering.
 - Runtime filtering: set `CHIMERA_MEMORY_MCP_SURFACE=persona` to expose the persona memory belt plus transcript recall tools. Set `CHIMERA_MEMORY_MCP_SURFACE=persona_memory` for only the memory belt. Unknown values fall back to `full`.
+
+Project writes can target more than one repo without restarting CM per project by setting `CHIMERA_MEMORY_PROJECT_ROOTS`:
+
+```text
+CHIMERA_MEMORY_PROJECT_ROOTS=ChimeraMemory=C:/Github/ChimeraMemory/.chimera-memory;PersonifyAgents=C:/Github/PersonifyAgents/.chimera-memory;ProjectChimera=C:/Github/ProjectChimera/.chimera-memory
+```
+
+The legacy single-project `CHIMERA_MEMORY_PROJECT_ROOT` remains supported. When both are present, the project-id map is used for matching `project_id` values.
 
 Admin, import, enhancement, entity/wiki, migration, and legacy tools should move behind CLI or operator namespaces. Tool diet comes before service-mode. A resident service with a bad interface just daemonizes the mess.
