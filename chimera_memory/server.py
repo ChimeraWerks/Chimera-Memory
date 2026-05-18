@@ -740,6 +740,59 @@ def create_server():
         return "\n".join(lines)
 
     @server.tool()
+    def memory_remember(
+        payload_yaml: str,
+        persona: str | None = None,
+        relative_path: str = "",
+        write: bool = False,
+        enqueue: bool = True,
+    ) -> str:
+        """Persona-facing authored memory write. Preview by default; set write=true to persist."""
+        _ensure_memory_indexed()
+        import yaml
+        from .memory import memory_authored_writeback as _authored_writeback
+
+        try:
+            payload = yaml.safe_load(payload_yaml)
+        except yaml.YAMLError:
+            return "Remember failed: payload YAML is invalid"
+        if not isinstance(payload, dict):
+            return "Remember failed: payload must be a mapping"
+
+        selected_persona = (persona or os.environ.get("TRANSCRIPT_PERSONA") or "").strip()
+        if not selected_persona:
+            return "Remember failed: persona is required"
+        personas_dir = Path(os.environ.get("CHIMERA_PERSONAS_DIR", "C:/Github/ChimeraPersonas/personas"))
+        result = _authored_writeback(
+            _get_memory_conn(),
+            personas_dir,
+            persona=selected_persona,
+            payload=payload,
+            relative_path=relative_path,
+            write=write,
+            enqueue=enqueue,
+            actor="mcp",
+        )
+        if not result.get("ok"):
+            return f"Remember failed: {result.get('error', 'unknown error')}"
+
+        if not result.get("written"):
+            plan = result.get("plan") or {}
+            request_payload = plan.get("request_payload") or {}
+            contract = request_payload.get("contract") if isinstance(request_payload, dict) else {}
+            structured_rows = contract.get("structured_field_count", 0) if isinstance(contract, dict) else 0
+            return (
+                "Remember preview only. Re-run with write=true to persist. "
+                f"path={plan.get('relative_path', '')} rows={structured_rows}"
+            )
+
+        job = ((result.get("enrichment_job") or {}).get("job") or {})
+        return (
+            f"Remembered {result['relative_path']} ({selected_persona}). "
+            f"enrichment_job={job.get('job_id') or 'not queued'}"
+        )
+
+    @server.tool()
     def memory_stats(persona: str | None = None) -> str:
         """Get memory corpus statistics: file counts by type, status, persona."""
         _ensure_memory_indexed()
@@ -911,6 +964,66 @@ def create_server():
             f"provenance={after['provenance_status']} "
             f"instruction={after['can_use_as_instruction']}"
         )
+
+    @server.tool()
+    def memory_review(
+        mode: str = "pending",
+        file_path: str = "",
+        action: str = "",
+        persona: str | None = None,
+        reviewer: str = "user",
+        notes: str = "",
+        limit: int = 50,
+    ) -> str:
+        """Persona-facing review queue. mode=pending lists; mode=action applies a review action."""
+        _ensure_memory_indexed()
+        normalized_mode = (mode or "pending").strip().lower().replace("-", "_")
+        if normalized_mode in {"pending", "list", "queue"}:
+            from .memory import memory_review_pending as _pending
+
+            results = _pending(_get_memory_conn(), persona=persona, limit=limit)
+            if not results:
+                return "No memories pending review."
+            lines = []
+            for row in results:
+                lines.append(
+                    f"{row['relative_path']} ({row['persona']}) | "
+                    f"{row['provenance_status']}/{row['review_status']} | "
+                    f"instruction={row['can_use_as_instruction']} evidence={row['can_use_as_evidence']}"
+                )
+                if row.get("about"):
+                    lines.append(f"  about: {row['about']}")
+            return "\n".join(lines)
+
+        if normalized_mode in {"action", "apply"}:
+            if not file_path.strip():
+                return "Review action failed: file_path is required"
+            if not action.strip():
+                return "Review action failed: action is required"
+            from .memory import REVIEW_ACTIONS, memory_review_action as _review_action
+
+            try:
+                result = _review_action(
+                    _get_memory_conn(),
+                    file_path=file_path,
+                    action=action,
+                    reviewer=reviewer,
+                    notes=notes,
+                )
+            except ValueError:
+                allowed = ", ".join(sorted(REVIEW_ACTIONS))
+                return f"Unsupported review action. Allowed actions: {allowed}"
+            if not result.get("ok"):
+                return f"Review action failed: {result.get('error', 'unknown error')}"
+            after = result["after"]
+            return (
+                f"Applied {result['action']} to {result['path']} "
+                f"({result['persona']}). review={after['review_status']} "
+                f"provenance={after['provenance_status']} "
+                f"instruction={after['can_use_as_instruction']}"
+            )
+
+        return "Unsupported review mode. Use mode=pending or mode=action."
 
     @server.tool()
     def memory_auto_capture_session_close(
@@ -2422,6 +2535,73 @@ def create_server():
                 f"{r.get('failure_count', 0):>8} | {r['path']}"
             )
         return "\n".join(lines)
+
+    @server.tool()
+    def memory_diagnose(
+        mode: str = "stats",
+        persona: str | None = None,
+        query: str = "",
+        trace_id: str = "",
+        tool_name: str = "",
+        limit: int = 20,
+        include_items: bool = False,
+    ) -> str:
+        """Persona-facing diagnostics hub for stats, zones, traces, gaps, provider plan, and guard checks."""
+        normalized_mode = (mode or "stats").strip().lower().replace("-", "_")
+        if normalized_mode in {"tools", "tool_surface", "surface"}:
+            return "\n".join(
+                [
+                    "Persona-facing memory tools:",
+                    "1. memory_recall - retrieve usable memory.",
+                    "2. memory_remember - preview or write authored memory.",
+                    "3. memory_promote_snapshot - planned v2; not implemented in this server yet.",
+                    "4. memory_review - list or apply review actions.",
+                    "5. memory_diagnose - stats, zones, traces, gaps, provider plan, and guard checks.",
+                    "",
+                    "Legacy/admin tools remain available for compatibility until MCP surface filtering lands.",
+                ]
+            )
+        if normalized_mode in {"stats", "corpus"}:
+            return memory_stats(persona=persona)
+        if normalized_mode in {"zones", "zone"}:
+            return memory_zones(persona=persona)
+        if normalized_mode in {"traces", "trace_query", "recall_traces"}:
+            return memory_recall_trace_query(
+                persona=persona,
+                tool_name=(tool_name or "").strip() or None,
+                limit=limit,
+                include_items=include_items,
+            )
+        if normalized_mode in {"trace_analyze", "retrieval_trace_analyze", "analyze_traces"}:
+            return memory_retrieval_trace_analyze(
+                trace_id=trace_id,
+                persona=persona,
+                tool_name=(tool_name or "").strip() or None,
+                limit=limit,
+            )
+        if normalized_mode in {"audit", "audit_query"}:
+            return memory_audit_query(
+                event_type=(query or "").strip() or None,
+                persona=persona,
+                limit=limit,
+            )
+        if normalized_mode in {"gaps", "gap"}:
+            return memory_gaps(persona=persona)
+        if normalized_mode in {"provider", "provider_plan", "enhancement_provider_plan"}:
+            return memory_enhancement_provider_plan()
+        if normalized_mode in {"consolidation", "consolidation_report"}:
+            return memory_consolidation_report(persona=persona)
+        if normalized_mode in {"guard", "scan"}:
+            content = (query or "").strip()
+            if not content:
+                return "Guard scan failed: query must contain the content to scan"
+            return memory_guard(content)
+        if normalized_mode in {"whereami", "runtime"}:
+            return memory_whereami()
+        return (
+            "Unsupported diagnose mode. Use tools, stats, zones, traces, trace_analyze, "
+            "audit, gaps, provider_plan, consolidation, guard, or whereami."
+        )
 
     return server
 

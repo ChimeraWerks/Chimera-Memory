@@ -90,5 +90,10 @@ The long MCP surface should not be the default persona belt. Normal personas sho
 4. `memory_review` ... handle pending memories and review actions.
 5. `memory_diagnose` ... stats, zones, traces, gaps, provider plan, and retrieval analysis.
 
-Admin, import, enhancement, entity/wiki, migration, and legacy tools stay available through CLI or operator namespaces. Tool diet comes before service-mode. A resident service with a bad interface just daemonizes the mess.
+Current v1 MCP status:
 
+- Implemented: `memory_recall`, `memory_remember`, `memory_review`, `memory_diagnose`.
+- Planned v2: `memory_promote_snapshot`; the policy exists, but the write-authority workflow is not implemented yet.
+- Compatibility: legacy/admin tools remain registered until runtime MCP surface filtering lands.
+
+Admin, import, enhancement, entity/wiki, migration, and legacy tools should move behind CLI or operator namespaces. Tool diet comes before service-mode. A resident service with a bad interface just daemonizes the mess.
