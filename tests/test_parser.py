@@ -225,6 +225,20 @@ def run():
             "phase": "final",
             "message": "Parser wired.",
         }},
+        {"timestamp": "2026-05-02T10:00:03Z", "type": "event_msg", "payload": {
+            "type": "discord_outbound",
+            "message": "Discord reply from Codex supervisor.",
+            "chat_id": "123",
+            "route_chat_id": "123",
+            "channel_name": "asa-developer",
+            "message_id": "reply-1",
+            "message_ids": ["reply-1"],
+            "reply_to": "456",
+            "source_message_id": "456",
+            "kind": "reply",
+            "final": True,
+            "author": "Asa",
+        }},
         {"timestamp": "2026-05-02T10:00:04Z", "type": "response_item", "payload": {
             "type": "function_call",
             "call_id": "call-1",
@@ -242,6 +256,9 @@ def run():
     _check("Codex parser selects recursively", codex_parser.recursive is True)
     _check("Codex Discord inbound", "discord_inbound" in types and [x for x in r if x["entry_type"] == "discord_inbound"][0]["chat_id"] == "123")
     _check("Codex assistant message", "assistant_message" in types and [x for x in r if x["entry_type"] == "assistant_message"][0]["content"] == "Parser wired.")
+    codex_out = [x for x in r if x["entry_type"] == "discord_outbound"][0]
+    codex_out_meta = json.loads(codex_out["metadata"])
+    _check("Codex supervisor Discord outbound", codex_out["content"] == "Discord reply from Codex supervisor." and codex_out["message_id"] == "reply-1" and codex_out_meta["reply_to"] == "456")
     _check("Codex tool metadata", "tool_call" in types and "tool_result" in types)
     meta = codex_parser.extract_session_metadata(codex_path)
     _check("Codex session metadata", meta["session_id"] == "codex-session-1" and meta["title"] == "Asa - Day 1" and meta["git_branch"] == "main")

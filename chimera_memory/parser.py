@@ -350,6 +350,31 @@ def _parse_codex_entry(obj: dict, session_id: str, timestamp: str):
                         "has_memory_citation": bool(payload.get("memory_citation")),
                     },
                 )
+        elif payload_type == "discord_outbound":
+            message = payload.get("message")
+            if isinstance(message, str) and message.strip():
+                message_ids = payload.get("message_ids")
+                if not isinstance(message_ids, list):
+                    message_ids = []
+                yield _make_entry(
+                    session_id=session_id,
+                    entry_type="discord_outbound",
+                    timestamp=timestamp,
+                    content=message.strip(),
+                    source="discord",
+                    chat_id=payload.get("chat_id"),
+                    message_id=payload.get("message_id"),
+                    author=payload.get("author") or _persona_author(),
+                    metadata={
+                        "channel_name": payload.get("channel_name"),
+                        "route_chat_id": payload.get("route_chat_id"),
+                        "reply_to": payload.get("reply_to"),
+                        "source_message_id": payload.get("source_message_id"),
+                        "message_ids": message_ids,
+                        "kind": payload.get("kind"),
+                        "final": bool(payload.get("final")),
+                    },
+                )
         return
 
     if outer_type != "response_item":
