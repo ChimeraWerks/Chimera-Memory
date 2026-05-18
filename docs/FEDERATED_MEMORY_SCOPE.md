@@ -1,6 +1,6 @@
 # Federated Memory Scope v1
 
-Status: Day 63 policy slice.
+Status: Day 63 v1 closed on Asa-side live smoke.
 
 CM has three retrieval tiers:
 
@@ -106,3 +106,30 @@ CHIMERA_MEMORY_PROJECT_ROOTS=ChimeraMemory=C:/Github/ChimeraMemory/.chimera-memo
 The legacy single-project `CHIMERA_MEMORY_PROJECT_ROOT` remains supported. When both are present, the project-id map is used for matching `project_id` values.
 
 Admin, import, enhancement, entity/wiki, migration, and legacy tools should move behind CLI or operator namespaces. Tool diet comes before service-mode. A resident service with a bad interface just daemonizes the mess.
+
+## Day 63 Closeout
+
+V1 is closed when the running MCP process proves these surfaces live:
+
+- persona-facing tool diet is active (`memory_diagnose(mode="tools")`)
+- active harness lease diagnostics work (`memory_diagnose(mode="harness")`)
+- project promotion preview resolves through `CHIMERA_MEMORY_PROJECT_ROOTS`
+- write attempts still require explicit `approved_by`
+- promotion attempts write audit rows
+- transcript outbound capture can see current Codex Discord posts
+
+Asa-side live smoke passed after restart on 2026-05-18:
+
+- `memory_diagnose(mode="tools")` returned the five-tool persona belt.
+- `memory_diagnose(mode="harness")` returned `chimera-memory.active-harness-lease.v1`, current lease present, conflict count `0`, `warning_only=true`.
+- `memory_promote_snapshot(destination_scope="project", project_id="PersonifyAgents", write=false)` previewed successfully.
+- `memory_promote_snapshot(..., write=true)` without `approved_by` failed with the approval-required gate.
+- Audit query showed `memory_promote_snapshot_planned` and `memory_promote_snapshot_approval_required`.
+- `discord_recall_index(direction="outbound")` found the current Asa Discord post.
+
+Still deliberately outside v1:
+
+- Broad legacy memory migration. Keep deferred unless Charles narrows scope.
+- CM service-mode architecture. Revisit only if real remaining pain is lifecycle, queues, or shared state rather than tool naming clutter.
+- Transcript federation. Requires a transcript visibility policy before merged persona DB views or a central channel archive.
+- Shadow enrichment pilot graduation. Requires a separate provider/default-quality decision.
