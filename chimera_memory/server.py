@@ -145,6 +145,43 @@ def create_server():
     from .config import load_config, ensure_config_exists
     ensure_config_exists()
     _config = load_config()
+    from .mcp_surface import resolve_mcp_surface, tool_allowed
+    _mcp_surface = resolve_mcp_surface(_config, os.environ)
+    _original_tool = server.tool
+
+    def _surface_tool(
+        name=None,
+        title=None,
+        description=None,
+        annotations=None,
+        icons=None,
+        meta=None,
+        structured_output=None,
+    ):
+        """Register tools only when the configured MCP surface exposes them."""
+        if callable(name):
+            raise TypeError(
+                "The @tool decorator was used incorrectly. Did you forget to call it? Use @tool() instead of @tool"
+            )
+
+        def decorator(fn):
+            tool_name = name or fn.__name__
+            if tool_allowed(str(tool_name), _mcp_surface):
+                return _original_tool(
+                    name=name,
+                    title=title,
+                    description=description,
+                    annotations=annotations,
+                    icons=icons,
+                    meta=meta,
+                    structured_output=structured_output,
+                )(fn)
+            return fn
+
+        return decorator
+
+    server.tool = _surface_tool
+    log.info("mcp tool surface: %s", _mcp_surface)
     from .identity import load_identity_from_env
     _identity = load_identity_from_env()
     if _identity.persona_id or _identity.persona_name or _identity.client:
@@ -2551,6 +2588,8 @@ def create_server():
         if normalized_mode in {"tools", "tool_surface", "surface"}:
             return "\n".join(
                 [
+                    f"Configured MCP surface: {_mcp_surface}",
+                    "",
                     "Persona-facing memory tools:",
                     "1. memory_recall - retrieve usable memory.",
                     "2. memory_remember - preview or write authored memory.",

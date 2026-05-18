@@ -94,6 +94,7 @@ Current v1 MCP status:
 
 - Implemented: `memory_recall`, `memory_remember`, `memory_review`, `memory_diagnose`.
 - Planned v2: `memory_promote_snapshot`; the policy exists, but the write-authority workflow is not implemented yet.
-- Compatibility: legacy/admin tools remain registered until runtime MCP surface filtering lands.
+- Compatibility: default MCP surface is still `full`, so legacy/admin tools remain registered unless a server opts into filtering.
+- Runtime filtering: set `CHIMERA_MEMORY_MCP_SURFACE=persona` to expose the persona memory belt plus transcript recall tools. Set `CHIMERA_MEMORY_MCP_SURFACE=persona_memory` for only the memory belt. Unknown values fall back to `full`.
 
 Admin, import, enhancement, entity/wiki, migration, and legacy tools should move behind CLI or operator namespaces. Tool diet comes before service-mode. A resident service with a bad interface just daemonizes the mess.

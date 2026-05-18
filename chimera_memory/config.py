@@ -73,6 +73,11 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # Detect conversation branches from Claude Code rewinds.
 # When enabled, only the active branch is indexed by default.
 # branch_detection: false
+
+# MCP tool surface. full exposes all legacy/admin tools. persona exposes the
+# normal persona belt plus transcript recall tools. persona_memory exposes only
+# the memory belt.
+# mcp_surface: full
 """
 
 # Mapping of config keys to their defaults
@@ -87,6 +92,7 @@ DEFAULTS = {
     "client": None,
     "jsonl_dir": None,
     "branch_detection": False,
+    "mcp_surface": "full",
 }
 
 ENV_MAP = {
@@ -100,6 +106,7 @@ ENV_MAP = {
     "CHIMERA_CLIENT": "client",
     "TRANSCRIPT_JSONL_DIR": "jsonl_dir",
     "TRANSCRIPT_BRANCH_DETECTION": "branch_detection",
+    "CHIMERA_MEMORY_MCP_SURFACE": "mcp_surface",
 }
 
 
