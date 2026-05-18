@@ -256,6 +256,37 @@ def test_anthropic_provider_client_builds_messages_request() -> None:
     assert metadata["summary"] == "Anthropic adapter returns fenced JSON."
 
 
+def test_provider_client_extracts_fenced_json_after_prose() -> None:
+    ProviderModelMemoryEnhancementClient.reset_call_count()
+    fake_token = "TEST_ONLY_ANTHROPIC_TOKEN"
+
+    def opener(_request, *, timeout):
+        return FakeResponse(
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Here is the metadata:\n```json\n"
+                        + json.dumps(
+                            {
+                                "memory_type": "semantic",
+                                "summary": "Fenced JSON after prose still parses.",
+                                "topics": ["anthropic"],
+                            }
+                        )
+                        + "\n```",
+                    }
+                ]
+            }
+        )
+
+    metadata = ProviderModelMemoryEnhancementClient(bearer_token=fake_token, opener=opener).invoke(
+        _invocation("anthropic,dry_run")
+    )
+
+    assert metadata["summary"] == "Fenced JSON after prose still parses."
+
+
 def test_google_provider_client_builds_generate_content_request() -> None:
     ProviderModelMemoryEnhancementClient.reset_call_count()
     fake_token = "TEST_ONLY_GOOGLE_TOKEN"

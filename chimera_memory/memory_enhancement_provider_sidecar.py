@@ -48,6 +48,10 @@ ANTHROPIC_OAUTH_ONLY_BETAS = (
     "oauth-2025-04-20",
 )
 ANTHROPIC_CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
+ANTHROPIC_JSON_OUTPUT_CONTRACT = (
+    "Output contract: return exactly one valid JSON object with double-quoted keys and strings. "
+    "Do not include prose, Markdown, code fences, comments, analysis, or text before or after the JSON."
+)
 GOOGLE_CLOUDCODE_HEADERS = {
     "User-Agent": "hermes-agent (gemini-cli-compat)",
     "X-Goog-Api-Client": "gl-python/hermes",
@@ -563,6 +567,7 @@ def _anthropic_oauth_system_prompt(system_prompt: str) -> list[dict[str, str]]:
     sanitized = _sanitize_anthropic_oauth_system_prompt(system_prompt)
     if sanitized:
         blocks.append({"type": "text", "text": sanitized})
+    blocks.append({"type": "text", "text": ANTHROPIC_JSON_OUTPUT_CONTRACT})
     return blocks
 
 

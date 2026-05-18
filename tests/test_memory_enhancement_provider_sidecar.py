@@ -217,6 +217,8 @@ def test_resolving_provider_client_uses_anthropic_oauth_transport(monkeypatch, t
         "text": "You are Claude Code, Anthropic's official CLI for Claude.",
     }
     assert captured["payload"]["system"][1] == {"type": "text", "text": "system"}
+    assert "valid JSON object" in captured["payload"]["system"][2]["text"]
+    assert "Do not include prose" in captured["payload"]["system"][2]["text"]
     assert "temperature" not in captured["payload"]
 
 

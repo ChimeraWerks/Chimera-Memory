@@ -30,6 +30,7 @@ LMSTUDIO_DEFAULT_ENDPOINT = "http://127.0.0.1:1234/v1"
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(?P<body>.*?)\s*```\s*$", re.IGNORECASE | re.DOTALL)
+_ANY_FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)\s*```", re.IGNORECASE | re.DOTALL)
 _LEADING_THINK_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.IGNORECASE | re.DOTALL)
 _KOBOLDCPP_LOCAL_OUTPUT_TOKEN_FLOOR = 800
 _DEFAULT_MAX_CALLS = 5_000
@@ -477,6 +478,10 @@ def _extract_json_text(text: str) -> str:
     match = _FENCE_RE.search(text)
     if match:
         return match.group("body").strip()
+    for match in _ANY_FENCE_RE.finditer(text):
+        body = match.group("body").strip()
+        if body.startswith("{"):
+            return body
     if text.startswith("{"):
         return text
     start = text.find("{")

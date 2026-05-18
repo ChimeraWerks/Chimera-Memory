@@ -39,6 +39,40 @@ def test_resolve_provider_plan_selects_first_configured_credential_ref() -> None
     assert plan.budget.max_output_tokens == 1200
 
 
+def test_resolve_provider_plan_uses_user_llm_provider_affinity() -> None:
+    plan = resolve_enhancement_provider_plan(
+        {
+            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "openai,anthropic,dry_run",
+            "CHIMERA_MEMORY_USER_LLM_PROVIDER": "claude",
+            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
+            "CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF": "oauth:anthropic-memory",
+        }
+    )
+
+    assert plan.provider_affinity == "anthropic"
+    assert plan.selected.provider_id == "anthropic"
+    assert plan.selected.model == "claude-haiku-4-5"
+    assert [candidate.provider_id for candidate in plan.candidates[:3]] == ["anthropic", "openai", "dry_run"]
+    assert safe_provider_receipt(plan)["provider_affinity"] == "anthropic"
+
+
+def test_provider_affinity_does_not_create_credential_ref() -> None:
+    plan = resolve_enhancement_provider_plan(
+        {
+            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "openai,anthropic,dry_run",
+            "CHIMERA_MEMORY_USER_LLM_PROVIDER": "claude-code",
+            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
+        }
+    )
+
+    assert plan.provider_affinity == "anthropic"
+    assert plan.candidates[0].provider_id == "anthropic"
+    assert plan.candidates[0].available is False
+    assert plan.candidates[0].reason == "credential_missing"
+    assert plan.candidates[0].credential_ref == ""
+    assert plan.selected.provider_id == "openai"
+
+
 def test_resolve_provider_plan_rejects_raw_looking_credential_ref() -> None:
     plan = resolve_enhancement_provider_plan(
         {

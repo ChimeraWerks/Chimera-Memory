@@ -30,6 +30,12 @@ PROVIDER_IDS = {
 NETWORK_PROVIDERS = {"openai", "anthropic", "google", "openrouter"}
 LOCAL_PROVIDERS = {"ollama", "lmstudio", "openai_compatible", "dry_run"}
 DEFAULT_PROVIDER_ORDER = ("openai", "anthropic", "google", "openrouter", "ollama", "lmstudio", "dry_run")
+PROVIDER_AFFINITY_ENV_KEYS = (
+    "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY",
+    "CHIMERA_MEMORY_USER_LLM_PROVIDER",
+    "CHIMERA_MEMORY_ACTIVE_LLM_PROVIDER",
+    "PERSONIFYAGENTS_LLM_PROVIDER",
+)
 
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-5.3-codex-spark",
@@ -106,6 +112,7 @@ class EnhancementProviderPlan:
     candidates: tuple[EnhancementProviderCandidate, ...]
     selected: EnhancementProviderCandidate
     budget: EnhancementBudget
+    provider_affinity: str = ""
 
 
 def _env_bool(env: Mapping[str, str], key: str, *, default: bool = False) -> bool:
@@ -132,6 +139,13 @@ def _clean_provider_id(value: object) -> str:
         "local_ai": "ollama",
         "local-ai": "ollama",
         "anthropic_haiku": "anthropic",
+        "claude": "anthropic",
+        "claude_code": "anthropic",
+        "claude-code": "anthropic",
+        "chatgpt": "openai",
+        "codex": "openai",
+        "openai_codex": "openai",
+        "openai-codex": "openai",
         "openai_mini": "openai",
         "gemini": "google",
         "google_gemini": "google",
@@ -155,6 +169,28 @@ def parse_provider_order(raw: str | None) -> tuple[str, ...]:
         if provider_id in PROVIDER_IDS and provider_id not in order:
             order.append(provider_id)
     return tuple(order or DEFAULT_PROVIDER_ORDER)
+
+
+def _provider_affinity(env: Mapping[str, str]) -> str:
+    for key in PROVIDER_AFFINITY_ENV_KEYS:
+        provider_id = _clean_provider_id(env.get(key))
+        if provider_id in PROVIDER_IDS and provider_id != "dry_run":
+            return provider_id
+    return ""
+
+
+def _provider_order_for_env(env: Mapping[str, str]) -> tuple[str, ...]:
+    """Return configured provider order with optional user-LLM affinity first.
+
+    Affinity is only a provider/model preference signal. It never creates a
+    credential ref and never authorizes reuse of a user's runtime OAuth token.
+    Candidate availability still flows through `_credential_ref`.
+    """
+    order = list(parse_provider_order(env.get("CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER")))
+    affinity = _provider_affinity(env)
+    if not affinity:
+        return tuple(order)
+    return tuple([affinity] + [provider_id for provider_id in order if provider_id != affinity])
 
 
 def _provider_default_model(provider_id: str, env: Mapping[str, str]) -> str:
@@ -374,7 +410,7 @@ def _provider_candidate(provider_id: str, env: Mapping[str, str]) -> Enhancement
 
 def resolve_enhancement_provider_plan(env: Mapping[str, str]) -> EnhancementProviderPlan:
     """Resolve provider candidates and select the first available candidate."""
-    order = parse_provider_order(env.get("CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER"))
+    order = _provider_order_for_env(env)
     candidates = tuple(_provider_candidate(provider_id, env) for provider_id in order)
     selected = next((candidate for candidate in candidates if candidate.available), None)
     if selected is None:
@@ -388,6 +424,7 @@ def resolve_enhancement_provider_plan(env: Mapping[str, str]) -> EnhancementProv
         candidates=candidates,
         selected=selected,
         budget=load_enhancement_budget(env),
+        provider_affinity=_provider_affinity(env),
     )
 
 
@@ -448,6 +485,7 @@ def safe_provider_receipt(plan: EnhancementProviderPlan) -> dict[str, Any]:
     return {
         "selected_provider": plan.selected.provider_id,
         "selected_model": plan.selected.model,
+        "provider_affinity": plan.provider_affinity,
         "budget": {
             "max_input_tokens": plan.budget.max_input_tokens,
             "max_input_chars": plan.budget.max_input_chars,
