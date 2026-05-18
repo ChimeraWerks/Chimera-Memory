@@ -814,6 +814,8 @@ def create_server():
             lines.append(f"  query: {item.get('query_text', '')}")
             if item.get("recommendation"):
                 lines.append(f"  fix: {item['recommendation']}")
+            if item.get("requires_verification") and item.get("verification_guidance"):
+                lines.append(f"  verify: {item['verification_guidance']}")
             expansions = item.get("query_expansions") or []
             if expansions:
                 lines.append(f"  expansions: {', '.join(str(v) for v in expansions[:3])}")

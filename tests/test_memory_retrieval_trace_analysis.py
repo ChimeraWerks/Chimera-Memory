@@ -60,8 +60,11 @@ def test_retrieval_trace_analysis_sends_safe_trace_summary(tmp_path: Path) -> No
     assert result["analysis_count"] == 1
     assert result["category_counts"] == {"query_too_vague": 1}
     assert result["analyses"][0]["suggested_tool_route"] == "memory_recall"
+    assert result["analyses"][0]["requires_verification"] is True
+    assert "same-persona" in result["analyses"][0]["verification_guidance"]
     assert client.invocations[0]["raw_json"] is True
     assert "Raw memory bodies are intentionally absent" in client.invocations[0]["system_prompt"]
+    assert "filename does not mirror the query" in client.invocations[0]["system_prompt"]
     trace = client.invocations[0]["request"]["trace"]
     assert trace["query_text"] == "deploy Charles"
     assert trace["items"][0]["relative_path"] == "memory/charles-deploy.md"
@@ -116,3 +119,44 @@ def test_retrieval_trace_analysis_normalizes_untrusted_model_output() -> None:
     assert len(analysis["evidence"][0]) == 240
     assert len(analysis["query_expansions"]) == 5
     assert analysis["suggested_tool_route"] == "unknown"
+    assert analysis["requires_verification"] is True
+
+
+def test_retrieval_trace_analysis_marks_ok_as_verified_enough() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    conn.execute(
+        """
+        INSERT INTO memory_recall_traces (
+            trace_id, tool_name, persona, query_text, requested_limit,
+            result_count, returned_count
+        ) VALUES ('trace-ok', 'memory_recall', 'asa', 'known thing', 5, 1, 1)
+        """
+    )
+    conn.commit()
+    client = StaticMemoryRetrievalTraceAnalysisClient(
+        [
+            {
+                "category": "ok",
+                "secondary_categories": [],
+                "severity": "low",
+                "confidence": 0.9,
+                "recommendation": "No fix needed.",
+                "evidence": ["Top-ranked metadata matches the query."],
+                "query_expansions": [],
+                "suggested_tool_route": "memory_recall",
+            }
+        ]
+    )
+
+    result = memory_retrieval_trace_analyze(
+        conn,
+        client=client,
+        env={"CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "dry_run"},
+        trace_id="trace-ok",
+    )
+
+    analysis = result["analyses"][0]
+    assert analysis["category"] == "ok"
+    assert analysis["requires_verification"] is False
+    assert analysis["verification_guidance"] == ""
