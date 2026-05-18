@@ -520,7 +520,12 @@ def _plan_file(persona: str, persona_root: Path, path: Path) -> dict[str, Any]:
     has_payload = isinstance(frontmatter.get("memory_payload"), dict)
     reasons: list[str] = []
 
-    if has_payload:
+    exclusion_reason = _legacy_exclusion_reason(relative_path)
+    if exclusion_reason:
+        mode = "skip"
+        risk = "low"
+        reasons.append(exclusion_reason)
+    elif has_payload:
         mode = "skip"
         risk = "low"
         reasons.append("already_structured")
@@ -541,6 +546,17 @@ def _plan_file(persona: str, persona_root: Path, path: Path) -> dict[str, Any]:
         "body_bytes": len(body.encode("utf-8")),
         "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
     }
+
+
+def _legacy_exclusion_reason(relative_path: str) -> str:
+    normalized = str(relative_path or "").replace("\\", "/").lower()
+    if normalized == "memory/memory.md":
+        return "memory_index_excluded"
+    if normalized == "memory/corkboard.md":
+        return "working_state_excluded"
+    if normalized.startswith("memory/entities/"):
+        return "entity_file_excluded"
+    return ""
 
 
 def _migration_shape(

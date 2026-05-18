@@ -71,6 +71,39 @@ def test_legacy_migration_plan_scans_all_personas_and_truncates(tmp_path: Path) 
     assert result["counts_by_persona"] == {"asa": 1, "sarah": 1}
 
 
+def test_legacy_migration_plan_excludes_memory_control_files(tmp_path: Path) -> None:
+    personas_dir = tmp_path / "personas"
+    asa = personas_dir / "developer" / "asa"
+    index = asa / "memory" / "MEMORY.md"
+    corkboard = asa / "memory" / "corkboard.md"
+    entity = asa / "memory" / "entities" / "ceo.md"
+
+    _write(index, "# Asa Memory\n\n- index only\n")
+    _write(
+        corkboard,
+        "---\ntype: procedural\nimportance: 9\n---\nWorking state with OAuth notes.\n",
+    )
+    _write(
+        entity,
+        "---\ntype: entity\nimportance: 9\n---\nRelationship baseline.\n",
+    )
+
+    result = memory_legacy_migration_plan(personas_dir, persona="asa")
+
+    assert result["ok"] is True
+    assert result["total_files"] == 3
+    assert result["counts_by_mode"] == {"skip": 3}
+    assert result["counts_by_risk"] == {"low": 3}
+
+    by_path = {item["relative_path"]: item for item in result["files"]}
+    assert by_path["memory/MEMORY.md"]["migration_mode"] == "skip"
+    assert by_path["memory/MEMORY.md"]["reasons"] == ["memory_index_excluded"]
+    assert by_path["memory/corkboard.md"]["migration_mode"] == "skip"
+    assert by_path["memory/corkboard.md"]["reasons"] == ["working_state_excluded"]
+    assert by_path["memory/entities/ceo.md"]["migration_mode"] == "skip"
+    assert by_path["memory/entities/ceo.md"]["reasons"] == ["entity_file_excluded"]
+
+
 def test_legacy_frontmatter_retrofit_previews_without_writing_and_preserves_body(tmp_path: Path) -> None:
     personas_dir = tmp_path / "personas"
     target = personas_dir / "researcher" / "sarah" / "memory" / "procedural" / "rule.md"
