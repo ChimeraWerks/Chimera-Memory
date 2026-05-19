@@ -10,6 +10,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 _embedding_worker_handle: dict[str, object] | None = None
 _health_worker_handle: dict[str, object] | None = None
+_enhancement_worker_handle: dict[str, object] | None = None
 
 
 def get_default_jsonl_dir() -> Path:
@@ -3029,7 +3030,109 @@ def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dic
     return {"thread": thread, "stop_event": stop_event}
 
 
+def _start_memory_enhancement_worker() -> dict[str, object] | None:
+    """Auto-drain enhancement jobs in serve without requiring a CLI ritual.
+
+    Default mode is deterministic dry-run so queue plumbing stays alive without
+    network calls, provider spend, or credential use. Provider-backed execution
+    is an explicit opt-in.
+    """
+    if not _env_bool("CHIMERA_MEMORY_ENHANCEMENT_WORKER", default=True):
+        logging.getLogger("chimera_memory.enhancement-worker").info("memory enhancement worker disabled")
+        return None
+
+    mode = os.environ.get("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE", "dry_run").strip().lower().replace("-", "_")
+    if mode not in {"dry_run", "provider"}:
+        mode = "dry_run"
+
+    log = logging.getLogger("chimera_memory.enhancement-worker")
+    stop_event = threading.Event()
+    interval_seconds = _env_int(
+        "CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS",
+        default=60,
+        minimum=10,
+        maximum=86400,
+    )
+    limit = _env_int(
+        "CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT",
+        default=10,
+        minimum=1,
+        maximum=100,
+    )
+    current_persona = os.environ.get("CHIMERA_PERSONA_NAME") or os.environ.get("TRANSCRIPT_PERSONA") or None
+
+    def _run_once() -> None:
+        from .db import TranscriptDB
+
+        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db = TranscriptDB(db_path)
+        with db.connection() as conn:
+            if mode == "provider":
+                from .memory_enhancement_provider import resolve_enhancement_provider_plan
+                from .memory_enhancement_provider_sidecar import ResolvingMemoryEnhancementProviderClient
+                from .memory_enhancement_runner import run_memory_enhancement_provider_batch
+
+                plan = resolve_enhancement_provider_plan(os.environ)
+                if plan.selected.provider_id == "dry_run":
+                    log.info("provider mode has no configured provider; falling back to dry_run")
+                    from .enhancement_worker import run_memory_enhancement_dry_run
+
+                    processed = run_memory_enhancement_dry_run(conn, persona=current_persona, limit=limit)
+                    if processed:
+                        log.info("dry-run processed %d enhancement jobs", len(processed))
+                    return
+                receipt = run_memory_enhancement_provider_batch(
+                    conn,
+                    client=ResolvingMemoryEnhancementProviderClient(),
+                    persona=current_persona,
+                    limit=limit,
+                )
+                if receipt.get("processed_count") or receipt.get("failure_count"):
+                    log.info(
+                        "provider processed=%s failed=%s provider=%s",
+                        receipt.get("processed_count"),
+                        receipt.get("failure_count"),
+                        receipt.get("provider", {}).get("selected_provider"),
+                    )
+                return
+
+            from .enhancement_worker import run_memory_enhancement_dry_run
+
+            processed = run_memory_enhancement_dry_run(conn, persona=current_persona, limit=limit)
+            if processed:
+                log.info("dry-run processed %d enhancement jobs", len(processed))
+
+    def _loop() -> None:
+        log.info("memory enhancement worker started mode=%s interval=%ss limit=%s", mode, interval_seconds, limit)
+        while not stop_event.is_set():
+            try:
+                _run_once()
+            except Exception:
+                log.exception("memory enhancement worker iteration failed")
+            stop_event.wait(interval_seconds)
+        log.info("memory enhancement worker stopped")
+
+    thread = threading.Thread(
+        target=_loop,
+        name="chimera-memory-enhancement-worker",
+        daemon=True,
+    )
+    thread.start()
+    return {"thread": thread, "stop_event": stop_event, "mode": mode}
+
+
 def _stop_transcript_embedding_worker(handle: dict[str, object] | None) -> None:
+    if not handle:
+        return
+    stop_event = handle.get("stop_event")
+    if isinstance(stop_event, threading.Event):
+        stop_event.set()
+    thread = handle.get("thread")
+    if isinstance(thread, threading.Thread):
+        thread.join(timeout=5)
+
+
+def _stop_memory_enhancement_worker(handle: dict[str, object] | None) -> None:
     if not handle:
         return
     stop_event = handle.get("stop_event")
@@ -3053,13 +3156,15 @@ def _stop_cm_health_worker(handle: dict[str, object] | None) -> None:
 
 def _bootstrap_startup_services() -> object | None:
     """Start live maintenance without making MCP registration depend on it."""
-    global _embedding_worker_handle, _health_worker_handle
+    global _embedding_worker_handle, _health_worker_handle, _enhancement_worker_handle
     indexer = _start_transcript_indexer()
     _embedding_worker_handle = _start_transcript_embedding_worker()
+    _enhancement_worker_handle = _start_memory_enhancement_worker()
     _health_worker_handle = _start_cm_health_worker(
         {
             "transcript_indexer": indexer is not None,
             "transcript_embedding_worker": _embedding_worker_handle is not None,
+            "memory_enhancement_worker": _enhancement_worker_handle is not None,
         }
     )
     _prewarm_embeddings()
@@ -3120,6 +3225,7 @@ def main():
             except Exception:
                 pass
         _stop_cm_health_worker(_health_worker_handle)
+        _stop_memory_enhancement_worker(_enhancement_worker_handle)
         _stop_transcript_embedding_worker(_embedding_worker_handle)
         logging.getLogger("chimera_memory").info("server exiting (pid=%s)", os.getpid())
 

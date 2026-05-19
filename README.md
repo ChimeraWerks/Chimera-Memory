@@ -425,6 +425,16 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_HEALTH_WORKER=false` to disable the worker.
 - `CHIMERA_MEMORY_HEALTH_INTERVAL_SECONDS=300` for the snapshot interval.
 
+### Enhancement Worker
+
+`chimera-memory serve` drains the enhancement queue by default with the deterministic local dry-run worker. That keeps shadow-enqueued memory metadata jobs from rotting while avoiding network calls, provider spend, or credential use. Provider-backed execution is explicit opt-in:
+
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER=false` disables the worker.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=dry_run` is the default.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` uses the configured provider plan.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT=10` controls jobs per tick.
+
 ### Hybrid Search (semantic_search)
 
 `semantic_search` combines FTS5 keyword matching with vector similarity via Reciprocal Rank Fusion. Results are re-ranked by recency, session affinity, and content richness. Finds both exact matches and semantically similar content.

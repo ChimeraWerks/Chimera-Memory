@@ -66,6 +66,7 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
 
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
+    monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
     monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append(("health", worker_states)) or object())
     monkeypatch.setattr(server, "_prewarm_embeddings", lambda: calls.append("prewarm"))
 
@@ -74,15 +75,46 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     assert calls == [
         "indexer",
         "embedder",
+        "enhancement",
         (
             "health",
             {
                 "transcript_indexer": True,
                 "transcript_embedding_worker": True,
+                "memory_enhancement_worker": True,
             },
         ),
         "prewarm",
     ]
+
+
+def test_enhancement_worker_disabled_by_env(monkeypatch):
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER", "false")
+
+    assert server._start_memory_enhancement_worker() is None
+
+
+def test_enhancement_worker_starts_dry_run_by_default(monkeypatch):
+    calls = []
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("thread.start", self.name, self.daemon))
+
+    monkeypatch.delenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE", raising=False)
+    monkeypatch.setattr(server.threading, "Thread", FakeThread)
+
+    handle = server._start_memory_enhancement_worker()
+
+    assert calls == [("thread.start", "chimera-memory-enhancement-worker", True)]
+    assert handle is not None
+    assert handle["mode"] == "dry_run"
 
 
 def test_background_bootstrap_logs_failures(monkeypatch, caplog):
