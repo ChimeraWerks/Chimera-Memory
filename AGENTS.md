@@ -40,7 +40,8 @@ Pending larger work:
 - Phase 5d remaining: real OAuth/model adapter for memory enhancement.
 - Phase 6 remaining: classifier integration for edge creation and additional import pipelines.
 
-See `docs/OB1_COMPARISON.md`, `docs/MEMORY_ENHANCEMENT_SIDECAR.md`, and `docs/MODULE_LAYOUT.md`.
+See `docs/OB1_COMPARISON.md`, `docs/MEMORY_ENHANCEMENT_SIDECAR.md`,
+`docs/MEMORY_ENHANCEMENT_CLI_WORKER.md`, and `docs/MODULE_LAYOUT.md`.
 
 ## Module Ownership
 
@@ -146,6 +147,7 @@ Before calling work complete:
 - `README.md`: tool reference, config docs, architecture overview.
 - `docs/OB1_COMPARISON.md`: OB1 feature comparison and lift plan.
 - `docs/MEMORY_ENHANCEMENT_SIDECAR.md`: sidecar contract and threat model.
+- `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md`: proposed persistent CLI worker transport for subscription-backed enhancement.
 - `docs/MODULE_LAYOUT.md`: module ownership and import boundaries.
 - `pyproject.toml`: dependencies.
 - `chimera_memory/identity.py`: persona identity and env-driven scoping.
