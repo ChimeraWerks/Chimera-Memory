@@ -102,6 +102,38 @@ class Indexer:
 
         log.info("Backfill complete: %d files processed", total)
 
+    def mark_existing_files_seen(self) -> int:
+        """Record current JSONL offsets without importing historical content.
+
+        This is used when a user opts out of importing past conversations during
+        setup. The watcher can still tail new bytes appended after startup.
+        """
+        jsonl_files = self._session_files()
+        if not jsonl_files:
+            log.info("No JSONL files found in %s", self.jsonl_dir)
+            return 0
+
+        with self.db.connection() as conn:
+            for path in jsonl_files:
+                file_path_str = str(path.resolve())
+                file_hash = get_file_hash(path)
+                file_size = path.stat().st_size
+                self.db.execute_with_retry(
+                    conn,
+                    """INSERT INTO import_log (file_path, file_hash, file_size, last_position, entries_imported, updated_at)
+                       VALUES (?, ?, ?, ?, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                       ON CONFLICT(file_path) DO UPDATE SET
+                           file_hash = excluded.file_hash,
+                           file_size = excluded.file_size,
+                           last_position = excluded.last_position,
+                           updated_at = excluded.updated_at""",
+                    (file_path_str, file_hash, file_size, file_size),
+                )
+            conn.commit()
+
+        log.info("Marked %d JSONL files as seen without historical import", len(jsonl_files))
+        return len(jsonl_files)
+
     def index_file(self, path: Path):
         """Index a single JSONL file (for real-time use, with FTS triggers active)."""
         with self.db.connection() as conn:

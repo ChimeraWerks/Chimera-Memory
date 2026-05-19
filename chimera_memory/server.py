@@ -2921,9 +2921,13 @@ def _start_transcript_indexer() -> object | None:
         client = cfg.get("client") or os.environ.get("CHIMERA_CLIENT")
         indexer = Indexer(db, jsonl_dir, persona=persona, parser_format=client)
 
-        log.info("Backfilling transcripts from %s ...", jsonl_dir)
-        stats = indexer.backfill()
-        log.info("Backfill complete: %s", stats)
+        if cfg.get("import_history", True):
+            log.info("Backfilling transcripts from %s ...", jsonl_dir)
+            stats = indexer.backfill()
+            log.info("Backfill complete: %s", stats)
+        else:
+            marked = indexer.mark_existing_files_seen()
+            log.info("Historical transcript import disabled; marked %d existing JSONL files as seen", marked)
         repaired = db.repair_session_rollups()
         if repaired:
             log.info("Repaired %d session rollup rows", repaired)

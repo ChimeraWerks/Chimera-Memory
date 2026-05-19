@@ -57,6 +57,27 @@ def main():
     sub_codex_template.add_argument("--persona-root", default="", help="Optional persona root directory")
     sub_codex_template.add_argument("--personas-dir", default="", help="Optional personas directory")
     sub_codex_template.add_argument("--shared-root", default="", help="Optional shared memory/root directory")
+    sub_codex_install = codex_subparsers.add_parser("install", help="Write or update Codex MCP setup")
+    sub_codex_install.add_argument("--config", help="Path to Codex mcp_servers.json")
+    sub_codex_install.add_argument("--persona", default="", help="Persona tag for indexed Codex transcripts")
+    sub_codex_install.add_argument("--persona-id", default="", help="Stable persona id, e.g. developer/asa")
+    sub_codex_install.add_argument("--persona-root", default="", help="Persona root directory")
+    sub_codex_install.add_argument("--jsonl-dir", default="~/.codex/sessions/", help="Codex JSONL sessions directory")
+    sub_codex_install.add_argument(
+        "--command",
+        dest="server_command",
+        default="chimera-memory",
+        help="Command Codex should spawn",
+    )
+    sub_codex_install.add_argument("--server-name", default="chimera-memory", help="MCP server name")
+    sub_codex_install.add_argument("--surface", default="persona", help="MCP tool surface to expose")
+    history_group = sub_codex_install.add_mutually_exclusive_group()
+    history_group.add_argument("--import-history", dest="import_history", action="store_true", help="Import existing Codex sessions")
+    history_group.add_argument("--no-import-history", dest="import_history", action="store_false", help="Skip existing Codex sessions")
+    sub_codex_install.set_defaults(import_history=None)
+    sub_codex_install.add_argument("--dry-run", action="store_true", help="Print the install receipt without writing")
+    sub_codex_install.add_argument("--yes", action="store_true", help="Accept default prompts")
+    sub_codex_install.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     # enhance: memory-enhancement queue and dry-run helpers
     sub_enhance = subparsers.add_parser("enhance", help="Memory enhancement sidecar helpers")
@@ -263,9 +284,50 @@ def _run_codex(args):
         )
         print(json.dumps(config, indent=2))
         return
+    if args.codex_command == "install":
+        from .codex_setup import format_codex_install_report, install_codex_mcp_config
+
+        import_history = args.import_history
+        if import_history is None:
+            import_history = _prompt_yes_no(
+                "Import existing Codex session history into CM?",
+                default=True,
+                assume_default=args.yes or args.json,
+            )
+        try:
+            receipt = install_codex_mcp_config(
+                config_path=args.config,
+                persona=args.persona,
+                persona_id=args.persona_id,
+                persona_root=args.persona_root,
+                jsonl_dir=args.jsonl_dir,
+                command=args.server_command,
+                server_name=args.server_name,
+                import_history=import_history,
+                mcp_surface=args.surface,
+                dry_run=args.dry_run,
+            )
+        except ValueError as exc:
+            print(f"Codex install failed: {exc}", file=sys.stderr)
+            sys.exit(2)
+        if args.json:
+            print(json.dumps(receipt, indent=2, sort_keys=True))
+        else:
+            print(format_codex_install_report(receipt))
+        return
 
     print("Missing Codex command. Try: chimera-memory codex doctor", file=sys.stderr)
     sys.exit(2)
+
+
+def _prompt_yes_no(prompt: str, *, default: bool, assume_default: bool = False) -> bool:
+    if assume_default or not sys.stdin.isatty():
+        return default
+    suffix = "[Y/n]" if default else "[y/N]"
+    answer = input(f"{prompt} {suffix} ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes", "true", "1", "on"}
 
 
 def _open_memory_db(db_path: str | None):

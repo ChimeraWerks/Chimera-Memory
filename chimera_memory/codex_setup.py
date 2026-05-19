@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,114 @@ def build_codex_mcp_config(
             }
         }
     }
+
+
+def install_codex_mcp_config(
+    *,
+    config_path: str | Path | None = None,
+    persona: str = "",
+    persona_id: str = "",
+    persona_root: str = "",
+    jsonl_dir: str = "~/.codex/sessions/",
+    command: str = "chimera-memory",
+    server_name: str = "chimera-memory",
+    import_history: bool = True,
+    mcp_surface: str = "persona",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Write or update Codex's MCP config for Chimera Memory.
+
+    The installer preserves unrelated MCP servers, writes a timestamped backup
+    before modifying an existing config, and reports env keys without values.
+    """
+    path = Path(config_path).expanduser() if config_path is not None else default_codex_mcp_config_path()
+    persona = persona.strip()
+    persona_id = persona_id.strip()
+    persona_name = persona or _persona_name_from_id(persona_id)
+    if not persona_name:
+        raise ValueError("persona or persona_id is required")
+
+    command = command.strip()
+    if not command:
+        raise ValueError("command is required")
+    server_name = server_name.strip()
+    if not server_name:
+        raise ValueError("server_name is required")
+
+    data, existed = _read_codex_config_for_install(path)
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+        data["mcpServers"] = servers
+
+    configured_name = _configured_server_name(servers) or server_name
+    persona_root = persona_root.strip() or _infer_persona_root(persona_id)
+    env = _build_codex_install_env(
+        persona=persona_name,
+        persona_id=persona_id,
+        persona_root=persona_root,
+        jsonl_dir=jsonl_dir,
+        import_history=import_history,
+        mcp_surface=mcp_surface,
+    )
+    servers[configured_name] = {
+        "command": command,
+        "args": ["serve"],
+        "env": env,
+    }
+
+    backup_path = ""
+    if not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if existed:
+            backup_path = _backup_path_for(path)
+            shutil.copy2(path, backup_path)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    _runtime_values, runtime_fields = _resolve_codex_runtime(env)
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "config_path": str(path),
+        "created": not existed,
+        "backup_path": backup_path,
+        "server_name": configured_name,
+        "env_keys": sorted(env.keys()),
+        "runtime_fields": runtime_fields,
+        "import_history": import_history,
+        "mcp_surface": mcp_surface.strip() or "persona",
+        "action": "create" if not existed else "update",
+    }
+
+
+def format_codex_install_report(result: Mapping[str, Any]) -> str:
+    """Render a Codex install receipt without raw env values."""
+    prefix = "Codex ChimeraMemory install"
+    if result.get("dry_run"):
+        prefix += " dry run"
+    lines = [
+        f"{prefix}: OK",
+        f"Config: {result.get('config_path')}",
+        f"Action: {result.get('action')}",
+        f"Server: {result.get('server_name')}",
+        f"Import history: {'enabled' if result.get('import_history') else 'disabled'}",
+        f"MCP surface: {result.get('mcp_surface')}",
+    ]
+    backup_path = str(result.get("backup_path") or "")
+    if backup_path:
+        lines.append(f"Backup: {backup_path}")
+    env_keys = result.get("env_keys")
+    if isinstance(env_keys, list) and env_keys:
+        lines.append("Env keys: " + ", ".join(str(key) for key in env_keys))
+    runtime_fields = result.get("runtime_fields")
+    if isinstance(runtime_fields, list) and runtime_fields:
+        lines.append("Runtime fields:")
+        for field in runtime_fields:
+            if not isinstance(field, Mapping):
+                continue
+            lines.append(f"  {field.get('name')}: {field.get('status')} ({field.get('source')})")
+    lines.append("Next: restart Codex, then run `chimera-memory codex doctor`.")
+    return "\n".join(lines)
 
 
 def inspect_codex_mcp_config(config_path: str | Path | None = None) -> dict[str, Any]:
@@ -233,6 +342,65 @@ def format_codex_doctor_report(result: Mapping[str, Any]) -> str:
         if isinstance(details, Mapping) and details.get("missing_keys"):
             lines.append("  missing: " + ", ".join(str(key) for key in details["missing_keys"]))
     return "\n".join(lines)
+
+
+def _read_codex_config_for_install(path: Path) -> tuple[dict[str, Any], bool]:
+    if not path.exists():
+        return {"mcpServers": {}}, False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Codex MCP config is not valid JSON: {exc.msg}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Codex MCP config root must be an object")
+    if "mcpServers" not in data and isinstance(data.get("mcp_servers"), Mapping):
+        data["mcpServers"] = dict(data["mcp_servers"])
+    return data, True
+
+
+def _backup_path_for(path: Path) -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return str(path.with_name(f"{path.name}.bak-{stamp}"))
+
+
+def _build_codex_install_env(
+    *,
+    persona: str,
+    persona_id: str,
+    persona_root: str,
+    jsonl_dir: str,
+    import_history: bool,
+    mcp_surface: str,
+) -> dict[str, str]:
+    env = {
+        "TRANSCRIPT_JSONL_DIR": jsonl_dir.strip() or "~/.codex/sessions/",
+        "CHIMERA_CLIENT": "codex",
+        "CHIMERA_MEMORY_IMPORT_HISTORY": "true" if import_history else "false",
+        "CHIMERA_MEMORY_MCP_SURFACE": (mcp_surface.strip() or "persona"),
+    }
+    if persona_id:
+        env["CHIMERA_PERSONA_ID"] = persona_id
+        derived_name = _persona_name_from_id(persona_id)
+        if persona and persona != derived_name:
+            env["CHIMERA_PERSONA_NAME"] = persona
+    else:
+        env["TRANSCRIPT_PERSONA"] = persona
+    cleaned_root = persona_root.strip()
+    if cleaned_root:
+        env["CHIMERA_PERSONA_ROOT"] = cleaned_root
+    return env
+
+
+def _infer_persona_root(persona_id: str) -> str:
+    parts = [part.lower() for part in persona_id.replace("\\", "/").split("/") if part.strip()]
+    if not parts:
+        return ""
+    cwd_parts = [part.lower() for part in Path.cwd().parts]
+    if len(cwd_parts) >= len(parts) and cwd_parts[-len(parts):] == parts:
+        return str(Path.cwd())
+    if Path.cwd().name.lower() == parts[-1]:
+        return str(Path.cwd())
+    return ""
 
 
 def _configured_server_name(servers: Mapping[str, Any]) -> str:

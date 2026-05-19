@@ -175,3 +175,46 @@ def test_start_transcript_indexer_repairs_rollups(monkeypatch, tmp_path, caplog)
 
     assert calls == ["backfill", "repair", "watch"]
     assert "Repaired 2 session rollup rows" in caplog.text
+
+
+def test_start_transcript_indexer_can_skip_historical_import(monkeypatch, tmp_path, caplog):
+    calls = []
+
+    class FakeDB:
+        def __init__(self, db_path):
+            self.db_path = db_path
+
+        def repair_session_rollups(self):
+            calls.append("repair")
+            return 0
+
+    class FakeIndexer:
+        def __init__(self, db, jsonl_dir, persona=None, parser_format=None):
+            self.db = db
+            self.jsonl_dir = jsonl_dir
+            self.persona = persona
+            self.parser_format = parser_format
+
+        def backfill(self):
+            calls.append("backfill")
+            return {"files": 1}
+
+        def mark_existing_files_seen(self):
+            calls.append("mark_seen")
+            return 3
+
+        def start_watching(self):
+            calls.append("watch")
+            return object()
+
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setenv("TRANSCRIPT_JSONL_DIR", str(tmp_path))
+    monkeypatch.setenv("CHIMERA_MEMORY_IMPORT_HISTORY", "false")
+    monkeypatch.setattr("chimera_memory.db.TranscriptDB", FakeDB)
+    monkeypatch.setattr("chimera_memory.indexer.Indexer", FakeIndexer)
+
+    with caplog.at_level(logging.INFO, logger="chimera_memory.indexer-bootstrap"):
+        assert server._start_transcript_indexer() is not None
+
+    assert calls == ["mark_seen", "repair", "watch"]
+    assert "Historical transcript import disabled" in caplog.text

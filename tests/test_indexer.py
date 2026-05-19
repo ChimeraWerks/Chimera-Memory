@@ -33,6 +33,25 @@ def write_jsonl(dirpath, name, entries):
     return path
 
 
+def test_mark_existing_files_seen_starts_tail_at_current_eof(tmp_path):
+    jsonl_dir = tmp_path / "sessions"
+    jsonl_dir.mkdir()
+    path = write_jsonl(jsonl_dir, "session-seen.jsonl", [
+        {"type": "user", "message": {"content": "old content"}, "timestamp": "2026-04-05T10:00:00Z", "sessionId": "seen-1", "uuid": "u1"},
+    ])
+    db = TranscriptDB(tmp_path / "transcript.db")
+    indexer = Indexer(db, jsonl_dir, persona="asa")
+
+    assert indexer.mark_existing_files_seen() == 1
+
+    with db.connection() as conn:
+        row = conn.execute("SELECT file_size, last_position, entries_imported FROM import_log WHERE file_path = ?", (str(path.resolve()),)).fetchone()
+    assert row["last_position"] == path.stat().st_size
+    assert row["file_size"] == path.stat().st_size
+    assert row["entries_imported"] == 0
+    assert db.stats()["entry_count"] == 0
+
+
 def run():
     global tmpdir
     tmpdir = tempfile.mkdtemp()

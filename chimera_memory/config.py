@@ -68,6 +68,10 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # Auto-detected from your working directory if not set.
 # jsonl_dir:
 
+# Import historical session files on startup. Set false to skip old
+# conversations and only tail new content written after CM starts.
+# import_history: true
+
 # ─── Features ────────────────────────
 
 # Detect conversation branches from Claude Code rewinds.
@@ -91,6 +95,7 @@ DEFAULTS = {
     "persona": None,
     "client": None,
     "jsonl_dir": None,
+    "import_history": True,
     "branch_detection": False,
     "mcp_surface": "full",
 }
@@ -105,6 +110,7 @@ ENV_MAP = {
     "TRANSCRIPT_PERSONA": "persona",
     "CHIMERA_CLIENT": "client",
     "TRANSCRIPT_JSONL_DIR": "jsonl_dir",
+    "CHIMERA_MEMORY_IMPORT_HISTORY": "import_history",
     "TRANSCRIPT_BRANCH_DETECTION": "branch_detection",
     "CHIMERA_MEMORY_MCP_SURFACE": "mcp_surface",
 }

@@ -106,6 +106,16 @@ parser is selected with `CHIMERA_CLIENT=codex`.
 It also shows whether runtime fields are explicit or derived, and summarizes the
 latest CM health snapshot when a transcript database is available.
 
+Write or update the Codex MCP config directly:
+
+```bash
+chimera-memory codex install --persona-id developer/asa --persona-root C:/path/to/personas/developer/asa
+```
+
+The installer preserves other MCP servers, writes a backup before changing an
+existing config, asks whether to import historical Codex sessions, and stores
+that choice as `CHIMERA_MEMORY_IMPORT_HISTORY`.
+
 Generate a safe config template without reading or modifying your live Codex
 config:
 
@@ -457,6 +467,8 @@ First backfill of 31 sessions (55MB JSONL): **~2 seconds.** Re-run: **~0.3 secon
 
 Per-persona launches can now provide a minimal identity and let CM derive the rest. If `CHIMERA_PERSONA_ID=role/name` is set, CM derives `CHIMERA_PERSONA_NAME`, `TRANSCRIPT_PERSONA`, and the per-persona transcript DB path when explicit env/config values are absent. If `CHIMERA_PERSONA_ROOT` is also set, CM derives `CHIMERA_PERSONAS_DIR` and `CHIMERA_SHARED_ROOT`.
 
+Historical transcript import is explicit setup state. `CHIMERA_MEMORY_IMPORT_HISTORY=true` keeps the startup backfill behavior; `false` marks existing JSONL files as already seen and only tails new content after CM starts.
+
 Explicit env values still win. The cascade only fills blanks.
 
 ### Concurrency
@@ -492,6 +504,7 @@ chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client claude|codex
 chimera-memory stats              # Show database statistics
 chimera-memory split-db           # Split a shared transcript DB into per-persona DBs
 chimera-memory codex doctor       # Diagnose Codex MCP setup without printing env values
+chimera-memory codex install      # Write/update Codex MCP setup with backup and import choice
 chimera-memory enhance provider-plan --json
 chimera-memory enhance enqueue --file <MEMORY_PATH>
 chimera-memory enhance dry-run --persona <NAME>

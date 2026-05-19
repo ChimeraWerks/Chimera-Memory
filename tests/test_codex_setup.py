@@ -8,7 +8,9 @@ from pathlib import Path
 
 from chimera_memory.codex_setup import (
     build_codex_mcp_config,
+    format_codex_install_report,
     format_codex_doctor_report,
+    install_codex_mcp_config,
     inspect_codex_mcp_config,
 )
 
@@ -194,6 +196,66 @@ def test_codex_doctor_summarizes_latest_health_snapshot(tmp_path: Path) -> None:
     assert "memory_enhancement_worker=True" in text
 
 
+def test_codex_install_writes_minimal_config_and_preserves_other_servers(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    persona_root = tmp_path / "personas" / "developer" / "asa"
+    jsonl_dir.mkdir()
+    persona_root.mkdir(parents=True)
+    _write_config(
+        config_path,
+        {
+            "mcpServers": {
+                "other-server": {
+                    "command": "other",
+                    "args": [],
+                    "env": {},
+                }
+            }
+        },
+    )
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona_id="developer/asa",
+        persona_root=str(persona_root),
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        import_history=False,
+    )
+    text = format_codex_install_report(receipt)
+    written = json.loads(config_path.read_text(encoding="utf-8"))
+    env = written["mcpServers"]["chimera-memory"]["env"]
+
+    assert receipt["action"] == "update"
+    assert Path(receipt["backup_path"]).is_file()
+    assert "other-server" in written["mcpServers"]
+    assert env["CHIMERA_PERSONA_ID"] == "developer/asa"
+    assert env["CHIMERA_PERSONA_ROOT"] == str(persona_root)
+    assert env["CHIMERA_MEMORY_IMPORT_HISTORY"] == "false"
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "persona"
+    assert "TRANSCRIPT_PERSONA" not in env
+    assert "Import history: disabled" in text
+    assert "CHIMERA_PERSONA_ID: resolved (explicit)" in text
+
+    doctor = inspect_codex_mcp_config(config_path)
+    assert doctor["status"] == "ok"
+
+
+def test_codex_install_dry_run_does_not_write(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona="asa",
+        dry_run=True,
+    )
+
+    assert receipt["dry_run"] is True
+    assert receipt["action"] == "create"
+    assert not config_path.exists()
+
+
 def test_codex_template_builds_safe_config_without_secrets() -> None:
     config = build_codex_mcp_config(
         persona="asa",
@@ -249,3 +311,34 @@ def test_codex_template_cli_prints_json_without_shadowing_subcommand() -> None:
 
     assert server["command"] == sys.executable
     assert server["env"]["CHIMERA_CLIENT"] == "codex"
+
+
+def test_codex_install_cli_dry_run_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "chimera_memory.cli",
+            "codex",
+            "install",
+            "--config",
+            str(config_path),
+            "--persona-id",
+            "developer/asa",
+            "--command",
+            sys.executable,
+            "--no-import-history",
+            "--dry-run",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    receipt = json.loads(proc.stdout)
+
+    assert receipt["dry_run"] is True
+    assert receipt["import_history"] is False
+    assert "CHIMERA_MEMORY_IMPORT_HISTORY" in receipt["env_keys"]
+    assert not config_path.exists()
