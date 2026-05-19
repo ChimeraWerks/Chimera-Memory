@@ -103,6 +103,8 @@ chimera-memory codex doctor
 The doctor verifies that the Codex MCP config exists, the `chimera-memory`
 server entry is present, the command resolves, `serve` is passed, and the Codex
 parser is selected with `CHIMERA_CLIENT=codex`.
+It also shows whether runtime fields are explicit or derived, and summarizes the
+latest CM health snapshot when a transcript database is available.
 
 Generate a safe config template without reading or modifying your live Codex
 config:

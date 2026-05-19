@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -104,6 +105,93 @@ def test_codex_doctor_warns_on_incomplete_identity(tmp_path: Path) -> None:
     assert report["status"] == "warning"
     assert "Persona identity env is incomplete." in text
     assert "CHIMERA_PERSONA_ID" in text
+
+
+def test_codex_doctor_accepts_derived_identity_fields(tmp_path: Path) -> None:
+    jsonl_dir = tmp_path / "sessions"
+    persona_root = tmp_path / "personas" / "developer" / "asa"
+    shared_root = tmp_path / "shared"
+    jsonl_dir.mkdir()
+    persona_root.mkdir(parents=True)
+    shared_root.mkdir()
+    config_path = tmp_path / "mcp_servers.json"
+    payload = {
+        "mcpServers": {
+            "chimera-memory": {
+                "command": sys.executable,
+                "args": ["serve"],
+                "env": {
+                    "TRANSCRIPT_JSONL_DIR": str(jsonl_dir),
+                    "CHIMERA_CLIENT": "codex",
+                    "CHIMERA_PERSONA_ID": "developer/asa",
+                    "CHIMERA_PERSONA_ROOT": str(persona_root),
+                },
+            },
+        },
+    }
+    _write_config(config_path, payload)
+
+    report = inspect_codex_mcp_config(config_path)
+    text = format_codex_doctor_report(report)
+
+    assert report["status"] == "ok"
+    fields = {field["name"]: field for field in report["runtime_fields"]}
+    assert fields["TRANSCRIPT_PERSONA"]["source"] == "derived:CHIMERA_PERSONA_ID"
+    assert fields["CHIMERA_PERSONA_NAME"]["source"] == "derived:CHIMERA_PERSONA_ID"
+    assert fields["CHIMERA_PERSONAS_DIR"]["source"] == "derived:CHIMERA_PERSONA_ROOT"
+    assert fields["CHIMERA_SHARED_ROOT"]["source"] == "derived:CHIMERA_PERSONAS_DIR"
+    assert "TRANSCRIPT_PERSONA: resolved (derived:CHIMERA_PERSONA_ID)" in text
+    assert "Persona identity resolves via explicit and derived fields." in text
+
+
+def test_codex_doctor_summarizes_latest_health_snapshot(tmp_path: Path) -> None:
+    jsonl_dir = tmp_path / "sessions"
+    jsonl_dir.mkdir()
+    db_path = tmp_path / "transcript.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE memory_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT,
+            event_type TEXT,
+            payload TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO memory_audit_events (created_at, event_type, payload) VALUES (?, ?, ?)",
+        (
+            "2026-05-19T21:00:00Z",
+            "cm_health_snapshot",
+            json.dumps(
+                {
+                    "status": "degraded",
+                    "checks": {
+                        "workers": {
+                            "status": "ok",
+                            "transcript_indexer": True,
+                            "transcript_embedding_worker": True,
+                            "memory_enhancement_worker": True,
+                        }
+                    },
+                }
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    config_path = tmp_path / "mcp_servers.json"
+    payload = _valid_codex_config(jsonl_dir)
+    payload["mcpServers"]["chimera-memory"]["env"]["TRANSCRIPT_DB_PATH"] = str(db_path)
+    _write_config(config_path, payload)
+
+    report = inspect_codex_mcp_config(config_path)
+    text = format_codex_doctor_report(report)
+
+    assert report["status"] == "warning"
+    assert "Latest CM health snapshot: degraded" in text
+    assert "memory_enhancement_worker=True" in text
 
 
 def test_codex_template_builds_safe_config_without_secrets() -> None:

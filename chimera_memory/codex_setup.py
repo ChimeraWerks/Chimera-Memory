@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .paths import persona_transcript_db_path
+
 
 CODEX_MCP_SERVER_NAMES = ("chimera-memory", "chimera_memory")
-REQUIRED_CODEX_ENV = ("TRANSCRIPT_JSONL_DIR", "TRANSCRIPT_PERSONA", "CHIMERA_CLIENT")
 IDENTITY_ENV = (
     "CHIMERA_PERSONA_ID",
     "CHIMERA_PERSONA_NAME",
@@ -91,6 +93,7 @@ def inspect_codex_mcp_config(config_path: str | Path | None = None) -> dict[str,
         "server_name": "",
         "server_configured": False,
         "env_keys": [],
+        "runtime_fields": [],
         "checks": checks,
     }
 
@@ -149,32 +152,53 @@ def inspect_codex_mcp_config(config_path: str | Path | None = None) -> dict[str,
     result["env_keys"] = sorted(str(key) for key in env.keys())
     _check(checks, "env", "ok", "Server env is present. Values are intentionally not reported.")
 
-    for key in REQUIRED_CODEX_ENV:
-        value = str(env.get(key) or "").strip()
-        if not value:
-            _check(checks, f"env:{key}", "error", f"{key} is required for Codex setup.")
-        elif key == "CHIMERA_CLIENT" and value != "codex":
-            _check(checks, f"env:{key}", "error", "CHIMERA_CLIENT must be codex for Codex transcripts.")
-        elif key == "CHIMERA_CLIENT":
-            _check(checks, f"env:{key}", "ok", "CHIMERA_CLIENT selects the Codex parser.")
-        elif key == "TRANSCRIPT_JSONL_DIR":
-            status = "ok" if _path_exists(value) else "warning"
-            message = "TRANSCRIPT_JSONL_DIR exists." if status == "ok" else "TRANSCRIPT_JSONL_DIR does not exist yet."
-            _check(checks, f"env:{key}", status, message)
-        else:
-            _check(checks, f"env:{key}", "ok", f"{key} is set.")
+    runtime_values, resolved_fields = _resolve_codex_runtime(env)
+    result["runtime_fields"] = resolved_fields
 
-    missing_identity = [key for key in IDENTITY_ENV if not str(env.get(key) or "").strip()]
+    client = runtime_values.get("CHIMERA_CLIENT", "")
+    if not client:
+        _check(checks, "env:CHIMERA_CLIENT", "error", "CHIMERA_CLIENT is required for Codex setup.")
+    elif client != "codex":
+        _check(checks, "env:CHIMERA_CLIENT", "error", "CHIMERA_CLIENT must be codex for Codex transcripts.")
+    else:
+        source = _runtime_source(resolved_fields, "CHIMERA_CLIENT")
+        _check(checks, "env:CHIMERA_CLIENT", "ok", f"CHIMERA_CLIENT selects the Codex parser ({source}).")
+
+    jsonl_dir = runtime_values.get("TRANSCRIPT_JSONL_DIR", "")
+    jsonl_source = _runtime_source(resolved_fields, "TRANSCRIPT_JSONL_DIR")
+    if jsonl_dir:
+        status = "ok" if _path_exists(jsonl_dir) else "warning"
+        message = (
+            f"TRANSCRIPT_JSONL_DIR exists. Source: {jsonl_source}."
+            if status == "ok"
+            else f"TRANSCRIPT_JSONL_DIR does not exist yet. Source: {jsonl_source}."
+        )
+        _check(checks, "env:TRANSCRIPT_JSONL_DIR", status, message)
+
+    persona = runtime_values.get("TRANSCRIPT_PERSONA", "")
+    persona_source = _runtime_source(resolved_fields, "TRANSCRIPT_PERSONA")
+    if persona:
+        _check(checks, "env:TRANSCRIPT_PERSONA", "ok", f"TRANSCRIPT_PERSONA resolves ({persona_source}).")
+    else:
+        _check(checks, "env:TRANSCRIPT_PERSONA", "warning", "TRANSCRIPT_PERSONA could not be resolved.")
+
+    missing_identity = [
+        field["name"]
+        for field in resolved_fields
+        if field["name"] in IDENTITY_ENV and field["status"] == "missing"
+    ]
     if missing_identity:
         _check(
             checks,
             "identity_env",
             "warning",
-            "Persona identity env is incomplete.",
+            "Persona identity env is incomplete. Derivation could not fill every field.",
             {"missing_keys": missing_identity},
         )
     else:
-        _check(checks, "identity_env", "ok", "Persona identity env is complete.")
+        _check(checks, "identity_env", "ok", "Persona identity resolves via explicit and derived fields.")
+
+    _check_latest_health_snapshot(checks, runtime_values.get("TRANSCRIPT_DB_PATH", ""))
 
     return _finalize(result)
 
@@ -190,6 +214,15 @@ def format_codex_doctor_report(result: Mapping[str, Any]) -> str:
     env_keys = result.get("env_keys")
     if isinstance(env_keys, list) and env_keys:
         lines.append("Env keys: " + ", ".join(str(key) for key in env_keys))
+    runtime_fields = result.get("runtime_fields")
+    if isinstance(runtime_fields, list) and runtime_fields:
+        lines.append("Runtime fields:")
+        for field in runtime_fields:
+            if not isinstance(field, Mapping):
+                continue
+            status = str(field.get("status") or "?")
+            source = str(field.get("source") or "?")
+            lines.append(f"  {field.get('name')}: {status} ({source})")
     lines.append("")
     for check in result.get("checks", []):
         if not isinstance(check, Mapping):
@@ -218,6 +251,131 @@ def _command_resolves(command: str) -> bool:
 
 def _path_exists(value: str) -> bool:
     return Path(os.path.expandvars(os.path.expanduser(value))).exists()
+
+
+def _clean_env(env: Mapping[str, Any]) -> dict[str, str]:
+    return {str(key): str(value).strip() for key, value in env.items() if str(value).strip()}
+
+
+def _persona_name_from_id(persona_id: str) -> str:
+    parts = [part for part in persona_id.replace("\\", "/").split("/") if part.strip()]
+    return parts[-1] if parts else ""
+
+
+def _derive_personas_dir(persona_root: str, persona_id: str) -> str:
+    if not persona_root or not persona_id:
+        return ""
+    depth = len([part for part in persona_id.replace("\\", "/").split("/") if part.strip()])
+    path = Path(persona_root)
+    for _ in range(depth):
+        path = path.parent
+    return str(path)
+
+
+def _add_runtime_field(fields: list[dict[str, str]], name: str, value: str, source: str) -> None:
+    fields.append(
+        {
+            "name": name,
+            "status": "resolved" if value else "missing",
+            "source": source if value else "missing",
+        }
+    )
+
+
+def _resolve_codex_runtime(env: Mapping[str, Any]) -> tuple[dict[str, str], list[dict[str, str]]]:
+    clean = _clean_env(env)
+    fields: list[dict[str, str]] = []
+
+    persona_id = clean.get("CHIMERA_PERSONA_ID", "")
+    persona_name = clean.get("CHIMERA_PERSONA_NAME", "") or _persona_name_from_id(persona_id)
+    transcript_persona = clean.get("TRANSCRIPT_PERSONA", "") or persona_name
+    persona_root = clean.get("CHIMERA_PERSONA_ROOT", "")
+    personas_dir = clean.get("CHIMERA_PERSONAS_DIR", "") or _derive_personas_dir(persona_root, persona_id)
+    shared_root = clean.get("CHIMERA_SHARED_ROOT", "") or (str(Path(personas_dir).parent / "shared") if personas_dir else "")
+    jsonl_dir = clean.get("TRANSCRIPT_JSONL_DIR", "") or "~/.codex/sessions/"
+    db_path = clean.get("TRANSCRIPT_DB_PATH", "")
+    if not db_path and persona_name:
+        db_path = str(persona_transcript_db_path(persona_name, persona_id=persona_id or None))
+
+    values_and_sources = [
+        ("CHIMERA_CLIENT", clean.get("CHIMERA_CLIENT", ""), "explicit" if clean.get("CHIMERA_CLIENT") else "missing"),
+        ("TRANSCRIPT_JSONL_DIR", jsonl_dir, "explicit" if clean.get("TRANSCRIPT_JSONL_DIR") else "derived:codex_default"),
+        ("CHIMERA_PERSONA_ID", persona_id, "explicit" if persona_id else "missing"),
+        ("CHIMERA_PERSONA_NAME", persona_name, "explicit" if clean.get("CHIMERA_PERSONA_NAME") else "derived:CHIMERA_PERSONA_ID"),
+        ("TRANSCRIPT_PERSONA", transcript_persona, "explicit" if clean.get("TRANSCRIPT_PERSONA") else "derived:CHIMERA_PERSONA_ID"),
+        ("CHIMERA_PERSONA_ROOT", persona_root, "explicit" if persona_root else "missing"),
+        ("CHIMERA_PERSONAS_DIR", personas_dir, "explicit" if clean.get("CHIMERA_PERSONAS_DIR") else "derived:CHIMERA_PERSONA_ROOT"),
+        ("CHIMERA_SHARED_ROOT", shared_root, "explicit" if clean.get("CHIMERA_SHARED_ROOT") else "derived:CHIMERA_PERSONAS_DIR"),
+        ("TRANSCRIPT_DB_PATH", db_path, "explicit" if clean.get("TRANSCRIPT_DB_PATH") else "derived:CHIMERA_PERSONA_ID"),
+    ]
+    values: dict[str, str] = {}
+    for name, value, source in values_and_sources:
+        values[name] = value
+        _add_runtime_field(fields, name, value, source)
+    return values, fields
+
+
+def _runtime_field(fields: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    for field in fields:
+        if field.get("name") == name:
+            return field
+    return {}
+
+
+def _runtime_source(fields: list[dict[str, Any]], name: str) -> str:
+    return str(_runtime_field(fields, name).get("source") or "missing")
+
+
+def _check_latest_health_snapshot(checks: list[dict[str, Any]], db_path: str) -> None:
+    if not db_path:
+        _check(checks, "cm_health", "info", "CM health snapshot unavailable: transcript DB path is not resolved.")
+        return
+    expanded = Path(os.path.expandvars(os.path.expanduser(db_path)))
+    if not expanded.exists():
+        _check(checks, "cm_health", "info", "CM health snapshot unavailable: transcript DB does not exist yet.")
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(str(expanded))
+        row = conn.execute(
+            """
+            SELECT created_at, payload
+            FROM memory_audit_events
+            WHERE event_type = 'cm_health_snapshot'
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        _check(checks, "cm_health", "info", "CM health snapshot unavailable: audit table is not initialized yet.")
+        return
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if not row:
+        _check(checks, "cm_health", "info", "CM health snapshot unavailable: no snapshot has been recorded yet.")
+        return
+    try:
+        payload = json.loads(row[1] or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    status = str(payload.get("status") or "unknown")
+    workers = payload.get("checks", {}).get("workers", {}) if isinstance(payload.get("checks"), Mapping) else {}
+    worker_bits = []
+    if isinstance(workers, Mapping):
+        for key, value in workers.items():
+            if key != "status":
+                worker_bits.append(f"{key}={bool(value)}")
+    state = "ok"
+    if status == "broken":
+        state = "error"
+    elif status == "degraded":
+        state = "warning"
+    suffix = f"; workers: {', '.join(worker_bits)}" if worker_bits else ""
+    _check(checks, "cm_health", state, f"Latest CM health snapshot: {status}{suffix}.")
 
 
 def _check(
