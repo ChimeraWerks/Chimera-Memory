@@ -115,6 +115,14 @@ chimera-memory codex install --persona-id developer/asa --persona-root C:/path/t
 The installer preserves other MCP servers, writes a backup before changing an
 existing config, asks whether to import historical Codex sessions, and stores
 that choice as `CHIMERA_MEMORY_IMPORT_HISTORY`.
+It can also set a provider preference and explicitly reuse an existing login:
+
+```bash
+chimera-memory codex install --persona-id developer/asa --provider openai --reuse-provider-login
+```
+
+Provider reuse is never implicit. When requested, the installer imports into
+CM's local auth store and prints only a safe receipt.
 
 Generate a safe config template without reading or modifying your live Codex
 config:

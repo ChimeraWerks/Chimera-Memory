@@ -71,6 +71,13 @@ def main():
     )
     sub_codex_install.add_argument("--server-name", default="chimera-memory", help="MCP server name")
     sub_codex_install.add_argument("--surface", default="persona", help="MCP tool surface to expose")
+    sub_codex_install.add_argument("--provider", default="", help="Optional enhancement provider preference")
+    sub_codex_install.add_argument("--reuse-provider-login", action="store_true", help="Import an existing provider login into CM")
+    sub_codex_install.add_argument("--oauth-store", default="", help="Optional CM OAuth/auth store path")
+    sub_codex_install.add_argument("--enable-provider-worker", action="store_true", help="Let serve use provider-backed enhancement jobs")
+    sub_codex_install.add_argument("--hermes-home", default="", help="Optional Hermes home for provider login import")
+    sub_codex_install.add_argument("--claude-credentials-path", default="", help="Optional Claude credential path for provider login import")
+    sub_codex_install.add_argument("--codex-auth-path", default="", help="Optional Codex auth path for provider login import")
     history_group = sub_codex_install.add_mutually_exclusive_group()
     history_group.add_argument("--import-history", dest="import_history", action="store_true", help="Import existing Codex sessions")
     history_group.add_argument("--no-import-history", dest="import_history", action="store_false", help="Skip existing Codex sessions")
@@ -318,6 +325,13 @@ def _run_codex(args):
                 server_name=args.server_name,
                 import_history=import_history,
                 mcp_surface=args.surface,
+                provider=args.provider,
+                reuse_provider_auth=args.reuse_provider_login,
+                oauth_store=args.oauth_store,
+                enable_provider_worker=args.enable_provider_worker,
+                hermes_home=args.hermes_home or None,
+                claude_credentials_path=args.claude_credentials_path or None,
+                codex_auth_path=args.codex_auth_path or None,
                 dry_run=args.dry_run,
             )
         except ValueError as exc:

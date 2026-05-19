@@ -94,6 +94,13 @@ def install_codex_mcp_config(
     server_name: str = "chimera-memory",
     import_history: bool = True,
     mcp_surface: str = "persona",
+    provider: str = "",
+    reuse_provider_auth: bool = False,
+    oauth_store: str = "",
+    enable_provider_worker: bool = False,
+    hermes_home: str | Path | None = None,
+    claude_credentials_path: str | Path | None = None,
+    codex_auth_path: str | Path | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Write or update Codex's MCP config for Chimera Memory.
@@ -123,6 +130,10 @@ def install_codex_mcp_config(
 
     configured_name = _configured_server_name(servers) or server_name
     persona_root = persona_root.strip() or _infer_persona_root(persona_id)
+    selected_provider = _install_provider_id(provider)
+    if reuse_provider_auth and not selected_provider:
+        raise ValueError("provider is required when reuse_provider_auth is enabled")
+    resolved_oauth_store = oauth_store.strip() or "~/.chimera-memory/auth.json"
     env = _build_codex_install_env(
         persona=persona_name,
         persona_id=persona_id,
@@ -130,6 +141,17 @@ def install_codex_mcp_config(
         jsonl_dir=jsonl_dir,
         import_history=import_history,
         mcp_surface=mcp_surface,
+        provider=selected_provider,
+        oauth_store=resolved_oauth_store,
+        enable_provider_worker=enable_provider_worker,
+    )
+    provider_auth = _maybe_import_provider_auth(
+        provider_id=selected_provider,
+        reuse_provider_auth=reuse_provider_auth,
+        oauth_store=resolved_oauth_store,
+        hermes_home=hermes_home,
+        claude_credentials_path=claude_credentials_path,
+        codex_auth_path=codex_auth_path,
     )
     servers[configured_name] = {
         "command": command,
@@ -157,6 +179,9 @@ def install_codex_mcp_config(
         "runtime_fields": runtime_fields,
         "import_history": import_history,
         "mcp_surface": mcp_surface.strip() or "persona",
+        "provider": selected_provider or "dry_run",
+        "provider_auth": provider_auth,
+        "provider_worker_mode": "provider" if enable_provider_worker else "dry_run",
         "action": "create" if not existed else "update",
     }
 
@@ -173,7 +198,12 @@ def format_codex_install_report(result: Mapping[str, Any]) -> str:
         f"Server: {result.get('server_name')}",
         f"Import history: {'enabled' if result.get('import_history') else 'disabled'}",
         f"MCP surface: {result.get('mcp_surface')}",
+        f"Provider: {result.get('provider')}",
+        f"Provider worker: {result.get('provider_worker_mode')}",
     ]
+    provider_auth = result.get("provider_auth")
+    if isinstance(provider_auth, Mapping) and provider_auth.get("status") != "not_requested":
+        lines.append(f"Provider auth: {provider_auth.get('status')}")
     backup_path = str(result.get("backup_path") or "")
     if backup_path:
         lines.append(f"Backup: {backup_path}")
@@ -371,14 +401,22 @@ def _build_codex_install_env(
     jsonl_dir: str,
     import_history: bool,
     mcp_surface: str,
+    provider: str,
+    oauth_store: str,
+    enable_provider_worker: bool,
 ) -> dict[str, str]:
     env = {
         "TRANSCRIPT_JSONL_DIR": jsonl_dir.strip() or "~/.codex/sessions/",
         "CHIMERA_CLIENT": "codex",
         "CHIMERA_MEMORY_STATE_ROOT": "~/.chimera-memory",
+        "CHIMERA_MEMORY_OAUTH_STORE": oauth_store,
         "CHIMERA_MEMORY_IMPORT_HISTORY": "true" if import_history else "false",
         "CHIMERA_MEMORY_MCP_SURFACE": (mcp_surface.strip() or "persona"),
     }
+    if provider and provider != "dry_run":
+        env["CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY"] = provider
+    if enable_provider_worker:
+        env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] = "provider"
     if persona_id:
         env["CHIMERA_PERSONA_ID"] = persona_id
         derived_name = _persona_name_from_id(persona_id)
@@ -390,6 +428,70 @@ def _build_codex_install_env(
     if cleaned_root:
         env["CHIMERA_PERSONA_ROOT"] = cleaned_root
     return env
+
+
+def _install_provider_id(value: str) -> str:
+    text = value.strip().lower().replace("-", "_")
+    if not text:
+        return ""
+    aliases = {
+        "claude": "anthropic",
+        "claude_code": "anthropic",
+        "chatgpt": "openai",
+        "codex": "openai",
+        "gemini": "google",
+        "local": "ollama",
+        "local_ai": "ollama",
+        "openai_compatible": "openai_compatible",
+        "lm_studio": "lmstudio",
+        "dry": "dry_run",
+        "dryrun": "dry_run",
+    }
+    provider_id = aliases.get(text, text)
+    from .memory_enhancement_provider import PROVIDER_IDS
+
+    if provider_id not in PROVIDER_IDS:
+        raise ValueError("provider is unsupported")
+    return provider_id
+
+
+def _maybe_import_provider_auth(
+    *,
+    provider_id: str,
+    reuse_provider_auth: bool,
+    oauth_store: str,
+    hermes_home: str | Path | None,
+    claude_credentials_path: str | Path | None,
+    codex_auth_path: str | Path | None,
+) -> dict[str, Any]:
+    if not reuse_provider_auth:
+        return {"status": "not_requested"}
+    if provider_id not in {"openai", "anthropic", "google"}:
+        return {"status": "skipped", "reason": "provider_has_no_oauth_import"}
+    try:
+        from .memory_enhancement_oauth import MemoryEnhancementOAuthStore
+        from .memory_enhancement_oauth_import import import_memory_enhancement_oauth_credential
+
+        store = MemoryEnhancementOAuthStore(oauth_store)
+        credential = import_memory_enhancement_oauth_credential(
+            provider_id=provider_id,
+            source="auto",
+            store=store,
+            hermes_home=hermes_home,
+            claude_credentials_path=claude_credentials_path,
+            codex_auth_path=codex_auth_path,
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "provider": provider_id,
+            "error_type": exc.__class__.__name__,
+        }
+    return {
+        "status": "imported",
+        "provider": provider_id,
+        "credential": credential.to_safe_dict(),
+    }
 
 
 def _infer_persona_root(persona_id: str) -> str:

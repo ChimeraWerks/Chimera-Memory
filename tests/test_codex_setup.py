@@ -257,6 +257,50 @@ def test_codex_install_dry_run_does_not_write(tmp_path: Path) -> None:
     assert not config_path.exists()
 
 
+def test_codex_install_can_reuse_provider_login_without_echoing_tokens(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    codex_auth_path = tmp_path / ".codex" / "auth.json"
+    oauth_store = tmp_path / "auth.json"
+    jsonl_dir.mkdir()
+    codex_auth_path.parent.mkdir()
+    codex_auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "TEST_ONLY_OPENAI_ACCESS",
+                    "refresh_token": "TEST_ONLY_OPENAI_REFRESH",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona_id="developer/asa",
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        provider="openai",
+        reuse_provider_auth=True,
+        oauth_store=str(oauth_store),
+        codex_auth_path=codex_auth_path,
+    )
+    text = format_codex_install_report(receipt)
+    serialized = json.dumps(receipt)
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["chimera-memory"]["env"]
+
+    assert receipt["provider"] == "openai"
+    assert receipt["provider_auth"]["status"] == "imported"
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY"] == "openai"
+    assert env["CHIMERA_MEMORY_OAUTH_STORE"] == str(oauth_store)
+    assert "Provider auth: imported" in text
+    assert "TEST_ONLY_OPENAI_ACCESS" not in serialized
+    assert "TEST_ONLY_OPENAI_REFRESH" not in serialized
+    assert "TEST_ONLY_OPENAI_ACCESS" not in text
+    assert "TEST_ONLY_OPENAI_REFRESH" not in text
+
+
 def test_codex_template_builds_safe_config_without_secrets() -> None:
     config = build_codex_mcp_config(
         persona="asa",
@@ -343,3 +387,54 @@ def test_codex_install_cli_dry_run_json(tmp_path: Path) -> None:
     assert receipt["import_history"] is False
     assert "CHIMERA_MEMORY_IMPORT_HISTORY" in receipt["env_keys"]
     assert not config_path.exists()
+
+
+def test_codex_install_cli_provider_reuse_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    codex_auth_path = tmp_path / ".codex" / "auth.json"
+    oauth_store = tmp_path / "auth.json"
+    codex_auth_path.parent.mkdir()
+    codex_auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "TEST_ONLY_OPENAI_ACCESS",
+                    "refresh_token": "TEST_ONLY_OPENAI_REFRESH",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "chimera_memory.cli",
+            "codex",
+            "install",
+            "--config",
+            str(config_path),
+            "--persona-id",
+            "developer/asa",
+            "--command",
+            sys.executable,
+            "--provider",
+            "openai",
+            "--reuse-provider-login",
+            "--oauth-store",
+            str(oauth_store),
+            "--codex-auth-path",
+            str(codex_auth_path),
+            "--import-history",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    receipt = json.loads(proc.stdout)
+
+    assert receipt["provider"] == "openai"
+    assert receipt["provider_auth"]["status"] == "imported"
+    assert "TEST_ONLY_OPENAI_ACCESS" not in proc.stdout
+    assert "TEST_ONLY_OPENAI_REFRESH" not in proc.stdout
