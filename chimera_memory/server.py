@@ -2888,6 +2888,9 @@ def _start_transcript_indexer() -> object | None:
         log.info("Backfilling transcripts from %s ...", jsonl_dir)
         stats = indexer.backfill()
         log.info("Backfill complete: %s", stats)
+        repaired = db.repair_session_rollups()
+        if repaired:
+            log.info("Repaired %d session rollup rows", repaired)
 
         log.info("Starting live file watcher ...")
         observer = indexer.start_watching()

@@ -447,6 +447,7 @@ Every JSONL file is tracked with an MD5 hash. On restart or re-run:
 - **Unchanged files** are skipped instantly
 - **Modified files** (grew since last read) are re-indexed from the last position
 - **New files** are indexed from scratch
+- **Session rollups** are repaired from transcript rows so old zero-exchange or orphaned sessions become browseable automatically.
 
 First backfill of 31 sessions (55MB JSONL): **~2 seconds.** Re-run: **~0.3 seconds.**
 

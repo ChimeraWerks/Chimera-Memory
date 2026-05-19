@@ -73,3 +73,55 @@ def test_insert_entries_creates_session_rows_for_direct_writers(tmp_path: Path) 
             "ended_at": "2026-05-19T10:00:02Z",
             "exchange_count": 2,
         }
+
+
+def test_repair_session_rollups_creates_orphans_and_updates_counts(tmp_path: Path) -> None:
+    db = TranscriptDB(tmp_path / "transcript.db")
+    with db.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO transcript (session_id, entry_type, timestamp, content, persona, source)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("orphan", "user_message", "2026-05-19T10:00:00Z", "hello", "asa", "test"),
+        )
+        conn.execute(
+            """
+            INSERT INTO transcript (session_id, entry_type, timestamp, content, persona, source)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("stale", "assistant_message", "2026-05-19T10:00:02Z", "reply", "asa", "test"),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions (session_id, persona, started_at, ended_at, exchange_count)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("stale", None, None, None, 0),
+        )
+        conn.commit()
+
+    repaired = db.repair_session_rollups()
+
+    assert repaired == 1
+    with db.connection() as conn:
+        rows = {
+            row["session_id"]: dict(row)
+            for row in conn.execute(
+                "SELECT session_id, persona, started_at, ended_at, exchange_count FROM sessions"
+            ).fetchall()
+        }
+    assert rows["orphan"] == {
+        "session_id": "orphan",
+        "persona": "asa",
+        "started_at": "2026-05-19T10:00:00Z",
+        "ended_at": "2026-05-19T10:00:00Z",
+        "exchange_count": 1,
+    }
+    assert rows["stale"] == {
+        "session_id": "stale",
+        "persona": "asa",
+        "started_at": "2026-05-19T10:00:02Z",
+        "ended_at": "2026-05-19T10:00:02Z",
+        "exchange_count": 1,
+    }

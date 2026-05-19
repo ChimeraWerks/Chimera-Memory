@@ -137,3 +137,41 @@ def test_background_bootstrap_logs_failures(monkeypatch, caplog):
         server._start_background_bootstrap()
 
     assert "startup bootstrap failed" in caplog.text
+
+
+def test_start_transcript_indexer_repairs_rollups(monkeypatch, tmp_path, caplog):
+    calls = []
+
+    class FakeDB:
+        def __init__(self, db_path):
+            self.db_path = db_path
+
+        def repair_session_rollups(self):
+            calls.append("repair")
+            return 2
+
+    class FakeIndexer:
+        def __init__(self, db, jsonl_dir, persona=None, parser_format=None):
+            self.db = db
+            self.jsonl_dir = jsonl_dir
+            self.persona = persona
+            self.parser_format = parser_format
+
+        def backfill(self):
+            calls.append("backfill")
+            return {"files": 1}
+
+        def start_watching(self):
+            calls.append("watch")
+            return object()
+
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setenv("TRANSCRIPT_JSONL_DIR", str(tmp_path))
+    monkeypatch.setattr("chimera_memory.db.TranscriptDB", FakeDB)
+    monkeypatch.setattr("chimera_memory.indexer.Indexer", FakeIndexer)
+
+    with caplog.at_level(logging.INFO, logger="chimera_memory.indexer-bootstrap"):
+        assert server._start_transcript_indexer() is not None
+
+    assert calls == ["backfill", "repair", "watch"]
+    assert "Repaired 2 session rollup rows" in caplog.text
