@@ -202,6 +202,9 @@ def _check_session_rollups(conn: sqlite3.Connection) -> dict[str, Any]:
             JOIN transcript t ON t.session_id = s.session_id
             WHERE COALESCE(s.exchange_count, 0) = 0
             GROUP BY s.session_id
+            HAVING SUM(CASE
+                WHEN t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
+                THEN 1 ELSE 0 END) > 0
             """
         ).fetchall()
     )

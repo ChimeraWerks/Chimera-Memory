@@ -102,6 +102,21 @@ def test_health_detects_session_rollup_and_duplicate_drift() -> None:
     assert snapshot["checks"]["duplicate_capture"]["duplicate_groups"] == 1
 
 
+def test_health_allows_non_conversation_zero_exchange_sessions() -> None:
+    conn = _conn()
+    _insert_transcript(conn, session_id="system-only", entry_type="system")
+    conn.execute(
+        "INSERT INTO sessions (session_id, persona, started_at, ended_at, exchange_count) VALUES (?, ?, ?, ?, ?)",
+        ("system-only", "asa", "2026-05-19T20:00:00Z", "2026-05-19T20:00:00Z", 0),
+    )
+    conn.commit()
+
+    snapshot = collect_cm_health(conn, persona="asa")
+
+    assert snapshot["checks"]["session_rollups"]["status"] == "ok"
+    assert snapshot["checks"]["session_rollups"]["zero_exchange_sessions_with_rows"] == 0
+
+
 def test_record_health_snapshot_writes_audit_event() -> None:
     conn = _conn()
 
