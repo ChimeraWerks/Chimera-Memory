@@ -45,6 +45,16 @@ chimera-memory backfill
 chimera-memory serve
 ```
 
+On Windows, the one-file Codex setup path is:
+
+```powershell
+.\install-codex.ps1
+```
+
+It installs CM editable, writes the Codex MCP config, asks whether to import
+past Codex sessions, optionally reuses a provider login, runs doctor, and tells
+you to restart Codex.
+
 `pip install -e .` creates the `chimera-memory` CLI on PATH and adds the Python package via `.pth` so any edit to source flows through immediately on next process spawn. No re-install needed for code changes; only dependency changes (new `pyproject.toml` requires) need a re-run.
 
 ## Integration Patterns (Cross-Runtime)
