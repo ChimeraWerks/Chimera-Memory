@@ -9,6 +9,8 @@ import yaml
 
 from chimera_memory.cli import main
 from chimera_memory.memory import index_file, init_memory_tables, memory_enhancement_enqueue
+from chimera_memory.memory_enhancement_oauth import MemoryEnhancementOAuthStore
+from chimera_memory.memory_enhancement_oauth_import import import_memory_enhancement_oauth_credential
 from chimera_memory.memory_enhancement_sidecar import create_dry_run_sidecar_server
 
 
@@ -46,6 +48,98 @@ def test_cli_enhance_provider_plan_json_excludes_credential_refs(monkeypatch, ca
     assert payload["selected_provider"] == "openai"
     assert payload["candidates"][0]["credential_ref_present"] is True
     assert "oauth:openai-memory" not in json.dumps(payload)
+
+
+def test_cli_enhance_oauth_import_json_excludes_token_values(tmp_path: Path, monkeypatch, capsys) -> None:
+    codex_path = tmp_path / ".codex" / "auth.json"
+    store_path = tmp_path / "memory-oauth.json"
+    codex_path.parent.mkdir()
+    codex_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "TEST_ONLY_OPENAI_ACCESS",
+                    "refresh_token": "TEST_ONLY_OPENAI_REFRESH",
+                    "account_id": "acct_test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "chimera-memory",
+            "enhance",
+            "oauth-import",
+            "--provider",
+            "openai",
+            "--source",
+            "codex_cli",
+            "--codex-auth-path",
+            str(codex_path),
+            "--store",
+            str(store_path),
+            "--json",
+        ],
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["status"] == "imported"
+    assert payload["credential"]["provider_id"] == "openai"
+    assert payload["credential"]["value_present"] is True
+    assert "TEST_ONLY_OPENAI_ACCESS" not in output
+    assert "TEST_ONLY_OPENAI_REFRESH" not in output
+
+
+def test_cli_enhance_oauth_list_json_excludes_token_values(tmp_path: Path, monkeypatch, capsys) -> None:
+    codex_path = tmp_path / ".codex" / "auth.json"
+    store_path = tmp_path / "memory-oauth.json"
+    codex_path.parent.mkdir()
+    codex_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "TEST_ONLY_OPENAI_ACCESS",
+                    "refresh_token": "TEST_ONLY_OPENAI_REFRESH",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = MemoryEnhancementOAuthStore(store_path)
+    import_memory_enhancement_oauth_credential(
+        provider_id="openai",
+        source="codex_cli",
+        store=store,
+        codex_auth_path=codex_path,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "chimera-memory",
+            "enhance",
+            "oauth-list",
+            "--store",
+            str(store_path),
+            "--json",
+        ],
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["credential_count"] == 1
+    assert payload["credentials"][0]["provider_id"] == "openai"
+    assert payload["credentials"][0]["active"] is True
+    assert "TEST_ONLY_OPENAI_ACCESS" not in output
+    assert "TEST_ONLY_OPENAI_REFRESH" not in output
 
 
 def test_cli_enhance_enqueue_and_dry_run_json(tmp_path: Path, monkeypatch, capsys) -> None:

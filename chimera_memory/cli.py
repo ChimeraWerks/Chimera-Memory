@@ -84,6 +84,19 @@ def main():
     enhance_subparsers = sub_enhance.add_subparsers(dest="enhance_command")
     sub_enhance_plan = enhance_subparsers.add_parser("provider-plan", help="Show safe provider-resolution plan")
     sub_enhance_plan.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub_enhance_oauth_list = enhance_subparsers.add_parser("oauth-list", help="List configured provider credentials safely")
+    sub_enhance_oauth_list.add_argument("--store", default="", help="Optional OAuth/auth store path")
+    sub_enhance_oauth_list.add_argument("--provider", default="", help="Optional provider filter")
+    sub_enhance_oauth_list.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub_enhance_oauth_import = enhance_subparsers.add_parser("oauth-import", help="Import an existing provider login into CM")
+    sub_enhance_oauth_import.add_argument("--provider", required=True, help="Provider id: openai, anthropic, or google")
+    sub_enhance_oauth_import.add_argument("--source", default="auto", help="Import source. Defaults to auto")
+    sub_enhance_oauth_import.add_argument("--name", default="", help="Optional stored credential name")
+    sub_enhance_oauth_import.add_argument("--store", default="", help="Optional OAuth/auth store path")
+    sub_enhance_oauth_import.add_argument("--hermes-home", default="", help="Optional Hermes home for imported credentials")
+    sub_enhance_oauth_import.add_argument("--claude-credentials-path", default="", help="Optional Claude credential path")
+    sub_enhance_oauth_import.add_argument("--codex-auth-path", default="", help="Optional Codex auth path")
+    sub_enhance_oauth_import.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub_enhance_enqueue = enhance_subparsers.add_parser("enqueue", help="Queue an indexed memory file for enhancement")
     sub_enhance_enqueue.add_argument("--db", help="Path to transcript.db")
     sub_enhance_enqueue.add_argument("--file", required=True, help="Indexed memory file path or relative path")
@@ -351,6 +364,67 @@ def _emit_json_or_lines(payload: object, *, json_output: bool, lines: list[str])
 
 
 def _run_enhance(args):
+    if args.enhance_command == "oauth-list":
+        from .memory_enhancement_oauth import MemoryEnhancementOAuthStore
+
+        store = MemoryEnhancementOAuthStore(args.store or None)
+        credentials = store.list_pooled_credentials(provider_id=args.provider or "")
+        active_names = {}
+        for credential in credentials:
+            if credential.provider_id not in active_names:
+                active_names[credential.provider_id] = store.active_pooled_name(credential.provider_id)
+        items = []
+        for credential in credentials:
+            safe = credential.to_safe_dict()
+            safe["active"] = credential.id == active_names.get(credential.provider_id)
+            items.append(safe)
+        payload = {
+            "store_path": str(store.path),
+            "credential_count": len(items),
+            "credentials": items,
+        }
+        _emit_json_or_lines(
+            payload,
+            json_output=args.json,
+            lines=_oauth_list_lines(payload),
+        )
+        return
+
+    if args.enhance_command == "oauth-import":
+        from .memory_enhancement_oauth import MemoryEnhancementOAuthStore
+        from .memory_enhancement_oauth_import import import_memory_enhancement_oauth_credential
+
+        store = MemoryEnhancementOAuthStore(args.store or None)
+        try:
+            credential = import_memory_enhancement_oauth_credential(
+                provider_id=args.provider,
+                source=args.source,
+                name=args.name,
+                store=store,
+                hermes_home=args.hermes_home or None,
+                claude_credentials_path=args.claude_credentials_path or None,
+                codex_auth_path=args.codex_auth_path or None,
+            )
+        except Exception as exc:
+            print(f"OAuth import failed: {exc}", file=sys.stderr)
+            sys.exit(2)
+        payload = {
+            "status": "imported",
+            "store_path": str(store.path),
+            "credential": credential.to_safe_dict(),
+        }
+        _emit_json_or_lines(
+            payload,
+            json_output=args.json,
+            lines=[
+                f"Imported provider credential: {credential.provider_id}",
+                f"Transport: {credential.transport}",
+                f"Source: {credential.source}",
+                "Credential values are stored locally and are not printed.",
+            ],
+        )
+        return
+
     if args.enhance_command == "provider-plan":
         import os
 
@@ -659,6 +733,21 @@ def _run_enhance(args):
 
     print("Missing enhance command. Try: chimera-memory enhance provider-plan", file=sys.stderr)
     sys.exit(2)
+
+
+def _oauth_list_lines(payload: dict) -> list[str]:
+    lines = [
+        f"OAuth store: {payload.get('store_path')}",
+        f"Credentials: {payload.get('credential_count', 0)}",
+    ]
+    for credential in payload.get("credentials", []):
+        provider = credential.get("provider_id")
+        scheme = credential.get("scheme")
+        ref_hash = credential.get("ref_hash_prefix")
+        active = "active" if credential.get("active") else "inactive"
+        transport = credential.get("transport") or ""
+        lines.append(f"- {provider} {scheme}:{ref_hash} {active} transport={transport}")
+    return lines
 
 
 if __name__ == "__main__":

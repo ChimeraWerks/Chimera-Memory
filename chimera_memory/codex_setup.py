@@ -375,6 +375,7 @@ def _build_codex_install_env(
     env = {
         "TRANSCRIPT_JSONL_DIR": jsonl_dir.strip() or "~/.codex/sessions/",
         "CHIMERA_CLIENT": "codex",
+        "CHIMERA_MEMORY_STATE_ROOT": "~/.chimera-memory",
         "CHIMERA_MEMORY_IMPORT_HISTORY": "true" if import_history else "false",
         "CHIMERA_MEMORY_MCP_SURFACE": (mcp_surface.strip() or "persona"),
     }

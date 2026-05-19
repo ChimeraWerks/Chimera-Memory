@@ -234,6 +234,7 @@ def test_codex_install_writes_minimal_config_and_preserves_other_servers(tmp_pat
     assert env["CHIMERA_PERSONA_ROOT"] == str(persona_root)
     assert env["CHIMERA_MEMORY_IMPORT_HISTORY"] == "false"
     assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "persona"
+    assert env["CHIMERA_MEMORY_STATE_ROOT"] == "~/.chimera-memory"
     assert "TRANSCRIPT_PERSONA" not in env
     assert "Import history: disabled" in text
     assert "CHIMERA_PERSONA_ID: resolved (explicit)" in text

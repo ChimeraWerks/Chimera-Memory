@@ -447,6 +447,18 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT=10` controls jobs per tick.
 
+Provider login/import is exposed through safe CLI receipts:
+
+```bash
+chimera-memory enhance oauth-import --provider openai --source codex_cli
+chimera-memory enhance oauth-list
+chimera-memory enhance provider-plan
+```
+
+Credential values are never printed. `oauth-import` copies an existing provider
+login into CM's local auth store after you invoke it explicitly; `oauth-list`
+reports provider, transport, active status, and hashed refs only.
+
 ### Hybrid Search (semantic_search)
 
 `semantic_search` combines FTS5 keyword matching with vector similarity via Reciprocal Rank Fusion. Results are re-ranked by recency, session affinity, and content richness. Finds both exact matches and semantically similar content.
@@ -506,6 +518,8 @@ chimera-memory split-db           # Split a shared transcript DB into per-person
 chimera-memory codex doctor       # Diagnose Codex MCP setup without printing env values
 chimera-memory codex install      # Write/update Codex MCP setup with backup and import choice
 chimera-memory enhance provider-plan --json
+chimera-memory enhance oauth-import --provider openai --source codex_cli
+chimera-memory enhance oauth-list --json
 chimera-memory enhance enqueue --file <MEMORY_PATH>
 chimera-memory enhance dry-run --persona <NAME>
 chimera-memory enhance sidecar-run --endpoint http://127.0.0.1:8944/enhance
