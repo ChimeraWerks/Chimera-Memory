@@ -40,3 +40,27 @@ def test_identity_warns_on_mismatched_persona(monkeypatch) -> None:
 
     assert "TRANSCRIPT_PERSONA differs from CHIMERA_PERSONA_NAME" in warnings
     assert "CHIMERA_PERSONA_ID should use role/name shape" in warnings
+
+
+def test_identity_derives_name_persona_and_roots_from_persona_id_and_root(tmp_path: Path, monkeypatch) -> None:
+    for key in [
+        "TRANSCRIPT_PERSONA",
+        "CHIMERA_PERSONA_NAME",
+        "CHIMERA_PERSONAS_DIR",
+        "CHIMERA_SHARED_ROOT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    persona_root = tmp_path / "personas" / "developer" / "asa"
+    shared_root = tmp_path / "shared"
+    persona_root.mkdir(parents=True)
+    shared_root.mkdir()
+    monkeypatch.setenv("CHIMERA_PERSONA_ID", "developer/asa")
+    monkeypatch.setenv("CHIMERA_PERSONA_ROOT", str(persona_root))
+
+    identity = load_identity_from_env()
+
+    assert identity.persona_name == "asa"
+    assert identity.persona == "asa"
+    assert identity.personas_dir == tmp_path / "personas"
+    assert identity.shared_root == shared_root
+    assert identity.warnings() == []

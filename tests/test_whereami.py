@@ -102,3 +102,28 @@ def test_memory_whereami_warns_when_root_is_overridden_by_explicit_db(tmp_path: 
 
     assert payload["resolved"]["persona_db_root"] == str(tmp_path / "personas")
     assert "CHIMERA_MEMORY_PERSONA_DB_ROOT is set but TRANSCRIPT_DB_PATH overrides db_path" in payload["warnings"]
+
+
+def test_memory_whereami_derives_persona_defaults_from_id_and_root(tmp_path: Path, monkeypatch) -> None:
+    _clear_runtime_env(monkeypatch)
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    persona_root = tmp_path / "personas" / "developer" / "asa"
+    shared_root = tmp_path / "shared"
+    persona_root.mkdir(parents=True)
+    shared_root.mkdir()
+    monkeypatch.setenv("CHIMERA_PERSONA_ID", "developer/asa")
+    monkeypatch.setenv("CHIMERA_PERSONA_ROOT", str(persona_root))
+
+    payload = server.resolve_memory_whereami()
+
+    expected_db = Path.home() / ".chimera-memory" / "personas" / "developer" / "asa" / "transcript.db"
+    assert payload["resolved"]["db_path"] == str(expected_db)
+    assert payload["provenance"]["db_path"] == {"source": "derived", "from": "CHIMERA_PERSONA_ID"}
+    assert payload["resolved"]["transcript_persona"] == "asa"
+    assert payload["provenance"]["transcript_persona"] == {"source": "derived", "from": "CHIMERA_PERSONA_ID"}
+    assert payload["resolved"]["persona_name"] == "asa"
+    assert payload["provenance"]["persona_name"] == {"source": "derived", "from": "CHIMERA_PERSONA_ID"}
+    assert payload["resolved"]["personas_dir"] == str(tmp_path / "personas")
+    assert payload["provenance"]["personas_dir"] == {"source": "derived", "from": "CHIMERA_PERSONA_ROOT"}
+    assert payload["resolved"]["shared_root"] == str(shared_root)
+    assert payload["provenance"]["shared_root"] == {"source": "derived", "from": "CHIMERA_PERSONAS_DIR"}

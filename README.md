@@ -451,6 +451,12 @@ Every JSONL file is tracked with an MD5 hash. On restart or re-run:
 
 First backfill of 31 sessions (55MB JSONL): **~2 seconds.** Re-run: **~0.3 seconds.**
 
+### Identity Cascade
+
+Per-persona launches can now provide a minimal identity and let CM derive the rest. If `CHIMERA_PERSONA_ID=role/name` is set, CM derives `CHIMERA_PERSONA_NAME`, `TRANSCRIPT_PERSONA`, and the per-persona transcript DB path when explicit env/config values are absent. If `CHIMERA_PERSONA_ROOT` is also set, CM derives `CHIMERA_PERSONAS_DIR` and `CHIMERA_SHARED_ROOT`.
+
+Explicit env values still win. The cascade only fills blanks.
+
 ### Concurrency
 
 - **WAL mode** — readers never block writers, writers never block readers

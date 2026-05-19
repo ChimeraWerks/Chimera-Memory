@@ -54,6 +54,10 @@ def _env_provenance(key: str) -> dict[str, str]:
     return {"source": "env", "key": key}
 
 
+def _derived_provenance(*, from_key: str) -> dict[str, str]:
+    return {"source": "derived", "from": from_key}
+
+
 def _missing_provenance(key: str) -> dict[str, str]:
     return {"source": "missing", "key": key}
 
@@ -61,7 +65,15 @@ def _missing_provenance(key: str) -> dict[str, str]:
 def _identity_field(value: object, key: str) -> tuple[object, dict[str, str]]:
     if value is None:
         return None, _missing_provenance(key)
-    return value, _env_provenance(key)
+    if os.environ.get(key, "").strip():
+        return value, _env_provenance(key)
+    if key == "CHIMERA_PERSONA_NAME":
+        return value, _derived_provenance(from_key="CHIMERA_PERSONA_ID")
+    if key == "CHIMERA_PERSONAS_DIR":
+        return value, _derived_provenance(from_key="CHIMERA_PERSONA_ROOT")
+    if key == "CHIMERA_SHARED_ROOT":
+        return value, _derived_provenance(from_key="CHIMERA_PERSONAS_DIR")
+    return value, _derived_provenance(from_key="identity")
 
 
 def resolve_memory_whereami() -> dict:
@@ -79,6 +91,16 @@ def resolve_memory_whereami() -> dict:
     if db_env:
         resolved["db_path"] = _resolved_path(db_env)
         provenance["db_path"] = _env_provenance("TRANSCRIPT_DB_PATH")
+    elif identity.persona_name:
+        from .paths import persona_transcript_db_path
+
+        resolved["db_path"] = str(
+            persona_transcript_db_path(
+                identity.persona_name,
+                persona_id=identity.persona_id,
+            )
+        )
+        provenance["db_path"] = _derived_provenance(from_key="CHIMERA_PERSONA_ID")
     else:
         resolved["db_path"] = str(get_default_db_path())
         provenance["db_path"] = {
@@ -97,8 +119,10 @@ def resolve_memory_whereami() -> dict:
             "function": "get_default_jsonl_dir",
         }
 
-    resolved["transcript_persona"] = config.get("persona")
+    resolved["transcript_persona"] = config.get("persona") or identity.persona
     provenance["transcript_persona"] = config_provenance.get("persona", {"source": "unknown"})
+    if config.get("persona") is None and identity.persona:
+        provenance["transcript_persona"] = _derived_provenance(from_key="CHIMERA_PERSONA_ID")
 
     resolved["client"] = config.get("client")
     provenance["client"] = config_provenance.get("client", {"source": "unknown"})
@@ -204,7 +228,19 @@ def create_server():
     def _get_db():
         if "db" not in _state:
             from .db import TranscriptDB
-            db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+            if os.environ.get("TRANSCRIPT_DB_PATH", "").strip():
+                db_path = os.environ["TRANSCRIPT_DB_PATH"]
+            elif _identity.persona_name:
+                from .paths import persona_transcript_db_path
+
+                db_path = str(
+                    persona_transcript_db_path(
+                        _identity.persona_name,
+                        persona_id=_identity.persona_id,
+                    )
+                )
+            else:
+                db_path = str(get_default_db_path())
             _state["db"] = TranscriptDB(db_path)
         return _state["db"]
 
