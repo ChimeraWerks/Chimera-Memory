@@ -106,6 +106,26 @@ def test_full_reindex_auto_enqueues_allowed_shadow_persona(tmp_path: Path, monke
     assert events[0]["payload"]["reason"] == "full_reindex"
 
 
+def test_shadow_enqueue_uses_resolved_provider_when_no_explicit_hint(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "agency"
+    _write_memory(root)
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE", "true")
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PERSONAS", "sarah")
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER", "openai,anthropic,dry_run")
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF", "oauth:anthropic-memory")
+
+    full_reindex(conn, root / "personas", embed=False)
+
+    row = conn.execute(
+        "SELECT requested_provider, requested_model FROM memory_enhancement_jobs"
+    ).fetchone()
+    assert row == ("anthropic", "claude-haiku-4-5")
+    events = memory_audit_query(conn, event_type="memory_enhancement_shadow_enqueue", persona="sarah")
+    assert events[0]["payload"]["explicit_provider_hint"] is False
+
+
 def test_shadow_report_compares_completed_metadata(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "agency"
     _write_memory(root, tags="[shadow, pilot]")

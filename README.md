@@ -216,7 +216,7 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 | `session_list` | Browse sessions with dates, durations, dispositions, persona filters. |
 | `transcript_stats` | Entry count, session count, DB size, last entry timestamp, breakdowns by type and source. |
 | `transcript_backfill` | Index all historical JSONL files. Safe to re-run (skips unchanged via MD5). |
-| `embed_transcripts` | Generate embeddings for entries that don't have them. Required for semantic search. |
+| `embed_transcripts` | Generate embeddings for entries that don't have them. Useful for manual catch-up; `serve` also runs a bounded local embedding worker by default. |
 
 **Recommended recall workflow** (3-10x token savings vs direct recall):
 1. `discord_recall_index(search="topic")` — scan previews
@@ -406,6 +406,15 @@ Redacted content is replaced with `<REDACTED:type>` markers. The original never 
 Semantic search uses `bge-small-en-v1.5` via [fastembed](https://github.com/qdrant/fastembed) — a 23MB ONNX model that runs locally, no API calls. First run downloads the model (~80MB including runtime). Subsequent runs are offline.
 
 Embeddings are only generated for conversation content (user messages, assistant messages, Discord messages). Tool results and system entries are skipped — they'd just add noise.
+
+`chimera-memory serve` starts a bounded local transcript-embedding worker by default. It polls for unembedded conversation rows and processes a capped batch so new transcripts do not leave `semantic_search` stuck in keyword-only fallback. Tune with:
+
+- `CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER=false` to disable the worker.
+- `CHIMERA_MEMORY_TRANSCRIPT_EMBED_INTERVAL_SECONDS=60` for the polling interval.
+- `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_SIZE=100` for fastembed batch size.
+- `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_LIMIT=1000` for the maximum rows per worker tick.
+
+Use `embed_transcripts` or `chimera-memory` internals for one-time historical catch-up if a DB has a large backlog from before the worker existed.
 
 ### Hybrid Search (semantic_search)
 

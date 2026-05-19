@@ -55,11 +55,13 @@ def _enhancement_job_to_dict(row: sqlite3.Row | tuple | None) -> dict | None:
         "content_fingerprint": row[8],
         "requested_provider": row[9],
         "requested_model": row[10],
-        "request_payload": _json_object(row[11]),
-        "result_payload": _json_object(row[12]),
-        "error": row[13],
-        "attempt_count": row[14],
-        "locked_at": row[15],
+        "actual_provider": row[11],
+        "actual_model": row[12],
+        "request_payload": _json_object(row[13]),
+        "result_payload": _json_object(row[14]),
+        "error": row[15],
+        "attempt_count": row[16],
+        "locked_at": row[17],
     }
 
 
@@ -68,7 +70,8 @@ def _select_enhancement_job(conn: sqlite3.Connection, job_id: str) -> dict | Non
         """
         SELECT id, job_id, created_at, updated_at, status, persona, file_id,
                path, content_fingerprint, requested_provider, requested_model,
-               request_payload, result_payload, error, attempt_count, locked_at
+               actual_provider, actual_model, request_payload, result_payload,
+               error, attempt_count, locked_at
         FROM memory_enhancement_jobs
         WHERE job_id = ?
         """,
@@ -264,7 +267,7 @@ def memory_enhancement_claim_next(
         return None
     job_id = row[0]
     now = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    conn.execute(
+    cursor = conn.execute(
         """
         UPDATE memory_enhancement_jobs
            SET status = 'running',
@@ -274,6 +277,9 @@ def memory_enhancement_claim_next(
         """,
         (now, job_id),
     )
+    if cursor.rowcount != 1:
+        conn.commit()
+        return None
     record_memory_audit_event(
         conn,
         "memory_enhancement_started",
@@ -294,6 +300,8 @@ def memory_enhancement_complete(
     status: str,
     response_payload: object | None = None,
     error: str = "",
+    actual_provider: str = "",
+    actual_model: str = "",
 ) -> dict:
     """Finish a sidecar enhancement job without mutating memory files."""
     status = status.strip()
@@ -333,10 +341,19 @@ def memory_enhancement_complete(
            SET status = ?,
                result_payload = ?,
                error = ?,
+               actual_provider = COALESCE(NULLIF(?, ''), actual_provider),
+               actual_model = COALESCE(NULLIF(?, ''), actual_model),
                locked_at = NULL
          WHERE job_id = ?
         """,
-        (status, _json_text(result_payload), error_text, job_id),
+        (
+            status,
+            _json_text(result_payload),
+            error_text,
+            actual_provider,
+            actual_model,
+            job_id,
+        ),
     )
     record_memory_audit_event(
         conn,
@@ -344,7 +361,13 @@ def memory_enhancement_complete(
         persona=job.get("persona"),
         target_kind="enhancement_job",
         target_id=job_id,
-        payload={"status": status, "file_id": job.get("file_id"), "entities": entity_result},
+        payload={
+            "status": status,
+            "file_id": job.get("file_id"),
+            "entities": entity_result,
+            "actual_provider": actual_provider,
+            "actual_model": actual_model,
+        },
         commit=False,
     )
     conn.commit()

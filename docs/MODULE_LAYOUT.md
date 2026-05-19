@@ -584,6 +584,7 @@ Avoid:
 - Google Activity import: `tests/test_memory_import_google_activity.py`
 - Atom/Blogger import: `tests/test_memory_import_atom_blogger.py`
 - Portable profile export: `tests/test_memory_profile_export.py`
+- Transcript embeddings: `tests/test_embeddings.py`
 - Sidecar contract: `tests/test_memory_enhancement.py`
 - Provider policy: `tests/test_memory_enhancement_provider.py`
 - Provider runner: `tests/test_memory_enhancement_runner.py`

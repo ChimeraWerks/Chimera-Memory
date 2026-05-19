@@ -69,6 +69,8 @@ def test_run_memory_enhancement_dry_run_consumes_queue_without_mutating_memory(t
     job = processed[0]
     assert job["job_id"] == enqueued["job"]["job_id"]
     assert job["status"] == "succeeded"
+    assert job["actual_provider"] == "dry_run"
+    assert job["actual_model"] == "deterministic-local"
     assert job["result_payload"]["memory_type"] == "procedural"
     assert job["result_payload"]["review_status"] == "pending"
     assert job["result_payload"]["can_use_as_instruction"] is False

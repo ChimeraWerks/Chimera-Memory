@@ -107,6 +107,8 @@ def run_memory_enhancement_provider_batch(
                 job_id=str(job["job_id"]),
                 status="succeeded",
                 response_payload=response_payload,
+                actual_provider=plan.selected.provider_id,
+                actual_model=plan.selected.model,
             )
             if result.get("ok"):
                 processed.append(
@@ -152,6 +154,8 @@ def run_memory_enhancement_provider_batch(
             status="failed",
             response_payload=failure_payload,
             error=category,
+            actual_provider=plan.selected.provider_id,
+            actual_model=plan.selected.model,
         )
         failures.append(
             {

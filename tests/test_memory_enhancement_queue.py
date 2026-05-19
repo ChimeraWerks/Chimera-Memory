@@ -122,6 +122,42 @@ def test_memory_enhancement_claim_and_complete_success(tmp_path: Path) -> None:
     assert completed_events[0]["payload"]["entities"] == {"link_count": 5, "edge_count": 10}
 
 
+def test_memory_enhancement_claim_loser_returns_none(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    enqueued = memory_enhancement_enqueue(conn, file_path="target.md")
+
+    class RacingConnection:
+        def __init__(self, wrapped: sqlite3.Connection, job_id: int) -> None:
+            self._wrapped = wrapped
+            self._job_id = job_id
+            self._raced = False
+
+        def execute(self, sql, params=()):
+            if not self._raced and "UPDATE memory_enhancement_jobs" in sql and "status = 'running'" in sql:
+                self._raced = True
+                self._wrapped.execute(
+                    "UPDATE memory_enhancement_jobs SET status = 'running' WHERE job_id = ?",
+                    (self._job_id,),
+                )
+            return self._wrapped.execute(sql, params)
+
+        def commit(self) -> None:
+            self._wrapped.commit()
+
+    racing_conn = RacingConnection(conn, enqueued["job"]["job_id"])
+
+    assert memory_enhancement_claim_next(racing_conn, persona="asa") is None
+    job = conn.execute(
+        "SELECT status, attempt_count FROM memory_enhancement_jobs WHERE job_id = ?",
+        (enqueued["job"]["job_id"],),
+    ).fetchone()
+    assert job == ("running", 0)
+    events = memory_audit_query(conn, event_type="memory_enhancement_started", persona="asa")
+    assert events == []
+
+
 def test_memory_enhancement_complete_failure_records_error(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)

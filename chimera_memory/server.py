@@ -4,9 +4,11 @@ import json
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+_embedding_worker_handle: dict[str, object] | None = None
 
 
 def get_default_jsonl_dir() -> Path:
@@ -2822,6 +2824,21 @@ def _prewarm_embeddings() -> None:
         )
 
 
+def _env_bool(key: str, *, default: bool) -> bool:
+    value = os.environ.get(key, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+def _env_int(key: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(os.environ.get(key, "").strip())
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
 def _start_transcript_indexer() -> object | None:
     """Backfill any JSONL files written while the server was down, then start a
     live watcher that ingests new entries incrementally.
@@ -2866,6 +2883,124 @@ def _start_transcript_indexer() -> object | None:
         return None
 
 
+def _start_transcript_embedding_worker() -> dict[str, object] | None:
+    """Start a bounded background worker for transcript embeddings.
+
+    This keeps semantic transcript search from silently degrading as new JSONL
+    rows arrive. It uses the local fastembed path only, processes a capped batch
+    each tick, and degrades to logs if the embedding stack is unavailable.
+    """
+    if not _env_bool("CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER", default=True):
+        logging.getLogger("chimera_memory.embedding-worker").info("transcript embedding worker disabled")
+        return None
+
+    log = logging.getLogger("chimera_memory.embedding-worker")
+    stop_event = threading.Event()
+    interval_seconds = _env_int(
+        "CHIMERA_MEMORY_TRANSCRIPT_EMBED_INTERVAL_SECONDS",
+        default=60,
+        minimum=5,
+        maximum=3600,
+    )
+    batch_size = _env_int(
+        "CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_SIZE",
+        default=100,
+        minimum=1,
+        maximum=1000,
+    )
+    batch_limit = _env_int(
+        "CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_LIMIT",
+        default=1000,
+        minimum=1,
+        maximum=10000,
+    )
+
+    def _run_once() -> None:
+        from .db import TranscriptDB
+        from .embeddings import count_unembedded_transcript_entries, embed_transcript_entries
+
+        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db = TranscriptDB(db_path)
+        with db.connection() as conn:
+            pending = count_unembedded_transcript_entries(conn)
+            if pending <= 0:
+                return
+            count = embed_transcript_entries(
+                db,
+                conn,
+                batch_size=batch_size,
+                limit=min(batch_limit, pending),
+            )
+        if count:
+            log.info("embedded %d transcript rows; pending_before=%d", count, pending)
+
+    def _loop() -> None:
+        log.info(
+            "transcript embedding worker started interval=%ss batch_size=%s batch_limit=%s",
+            interval_seconds,
+            batch_size,
+            batch_limit,
+        )
+        while not stop_event.is_set():
+            try:
+                _run_once()
+            except Exception:
+                log.exception("transcript embedding worker iteration failed")
+            stop_event.wait(interval_seconds)
+        log.info("transcript embedding worker stopped")
+
+    thread = threading.Thread(
+        target=_loop,
+        name="chimera-memory-transcript-embedder",
+        daemon=True,
+    )
+    thread.start()
+    return {"thread": thread, "stop_event": stop_event}
+
+
+def _stop_transcript_embedding_worker(handle: dict[str, object] | None) -> None:
+    if not handle:
+        return
+    stop_event = handle.get("stop_event")
+    if isinstance(stop_event, threading.Event):
+        stop_event.set()
+    thread = handle.get("thread")
+    if isinstance(thread, threading.Thread):
+        thread.join(timeout=5)
+
+
+def _bootstrap_startup_services() -> object | None:
+    """Start live maintenance without making MCP registration depend on it."""
+    global _embedding_worker_handle
+    indexer = _start_transcript_indexer()
+    _embedding_worker_handle = _start_transcript_embedding_worker()
+    _prewarm_embeddings()
+    return indexer
+
+
+def _start_background_bootstrap() -> dict[str, object | None]:
+    """Run startup maintenance in the background so MCP handshakes stay fast."""
+    state: dict[str, object | None] = {"indexer": None, "thread": None}
+    log = logging.getLogger("chimera_memory.startup")
+
+    def _run() -> None:
+        try:
+            log.info("startup bootstrap running in background")
+            state["indexer"] = _bootstrap_startup_services()
+            log.info("startup bootstrap finished")
+        except Exception:
+            log.exception("startup bootstrap failed")
+
+    thread = threading.Thread(
+        target=_run,
+        name="chimera-memory-startup-bootstrap",
+        daemon=True,
+    )
+    state["thread"] = thread
+    thread.start()
+    return state
+
+
 def main():
     """Entry point for running the MCP server."""
     logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
@@ -2873,10 +3008,16 @@ def main():
     logging.getLogger("chimera_memory").info(
         "chimera-memory server starting (pid=%s, log=%s)", os.getpid(), log_path
     )
-    _prewarm_embeddings()
-    _indexer = _start_transcript_indexer()  # keep reference so watcher threads don't get GC'd
+    startup_mode = os.environ.get("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "background").strip().lower()
+    startup_state: dict[str, object | None] = {"indexer": None, "thread": None}
     try:
         server = create_server()
+        if startup_mode in {"0", "false", "off", "disabled", "none"}:
+            logging.getLogger("chimera_memory.startup").info("startup bootstrap disabled")
+        elif startup_mode in {"sync", "foreground", "blocking"}:
+            startup_state["indexer"] = _bootstrap_startup_services()
+        else:
+            startup_state = _start_background_bootstrap()
         server.run(transport="stdio")
     except KeyboardInterrupt:
         logging.getLogger("chimera_memory").info("shutdown via KeyboardInterrupt")
@@ -2884,11 +3025,13 @@ def main():
         logging.getLogger("chimera_memory").exception("server.run() crashed")
         raise
     finally:
-        if _indexer is not None:
+        indexer = startup_state.get("indexer")
+        if indexer is not None:
             try:
-                _indexer.stop_watching()
+                indexer.stop_watching()
             except Exception:
                 pass
+        _stop_transcript_embedding_worker(_embedding_worker_handle)
         logging.getLogger("chimera_memory").info("server exiting (pid=%s)", os.getpid())
 
 

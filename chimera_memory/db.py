@@ -111,6 +111,13 @@ DEFAULT_SETTINGS = {
     "index_system": "false",
 }
 
+CONVERSATION_ENTRY_TYPES = (
+    "user_message",
+    "assistant_message",
+    "discord_inbound",
+    "discord_outbound",
+)
+
 
 class TranscriptDB:
     """SQLite database for transcript storage with WAL mode and retry logic."""
@@ -216,6 +223,10 @@ class TranscriptDB:
         if not entries:
             return 0
 
+        entries = self._filter_duplicate_discord_entries(entries, conn)
+        if not entries:
+            return 0
+
         sql = """
             INSERT OR IGNORE INTO transcript
             (session_id, entry_type, timestamp, content, persona, source,
@@ -249,13 +260,159 @@ class TranscriptDB:
             conn = self._connect()
 
         try:
-            self.executemany_with_retry(conn, sql, params)
+            cursor = self.executemany_with_retry(conn, sql, params)
+            self._sync_sessions_for_entries(conn, entries)
             if own_conn:
                 conn.commit()
-            return len(params)
+            return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount >= 0 else len(params)
         finally:
             if own_conn:
                 conn.close()
+
+    @staticmethod
+    def _discord_dedupe_key(entry: dict) -> tuple[str, str, str, str, str] | None:
+        """Return a stable duplicate key for Discord rows captured by multiple harnesses."""
+        if entry.get("source") != "discord":
+            return None
+        entry_type = str(entry.get("entry_type") or "")
+        if entry_type not in {"discord_inbound", "discord_outbound"}:
+            return None
+        message_id = str(entry.get("message_id") or "").strip()
+        if not message_id:
+            return None
+        return (
+            entry_type,
+            str(entry.get("chat_id") or ""),
+            message_id,
+            str(entry.get("content") or ""),
+            str(entry.get("tool_name") or ""),
+        )
+
+    def _filter_duplicate_discord_entries(
+        self,
+        entries: list[dict],
+        conn: sqlite3.Connection | None,
+    ) -> list[dict]:
+        """Drop Discord rows already captured under another harness session."""
+        filtered: list[dict] = []
+        seen: set[tuple[str, str, str, str, str]] = set()
+        candidate_message_ids: set[str] = set()
+
+        for entry in entries:
+            key = self._discord_dedupe_key(entry)
+            if key is None:
+                filtered.append(entry)
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            candidate_message_ids.add(key[2])
+            filtered.append(entry)
+
+        if not candidate_message_ids:
+            return filtered
+
+        own_conn = conn is None
+        if own_conn:
+            conn = self._connect()
+        try:
+            existing: set[tuple[str, str, str, str, str]] = set()
+            message_ids = sorted(candidate_message_ids)
+            for i in range(0, len(message_ids), 500):
+                chunk = message_ids[i:i + 500]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"""
+                    SELECT entry_type, chat_id, message_id, content, tool_name
+                    FROM transcript
+                    WHERE source = 'discord'
+                      AND entry_type IN ('discord_inbound', 'discord_outbound')
+                      AND message_id IN ({placeholders})
+                    """,
+                    chunk,
+                ).fetchall()
+                existing.update(
+                    (
+                        str(row["entry_type"] or ""),
+                        str(row["chat_id"] or ""),
+                        str(row["message_id"] or ""),
+                        str(row["content"] or ""),
+                        str(row["tool_name"] or ""),
+                    )
+                    for row in rows
+                )
+            if not existing:
+                return filtered
+            return [
+                entry
+                for entry in filtered
+                if (self._discord_dedupe_key(entry) is None or self._discord_dedupe_key(entry) not in existing)
+            ]
+        finally:
+            if own_conn:
+                conn.close()
+
+    def _sync_sessions_for_entries(self, conn: sqlite3.Connection, entries: list[dict]) -> None:
+        """Ensure direct transcript writers still produce browseable session rows."""
+        aggregates: dict[str, dict[str, object]] = {}
+        for entry in entries:
+            session_id = str(entry.get("session_id") or "").strip()
+            timestamp = str(entry.get("timestamp") or "").strip()
+            if not session_id or not timestamp:
+                continue
+            aggregate = aggregates.setdefault(
+                session_id,
+                {
+                    "persona": entry.get("persona"),
+                    "started_at": timestamp,
+                    "ended_at": timestamp,
+                },
+            )
+            if not aggregate.get("persona") and entry.get("persona"):
+                aggregate["persona"] = entry.get("persona")
+            if timestamp < str(aggregate["started_at"]):
+                aggregate["started_at"] = timestamp
+            if timestamp > str(aggregate["ended_at"]):
+                aggregate["ended_at"] = timestamp
+
+        if not aggregates:
+            return
+
+        for session_id, aggregate in aggregates.items():
+            conn.execute(
+                """
+                INSERT INTO sessions (session_id, persona, started_at, ended_at, exchange_count)
+                VALUES (?, ?, ?, ?, 0)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    persona = COALESCE(sessions.persona, excluded.persona),
+                    started_at = CASE
+                        WHEN sessions.started_at IS NULL OR excluded.started_at < sessions.started_at
+                        THEN excluded.started_at ELSE sessions.started_at END,
+                    ended_at = CASE
+                        WHEN sessions.ended_at IS NULL OR excluded.ended_at > sessions.ended_at
+                        THEN excluded.ended_at ELSE sessions.ended_at END
+                """,
+                (
+                    session_id,
+                    aggregate.get("persona"),
+                    aggregate["started_at"],
+                    aggregate["ended_at"],
+                ),
+            )
+            placeholders = ",".join("?" * len(CONVERSATION_ENTRY_TYPES))
+            conn.execute(
+                f"""
+                UPDATE sessions
+                   SET exchange_count = (
+                       SELECT COUNT(*)
+                         FROM transcript
+                        WHERE session_id = ?
+                          AND entry_type IN ({placeholders})
+                   )
+                 WHERE session_id = ?
+                """,
+                (session_id, *CONVERSATION_ENTRY_TYPES, session_id),
+            )
 
     def upsert_session(self, session: dict, conn: sqlite3.Connection | None = None):
         """Insert or update a session record."""

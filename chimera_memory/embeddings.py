@@ -4,6 +4,7 @@ import json
 import struct
 import logging
 import sqlite3
+import threading
 from typing import Generator
 
 log = logging.getLogger(__name__)
@@ -11,9 +12,16 @@ log = logging.getLogger(__name__)
 # Embedding model config
 MODEL_NAME = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM = 384
+TRANSCRIPT_EMBEDDABLE_TYPES = (
+    "user_message",
+    "assistant_message",
+    "discord_inbound",
+    "discord_outbound",
+)
 
 # Lazy-loaded model singleton
 _model = None
+_model_lock = threading.Lock()
 
 
 def _get_cache_dir():
@@ -43,24 +51,34 @@ def _get_model():
     """
     global _model
     if _model is None:
-        import os
-        # Cap ONNX Runtime threads to 75% of cores
-        cpu_count = os.cpu_count() or 4
-        max_threads = max(1, int(cpu_count * 0.75))
-        os.environ.setdefault("OMP_NUM_THREADS", str(max_threads))
+        with _model_lock:
+            if _model is not None:
+                return _model
 
-        # onnxruntime reads these env vars before session creation
-        os.environ.setdefault("ORT_INTRA_OP_NUM_THREADS", str(max_threads))
-        os.environ.setdefault("ORT_INTER_OP_NUM_THREADS", str(max(1, max_threads // 2)))
-
-        cache_dir = _get_cache_dir()
-        from fastembed import TextEmbedding
-        _model = TextEmbedding(MODEL_NAME, threads=max_threads, cache_dir=cache_dir)
-        log.info(
-            "Loaded embedding model: %s (%d dims, %d/%d threads, cache=%s)",
-            MODEL_NAME, EMBEDDING_DIM, max_threads, cpu_count, cache_dir,
-        )
+            _model = _load_model()
     return _model
+
+
+def _load_model():
+    import os
+    # Cap ONNX Runtime threads to 75% of cores
+    cpu_count = os.cpu_count() or 4
+    max_threads = max(1, int(cpu_count * 0.75))
+    os.environ.setdefault("OMP_NUM_THREADS", str(max_threads))
+
+    # onnxruntime reads these env vars before session creation
+    os.environ.setdefault("ORT_INTRA_OP_NUM_THREADS", str(max_threads))
+    os.environ.setdefault("ORT_INTER_OP_NUM_THREADS", str(max(1, max_threads // 2)))
+
+    cache_dir = _get_cache_dir()
+    from fastembed import TextEmbedding
+
+    model = TextEmbedding(MODEL_NAME, threads=max_threads, cache_dir=cache_dir)
+    log.info(
+        "Loaded embedding model: %s (%d dims, %d/%d threads, cache=%s)",
+        MODEL_NAME, EMBEDDING_DIM, max_threads, cpu_count, cache_dir,
+    )
+    return model
 
 
 def embed_text(text: str) -> list[float]:
@@ -159,8 +177,28 @@ def vector_search(conn: sqlite3.Connection, query_embedding: list[float],
     return results[:limit]
 
 
+def count_unembedded_transcript_entries(conn: sqlite3.Connection) -> int:
+    """Count transcript entries that are eligible for embedding and missing one."""
+    init_embedding_table(conn)
+    placeholders = ",".join("?" * len(TRANSCRIPT_EMBEDDABLE_TYPES))
+    return int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM transcript t
+            LEFT JOIN transcript_embeddings e ON e.transcript_id = t.id
+            WHERE e.transcript_id IS NULL
+              AND t.content IS NOT NULL
+              AND t.content != ''
+              AND t.entry_type IN ({placeholders})
+            """,
+            TRANSCRIPT_EMBEDDABLE_TYPES,
+        ).fetchone()[0]
+    )
+
+
 def embed_transcript_entries(db, conn: sqlite3.Connection, batch_size: int = 100,
-                              progress_callback=None):
+                              progress_callback=None, limit: int | None = None):
     """Embed all transcript entries that don't have embeddings yet.
 
     Only embeds entries with content (skips tool_result, system, etc.).
@@ -170,19 +208,28 @@ def embed_transcript_entries(db, conn: sqlite3.Connection, batch_size: int = 100
         conn: SQLite connection
         batch_size: Number of entries to embed per batch
         progress_callback: Called with (entries_done, total_entries) after each batch
+        limit: Optional maximum entries to embed in this run
     """
     init_embedding_table(conn)
+    placeholders = ",".join("?" * len(TRANSCRIPT_EMBEDDABLE_TYPES))
+    params: list[object] = list(TRANSCRIPT_EMBEDDABLE_TYPES)
+    limit_sql = ""
+    if limit is not None:
+        limit_sql = "LIMIT ?"
+        params.append(max(0, int(limit)))
 
     # Find entries needing embeddings
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT t.id, t.content
         FROM transcript t
         LEFT JOIN transcript_embeddings e ON e.transcript_id = t.id
         WHERE e.transcript_id IS NULL
           AND t.content IS NOT NULL
           AND t.content != ''
-          AND t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
-    """).fetchall()
+          AND t.entry_type IN ({placeholders})
+        ORDER BY t.id ASC
+        {limit_sql}
+    """, params).fetchall()
 
     if not rows:
         return 0

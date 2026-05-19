@@ -135,6 +135,8 @@ def run_memory_enhancement_dry_run(
             job_id=job["job_id"],
             status="succeeded",
             response_payload=metadata,
+            actual_provider="dry_run",
+            actual_model="deterministic-local",
         )
         if result.get("ok"):
             processed.append(result["job"])

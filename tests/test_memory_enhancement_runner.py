@@ -63,7 +63,7 @@ def test_provider_runner_processes_job_with_injected_client(tmp_path: Path) -> N
 
     row = conn.execute(
         """
-        SELECT status, result_payload, error
+        SELECT status, result_payload, error, actual_provider, actual_model
         FROM memory_enhancement_jobs
         WHERE job_id = ?
         """,
@@ -71,6 +71,8 @@ def test_provider_runner_processes_job_with_injected_client(tmp_path: Path) -> N
     ).fetchone()
     assert row[0] == "succeeded"
     assert row[2] == ""
+    assert row[3] == "openai"
+    assert row[4] == "gpt-5.3-codex-spark"
     assert "Use injected clients" in row[1]
     assert '"can_use_as_instruction": false' in row[1]
 
@@ -96,7 +98,7 @@ def test_provider_runner_records_sanitized_failure(tmp_path: Path) -> None:
 
     row = conn.execute(
         """
-        SELECT status, result_payload, error
+        SELECT status, result_payload, error, actual_provider, actual_model
         FROM memory_enhancement_jobs
         WHERE job_id = ?
         """,
@@ -104,6 +106,8 @@ def test_provider_runner_records_sanitized_failure(tmp_path: Path) -> None:
     ).fetchone()
     assert row[0] == "failed"
     assert row[2] == "auth_error"
+    assert row[3] == "openai"
+    assert row[4] == "gpt-5.3-codex-spark"
     assert "auth_error" in row[1]
     assert "raw-token-value" not in row[1]
 

@@ -14,6 +14,7 @@ from typing import Any
 
 from .memory_enhancement_queue import memory_enhancement_enqueue
 from .memory_observability import _json_object, record_memory_audit_event
+from .memory_enhancement_provider import resolve_enhancement_provider_plan
 
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
@@ -43,6 +44,21 @@ def memory_enhancement_shadow_enabled(
     return str(persona or "").strip().lower() in allowlist
 
 
+def _shadow_provider_hints(source: Mapping[str, str]) -> tuple[str, str, bool]:
+    """Resolve safe provider/model hints for shadow jobs.
+
+    Explicit shadow env vars remain operator hints. Without them, stamp the
+    provider/model CM would actually choose, instead of the first configured
+    provider in a comma-separated order.
+    """
+    explicit_provider = str(source.get("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PROVIDER") or "").strip()
+    explicit_model = str(source.get("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODEL") or "").strip()
+    if explicit_provider or explicit_model:
+        return explicit_provider, explicit_model, True
+    plan = resolve_enhancement_provider_plan(source)
+    return plan.selected.provider_id, plan.selected.model, False
+
+
 def memory_enhancement_shadow_enqueue(
     conn: sqlite3.Connection,
     *,
@@ -62,12 +78,7 @@ def memory_enhancement_shadow_enqueue(
     if not memory_enhancement_shadow_enabled(persona=persona, env=source):
         return {"ok": True, "enabled": False, "enqueued": False, "reason": "shadow_disabled"}
 
-    requested_provider = str(
-        source.get("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PROVIDER")
-        or source.get("CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER")
-        or ""
-    ).split(",", 1)[0].strip()
-    requested_model = str(source.get("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODEL") or "").strip()
+    requested_provider, requested_model, explicit_provider_hint = _shadow_provider_hints(source)
 
     result = memory_enhancement_enqueue(
         conn,
@@ -87,6 +98,7 @@ def memory_enhancement_shadow_enqueue(
         "status": job.get("status") if isinstance(job, dict) else "",
         "requested_provider_present": bool(requested_provider),
         "requested_model_present": bool(requested_model),
+        "explicit_provider_hint": explicit_provider_hint,
     }
     record_memory_audit_event(
         conn,

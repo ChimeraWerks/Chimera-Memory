@@ -467,6 +467,8 @@ CREATE TABLE IF NOT EXISTS memory_enhancement_jobs (
     content_fingerprint TEXT,
     requested_provider TEXT DEFAULT '',
     requested_model TEXT DEFAULT '',
+    actual_provider TEXT DEFAULT '',
+    actual_model TEXT DEFAULT '',
     request_payload TEXT DEFAULT '{}',
     result_payload TEXT DEFAULT '{}',
     error TEXT DEFAULT '',
@@ -506,6 +508,7 @@ def init_memory_tables(conn: sqlite3.Connection):
     conn.executescript(MEMORY_SCHEMA)
     _migrate_memory_files_schema(conn)
     conn.executescript(MEMORY_POST_MIGRATION_SCHEMA)
+    _migrate_memory_enhancement_jobs_schema(conn)
     conn.commit()
 
 
@@ -525,6 +528,10 @@ def _memory_file_columns(conn: sqlite3.Connection) -> set[str]:
     return {str(row[1]) for row in conn.execute("PRAGMA table_info(memory_files)").fetchall()}
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def _ensure_memory_file_column(
     conn: sqlite3.Connection,
     columns: set[str],
@@ -534,6 +541,19 @@ def _ensure_memory_file_column(
     if name in columns:
         return
     conn.execute(f"ALTER TABLE memory_files ADD COLUMN {column_sql}")
+    columns.add(name)
+
+
+def _ensure_table_column(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: set[str],
+    name: str,
+    column_sql: str,
+) -> None:
+    if name in columns:
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
     columns.add(name)
 
 
@@ -597,4 +617,22 @@ def _migrate_memory_files_schema(conn: sqlite3.Connection) -> None:
                    END
                )
         """
+    )
+
+
+def _migrate_memory_enhancement_jobs_schema(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "memory_enhancement_jobs")
+    _ensure_table_column(
+        conn,
+        "memory_enhancement_jobs",
+        columns,
+        "actual_provider",
+        "actual_provider TEXT DEFAULT ''",
+    )
+    _ensure_table_column(
+        conn,
+        "memory_enhancement_jobs",
+        columns,
+        "actual_model",
+        "actual_model TEXT DEFAULT ''",
     )

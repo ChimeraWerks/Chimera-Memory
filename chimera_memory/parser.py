@@ -266,7 +266,7 @@ CODEX_DISCORD_USER_RE = re.compile(
 
 def parse_codex_jsonl_file(path: Path, start_offset: int = 0) -> Generator[dict, None, int]:
     """Parse a Codex rollout JSONL file from a byte offset."""
-    session_id = path.stem
+    session_id = _extract_codex_session_id(path)
     with open(path, "r", encoding="utf-8") as f:
         if start_offset > 0:
             f.seek(start_offset)
@@ -460,6 +460,28 @@ def _parse_codex_discord_context(message: str) -> dict | None:
     if not data.get("content"):
         return None
     return data
+
+
+def _extract_codex_session_id(path: Path) -> str:
+    """Read just enough of a Codex rollout file to recover its stable session id."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("type") != "session_meta":
+                    continue
+                payload = obj.get("payload")
+                if isinstance(payload, dict) and payload.get("id"):
+                    return str(payload["id"])
+    except OSError:
+        pass
+    return path.stem
 
 
 def _parse_user_entry(obj: dict, session_id: str, timestamp: str):
