@@ -11,6 +11,7 @@ FULL_SURFACES = frozenset({"", "all", "full", "legacy", "operator", "admin"})
 
 PERSONA_MEMORY_TOOLS = frozenset(
     {
+        "memory_context_pack",
         "memory_recall",
         "memory_remember",
         "memory_promote_snapshot",

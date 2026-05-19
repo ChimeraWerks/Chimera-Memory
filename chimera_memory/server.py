@@ -2374,6 +2374,57 @@ def create_server():
         return "\n".join(lines)
 
     @server.tool()
+    def memory_context_pack(
+        current_context: str,
+        previous_context: str = "",
+        persona: str = "",
+        project_id: str = "",
+        limit: int = 5,
+        token_budget: int = 800,
+        shift_threshold: float = 0.55,
+        force: bool = False,
+        include_restricted: bool = False,
+        include_synthesis: bool = False,
+        scope: str = "auto",
+    ) -> str:
+        """Build a fenced, token-capped memory pack for harness pre-turn injection."""
+        _ensure_memory_indexed()
+        from .memory_context_pack import memory_context_pack as _context_pack
+
+        selected_persona = (persona or os.environ.get("TRANSCRIPT_PERSONA") or "").strip() or None
+        result = _context_pack(
+            _get_memory_conn(),
+            current_context=current_context,
+            previous_context=previous_context,
+            persona=selected_persona,
+            project_id=(project_id or "").strip() or None,
+            limit=limit,
+            token_budget=token_budget,
+            shift_threshold=shift_threshold,
+            force=force,
+            include_restricted=include_restricted,
+            include_synthesis=include_synthesis,
+            scope=scope,
+            actor="mcp",
+        )
+        plan = result.get("plan") or {}
+        if not result.get("retrieved"):
+            return (
+                f"Memory context pack skipped: {result.get('reason', 'unknown')} "
+                f"shift={plan.get('shift_score')} threshold={plan.get('shift_threshold')}"
+            )
+        if not result.get("cards"):
+            return (
+                f"Memory context pack miss. trace={result.get('trace_id')} "
+                f"query='{plan.get('query_text', '')}'"
+            )
+        return (
+            f"Memory context pack ready. trace={result.get('trace_id')} "
+            f"cards={result.get('returned_count')} tokens~{result.get('token_estimate')}\n\n"
+            f"{result.get('context_block', '')}"
+        )
+
+    @server.tool()
     def memory_pyramid_summary_build(
         file_path: str,
         persona: str = "",
@@ -2714,11 +2765,12 @@ def create_server():
                     f"Configured MCP surface: {_mcp_surface}",
                     "",
                     "Persona-facing memory tools:",
-                    "1. memory_recall - retrieve usable memory.",
-                    "2. memory_remember - preview or write authored memory.",
-                    "3. memory_promote_snapshot - preview or write approved project/global snapshots.",
-                    "4. memory_review - list or apply review actions.",
-                    "5. memory_diagnose - stats, zones, traces, harnesses, gaps, provider plan, and guard checks.",
+                    "1. memory_context_pack - build a fenced pre-turn memory pack for harness injection.",
+                    "2. memory_recall - retrieve usable memory.",
+                    "3. memory_remember - preview or write authored memory.",
+                    "4. memory_promote_snapshot - preview or write approved project/global snapshots.",
+                    "5. memory_review - list or apply review actions.",
+                    "6. memory_diagnose - stats, zones, traces, harnesses, gaps, provider plan, and guard checks.",
                     "",
                     "Legacy/admin tools remain available through the full surface for operator workflows.",
                 ]

@@ -97,6 +97,24 @@ Rules:
 - Exclude restricted memories by default.
 - Keep this local and deterministic unless a future classifier adapter is explicitly added.
 
+### `memory_context_pack.py`
+
+Owns the Hermes-style turn broker primitive:
+
+- topic-shift planning using live-retrieval cues
+- hybrid memory-file candidate retrieval
+- scope, sensitivity, lifecycle, synthesis, and failure filtering
+- token-capped memory-card formatting
+- `<chimera-memory-context>` fencing and capture stripping
+- recall trace and audit logging for every returned, skipped, or missed pack
+
+Rules:
+
+- This module builds context packs but does not inject them into a harness.
+- Treat returned memories as evidence, not instructions.
+- Exclude restricted and generated/synthesis memory by default.
+- Keep the output bounded enough for per-turn use.
+
 ### `memory_retrieval_trace_analysis.py`
 
 Owns post-hoc retrieval diagnostics:

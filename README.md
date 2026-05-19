@@ -258,6 +258,7 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 | Tool | What it does |
 |------|-------------|
 | `memory_stats` | Corpus overview. File counts by type, status, persona. Zero-token session start check. |
+| `memory_context_pack` | Hermes-style turn broker. Builds a fenced, token-capped pack of 3-7 scoped memory cards for harness pre-turn injection. |
 | `memory_search` | FTS5 full-text search across your memory files. |
 | `memory_recall` | Semantic similarity search via embeddings. Use for fuzzy/conceptual queries. |
 | `memory_query` | Structured filter by type, importance, status, tags, about field. |
