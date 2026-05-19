@@ -35,7 +35,6 @@ PROVIDER_AFFINITY_ENV_KEYS = (
     "CHIMERA_MEMORY_USER_LLM_PROVIDER",
     "CHIMERA_MEMORY_ACTIVE_LLM_PROVIDER",
     "HERMES_INFERENCE_PROVIDER",
-    "PERSONIFYAGENTS_LLM_PROVIDER",
     "CHIMERA_CLIENT",
 )
 
@@ -239,10 +238,10 @@ def _active_pooled_credential_ref(env: Mapping[str, str], provider_id: str) -> s
 
 
 def _oauth_store_path_from_env(env: Mapping[str, str]) -> str | None:
-    explicit = str(env.get("CHIMERA_MEMORY_OAUTH_STORE") or env.get("PERSONIFYAGENTS_MEMORY_OAUTH_STORE") or "").strip()
+    explicit = str(env.get("CHIMERA_MEMORY_OAUTH_STORE") or "").strip()
     if explicit:
         return explicit
-    state_root = str(env.get("CHIMERA_MEMORY_STATE_ROOT") or env.get("PERSONIFYAGENTS_PWA_STATE_ROOT") or "").strip()
+    state_root = str(env.get("CHIMERA_MEMORY_STATE_ROOT") or "").strip()
     if state_root:
         return str((Path(state_root).expanduser() / "auth.json").resolve())
     return None

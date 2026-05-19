@@ -303,7 +303,6 @@ def _hermes_home(path: str | Path | None) -> Path:
         return Path(path).expanduser().resolve()
     configured = (
         os.environ.get("CHIMERA_MEMORY_HERMES_HOME")
-        or os.environ.get("PERSONIFYAGENTS_PWA_HERMES_HOME")
         or os.environ.get("HERMES_HOME")
     )
     if configured:

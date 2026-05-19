@@ -815,7 +815,6 @@ def _payload_int(payload: Mapping[str, Any], key: str, default: int) -> int:
 def _google_project_id_from_env() -> str:
     for name in (
         "CHIMERA_MEMORY_GOOGLE_CLOUD_PROJECT",
-        "PERSONIFYAGENTS_GOOGLE_CLOUD_PROJECT",
         "HERMES_GEMINI_PROJECT_ID",
         "GOOGLE_CLOUD_PROJECT",
         "GOOGLE_CLOUD_PROJECT_ID",

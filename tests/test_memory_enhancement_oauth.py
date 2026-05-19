@@ -471,8 +471,6 @@ def test_refresh_google_oauth_uses_credential_client_metadata_and_preserves_proj
 def test_google_oauth_client_credentials_have_hermes_public_defaults(monkeypatch):
     monkeypatch.delenv("CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_ID", raising=False)
     monkeypatch.delenv("CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("PERSONIFYAGENTS_GOOGLE_OAUTH_CLIENT_ID", raising=False)
-    monkeypatch.delenv("PERSONIFYAGENTS_GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("HERMES_GEMINI_CLIENT_ID", raising=False)
     monkeypatch.delenv("HERMES_GEMINI_CLIENT_SECRET", raising=False)
 
@@ -527,11 +525,21 @@ def test_oauth_store_rejects_ambiguous_refs(tmp_path: Path):
 
 def test_oauth_store_path_prefers_pwa_state_root(monkeypatch, tmp_path: Path):
     monkeypatch.delenv("CHIMERA_MEMORY_OAUTH_STORE", raising=False)
-    monkeypatch.delenv("PERSONIFYAGENTS_MEMORY_OAUTH_STORE", raising=False)
     monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
 
     assert resolve_oauth_store_path().name == "auth.json"
     assert resolve_oauth_store_path().parent == (tmp_path / "state").resolve()
+
+
+def test_personifyagents_oauth_store_alias_is_ignored(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("CHIMERA_MEMORY_OAUTH_STORE", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_STATE_ROOT", raising=False)
+    monkeypatch.setenv("PERSONIFYAGENTS_MEMORY_OAUTH_STORE", str(tmp_path / "pa-auth.json"))
+    monkeypatch.setenv("PERSONIFYAGENTS_PWA_STATE_ROOT", str(tmp_path / "pa-state"))
+
+    path = resolve_oauth_store_path(repo_root=tmp_path / "repo")
+
+    assert path == (tmp_path / "repo" / ".chimera-memory" / "oauth" / "auth.json").resolve()
 
 
 def test_oauth_resolver_rejects_missing_or_wrong_scheme(tmp_path: Path):

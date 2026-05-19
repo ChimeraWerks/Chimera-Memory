@@ -1188,12 +1188,10 @@ def _google_oauth_client_credentials(extra: Mapping[str, Any]) -> tuple[str, str
         return client_id, client_secret
     client_id = _first_env((
         "CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_ID",
-        "PERSONIFYAGENTS_GOOGLE_OAUTH_CLIENT_ID",
         "HERMES_GEMINI_CLIENT_ID",
     ))
     client_secret = _first_env((
         "CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_SECRET",
-        "PERSONIFYAGENTS_GOOGLE_OAUTH_CLIENT_SECRET",
         "HERMES_GEMINI_CLIENT_SECRET",
     ))
     if client_id:
@@ -1286,13 +1284,11 @@ def resolve_oauth_store_path(path: str | Path | None = None, *, repo_root: str |
         return Path(path).expanduser().resolve()
     configured = (
         os.environ.get("CHIMERA_MEMORY_OAUTH_STORE", "").strip()
-        or os.environ.get("PERSONIFYAGENTS_MEMORY_OAUTH_STORE", "").strip()
     )
     if configured:
         return Path(configured).expanduser().resolve()
     state_root = (
         os.environ.get("CHIMERA_MEMORY_STATE_ROOT", "").strip()
-        or os.environ.get("PERSONIFYAGENTS_PWA_STATE_ROOT", "").strip()
     )
     if state_root:
         return (Path(state_root).expanduser() / _DEFAULT_AUTH_STORE_NAME).resolve()
