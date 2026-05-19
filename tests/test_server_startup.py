@@ -66,11 +66,23 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
 
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
+    monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append(("health", worker_states)) or object())
     monkeypatch.setattr(server, "_prewarm_embeddings", lambda: calls.append("prewarm"))
 
     server._bootstrap_startup_services()
 
-    assert calls == ["indexer", "embedder", "prewarm"]
+    assert calls == [
+        "indexer",
+        "embedder",
+        (
+            "health",
+            {
+                "transcript_indexer": True,
+                "transcript_embedding_worker": True,
+            },
+        ),
+        "prewarm",
+    ]
 
 
 def test_background_bootstrap_logs_failures(monkeypatch, caplog):

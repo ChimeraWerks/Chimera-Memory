@@ -9,6 +9,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 _embedding_worker_handle: dict[str, object] | None = None
+_health_worker_handle: dict[str, object] | None = None
 
 
 def get_default_jsonl_dir() -> Path:
@@ -2732,6 +2733,22 @@ def create_server():
             return memory_gaps(persona=persona)
         if normalized_mode in {"provider", "provider_plan", "enhancement_provider_plan"}:
             return memory_enhancement_provider_plan()
+        if normalized_mode in {"health", "cm_health"}:
+            from .memory_health import collect_cm_health, format_cm_health
+
+            current_persona = (
+                persona
+                or _identity.persona_id
+                or _config.get("persona")
+                or os.environ.get("TRANSCRIPT_PERSONA")
+                or None
+            )
+            return format_cm_health(
+                collect_cm_health(
+                    _get_memory_conn(),
+                    persona=current_persona,
+                )
+            )
         if normalized_mode in {"consolidation", "consolidation_report"}:
             return memory_consolidation_report(persona=persona)
         if normalized_mode in {"guard", "scan"}:
@@ -2743,7 +2760,7 @@ def create_server():
             return memory_whereami()
         return (
             "Unsupported diagnose mode. Use tools, stats, zones, traces, trace_analyze, "
-            "audit, harness, gaps, provider_plan, consolidation, guard, or whereami."
+            "audit, harness, gaps, provider_plan, health, consolidation, guard, or whereami."
         )
 
     return server
@@ -2958,7 +2975,72 @@ def _start_transcript_embedding_worker() -> dict[str, object] | None:
     return {"thread": thread, "stop_event": stop_event}
 
 
+def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dict[str, object] | None:
+    """Periodically persist CM health snapshots so silent drift is visible."""
+    if not _env_bool("CHIMERA_MEMORY_HEALTH_WORKER", default=True):
+        logging.getLogger("chimera_memory.health").info("CM health worker disabled")
+        return None
+
+    log = logging.getLogger("chimera_memory.health")
+    stop_event = threading.Event()
+    interval_seconds = _env_int(
+        "CHIMERA_MEMORY_HEALTH_INTERVAL_SECONDS",
+        default=300,
+        minimum=30,
+        maximum=86400,
+    )
+    current_persona = (
+        os.environ.get("CHIMERA_PERSONA_ID")
+        or os.environ.get("TRANSCRIPT_PERSONA")
+        or os.environ.get("CHIMERA_PERSONA_NAME")
+        or None
+    )
+
+    def _run_once() -> None:
+        from .db import TranscriptDB
+        from .memory_health import record_cm_health_snapshot
+
+        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db = TranscriptDB(db_path)
+        with db.connection() as conn:
+            snapshot = record_cm_health_snapshot(
+                conn,
+                persona=current_persona,
+                worker_states=worker_states,
+            )
+        log.info("CM health snapshot status=%s", snapshot.get("status"))
+
+    def _loop() -> None:
+        log.info("CM health worker started interval=%ss", interval_seconds)
+        while not stop_event.is_set():
+            try:
+                _run_once()
+            except Exception:
+                log.exception("CM health worker iteration failed")
+            stop_event.wait(interval_seconds)
+        log.info("CM health worker stopped")
+
+    thread = threading.Thread(
+        target=_loop,
+        name="chimera-memory-health",
+        daemon=True,
+    )
+    thread.start()
+    return {"thread": thread, "stop_event": stop_event}
+
+
 def _stop_transcript_embedding_worker(handle: dict[str, object] | None) -> None:
+    if not handle:
+        return
+    stop_event = handle.get("stop_event")
+    if isinstance(stop_event, threading.Event):
+        stop_event.set()
+    thread = handle.get("thread")
+    if isinstance(thread, threading.Thread):
+        thread.join(timeout=5)
+
+
+def _stop_cm_health_worker(handle: dict[str, object] | None) -> None:
     if not handle:
         return
     stop_event = handle.get("stop_event")
@@ -2971,9 +3053,15 @@ def _stop_transcript_embedding_worker(handle: dict[str, object] | None) -> None:
 
 def _bootstrap_startup_services() -> object | None:
     """Start live maintenance without making MCP registration depend on it."""
-    global _embedding_worker_handle
+    global _embedding_worker_handle, _health_worker_handle
     indexer = _start_transcript_indexer()
     _embedding_worker_handle = _start_transcript_embedding_worker()
+    _health_worker_handle = _start_cm_health_worker(
+        {
+            "transcript_indexer": indexer is not None,
+            "transcript_embedding_worker": _embedding_worker_handle is not None,
+        }
+    )
     _prewarm_embeddings()
     return indexer
 
@@ -3031,6 +3119,7 @@ def main():
                 indexer.stop_watching()
             except Exception:
                 pass
+        _stop_cm_health_worker(_health_worker_handle)
         _stop_transcript_embedding_worker(_embedding_worker_handle)
         logging.getLogger("chimera_memory").info("server exiting (pid=%s)", os.getpid())
 

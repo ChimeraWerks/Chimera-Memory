@@ -416,6 +416,15 @@ Embeddings are only generated for conversation content (user messages, assistant
 
 Use `embed_transcripts` or `chimera-memory` internals for one-time historical catch-up if a DB has a large backlog from before the worker existed.
 
+### Health Snapshots
+
+`chimera-memory serve` also starts a low-cadence health worker by default. Every five minutes it records a `cm_health_snapshot` audit event and logs the overall status. The snapshot checks embedding backlog/staleness, enhancement queue age, provider drift, session rollup mismatches, duplicate message capture, worker startup state, and latest success timestamps.
+
+Use `memory_diagnose(mode="health")` for a live health read. Tune with:
+
+- `CHIMERA_MEMORY_HEALTH_WORKER=false` to disable the worker.
+- `CHIMERA_MEMORY_HEALTH_INTERVAL_SECONDS=300` for the snapshot interval.
+
 ### Hybrid Search (semantic_search)
 
 `semantic_search` combines FTS5 keyword matching with vector similarity via Reciprocal Rank Fusion. Results are re-ranked by recency, session affinity, and content richness. Finds both exact matches and semantically similar content.

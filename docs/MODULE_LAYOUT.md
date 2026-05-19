@@ -63,6 +63,24 @@ Rules:
 - This module must not import review or enhancement queue modules.
 - Audit payloads should be structured and safe. Do not write raw secrets.
 
+### `memory_health.py`
+
+Owns CM background-system health snapshots:
+
+- transcript embedding backlog and staleness checks
+- enhancement queue age checks
+- provider drift checks
+- session rollup and duplicate-capture checks
+- last-success timestamps
+- `cm_health_snapshot` audit payloads
+
+Rules:
+
+- Health checks may read transcript and memory sidecar tables.
+- Health checks may call observability audit helpers.
+- Health checks must not import `memory.py` at module import time.
+- Keep checks local and cheap enough for `serve` to run every few minutes.
+
 ### `memory_live_retrieval.py`
 
 Owns live-retrieval planning lifted from OB1's live retrieval recipe:
@@ -460,6 +478,10 @@ memory_live_retrieval.py
   imports memory_observability.py
   imports sanitizer.py
 
+memory_health.py
+  imports embeddings.py
+  imports memory_observability.py
+
 memory_enhancement_queue.py
   imports memory_frontmatter.py
   imports memory_observability.py
@@ -567,6 +589,7 @@ Avoid:
 - Schema: `tests/test_memory_schema_hygiene.py`
 - Governance: `tests/test_memory_governance.py`
 - Observability: `tests/test_memory_observability.py`
+- Health snapshots: `tests/test_memory_health.py`
 - Live retrieval: `tests/test_memory_live_retrieval.py`
 - Retrieval trace analysis: `tests/test_memory_retrieval_trace_analysis.py`
 - Review: `tests/test_memory_review.py`
