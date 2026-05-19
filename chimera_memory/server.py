@@ -2670,8 +2670,8 @@ def create_server():
         """Show zone assignments for all memories.
 
         Zones determine loading behavior:
-        - CORE (>=0.80): always loaded every session
-        - ACTIVE (>=0.60): loaded when tags match current task
+        - CORE (>=0.70): always loaded every session
+        - ACTIVE (>=0.55): loaded when tags match current task
         - PASSIVE (>=0.30): loaded only on direct query
         - ARCHIVE (<0.30): never auto-loaded
 
