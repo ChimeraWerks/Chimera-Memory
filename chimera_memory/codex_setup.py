@@ -452,6 +452,11 @@ def _build_codex_install_env(
     cleaned_root = persona_root.strip()
     if cleaned_root:
         env["CHIMERA_PERSONA_ROOT"] = cleaned_root
+    if enable_provider_worker:
+        env["CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE"] = "true"
+        env["CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS"] = (
+            persona.strip() or (_persona_name_from_id(persona_id) if persona_id else "")
+        )
     return env
 
 

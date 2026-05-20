@@ -340,7 +340,7 @@ generated worker files without launching the provider CLI.
 
 ### What It Does
 
-When a memory file is written or updated AND shadow mode is enabled for that persona (via `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true` plus the persona-allowlist env var), the indexer enqueues it for enhancement. A sidecar worker pulls jobs, sends them to the configured provider, and writes the extracted metadata back to a dedicated shadow table. Inspect the per-job outcome via `memory_enhancement_shadow_report` (status, type inference, sensitivity escalation, topic/entity overlap with frontmatter tags). The separate `memory_review_pending` / `memory_review_action` tools govern memory files themselves, not enhancement output.
+When a memory file is written or updated AND enhancement auto-enqueue is enabled for that persona (via `CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE=true` plus the persona-allowlist env var), the indexer enqueues it for enhancement. Legacy shadow mode (`CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true`) still enables the same queue for comparison-only pilots. A sidecar worker pulls jobs, sends them to the configured provider, and stores extracted metadata as generated, pending-review evidence. Inspect the per-job outcome via `memory_enhancement_shadow_report` (status, type inference, sensitivity escalation, topic/entity overlap with frontmatter tags). The separate `memory_review_pending` / `memory_review_action` tools govern memory files themselves, not enhancement output.
 
 ### Provider Support
 
@@ -365,7 +365,7 @@ The enhancement system is staged for safety. Each stage explicitly does not unlo
 | Stage 2 (writeback) | Gated on rename normalization + single-slot variance follow-ups | Default-on behavior |
 | Stage 3 (default-on) | Gated on type-aware summary contract + per-type budget rules | — |
 
-Set `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true` and `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PERSONAS=<persona>` to enable shadow mode for a specific persona's writes.
+Set `CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE=true` and `CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS=<persona>` to enable production auto-enqueue for a specific persona's writes. Set `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true` and `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PERSONAS=<persona>` only when intentionally running comparison-only shadow pilots.
 
 ### Credential Governance
 
@@ -488,6 +488,8 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 `chimera-memory serve` drains the enhancement queue by default with the deterministic local dry-run worker. That keeps shadow-enqueued memory metadata jobs from rotting while avoiding network calls, provider spend, or credential use. Provider-backed execution is explicit opt-in:
 
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER=false` disables the worker.
+- `CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE=true` queues changed memory files for enhancement.
+- `CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS=<persona>` allowlists personas for auto-enqueue.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=dry_run` is the default.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` uses a supervised Codex/Claude/Antigravity CLI worker.
 - `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude|agy` selects the CLI runtime for `cli_worker`.

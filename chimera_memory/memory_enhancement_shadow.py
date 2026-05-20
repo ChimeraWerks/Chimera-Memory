@@ -44,6 +44,22 @@ def memory_enhancement_shadow_enabled(
     return str(persona or "").strip().lower() in allowlist
 
 
+def memory_enhancement_auto_enqueue_enabled(
+    *, persona: str | None = None, env: Mapping[str, str] | None = None
+) -> bool:
+    """Return True when production auto-enqueue is enabled for a persona."""
+    source = env or os.environ
+    enabled = str(source.get("CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE", "")).strip().lower()
+    if enabled not in TRUE_VALUES:
+        return False
+    allowlist = _split_csv(source.get("CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS", ""))
+    if not allowlist:
+        return False
+    if "*" in allowlist:
+        return True
+    return str(persona or "").strip().lower() in allowlist
+
+
 def _shadow_provider_hints(source: Mapping[str, str]) -> tuple[str, str, bool]:
     """Resolve safe provider/model hints for shadow jobs.
 
@@ -75,8 +91,10 @@ def memory_enhancement_shadow_enqueue(
     accidentally queue every persona.
     """
     source = env or os.environ
-    if not memory_enhancement_shadow_enabled(persona=persona, env=source):
-        return {"ok": True, "enabled": False, "enqueued": False, "reason": "shadow_disabled"}
+    shadow_mode = memory_enhancement_shadow_enabled(persona=persona, env=source)
+    auto_enqueue = memory_enhancement_auto_enqueue_enabled(persona=persona, env=source)
+    if not shadow_mode and not auto_enqueue:
+        return {"ok": True, "enabled": False, "enqueued": False, "reason": "auto_enqueue_disabled"}
 
     requested_provider, requested_model, explicit_provider_hint = _shadow_provider_hints(source)
 
@@ -92,6 +110,9 @@ def memory_enhancement_shadow_enqueue(
         "reason": reason,
         "file_path": file_path,
         "enabled": True,
+        "mode": "shadow" if shadow_mode else "auto_enqueue",
+        "shadow_mode": shadow_mode,
+        "auto_enqueue": auto_enqueue,
         "ok": bool(result.get("ok")) if isinstance(result, dict) else False,
         "enqueued": bool(result.get("enqueued")) if isinstance(result, dict) else False,
         "job_id": job.get("job_id") if isinstance(job, dict) else "",

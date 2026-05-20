@@ -327,11 +327,19 @@ stores a category such as `auth_error` or `parse_error` plus provider/model ids.
 ## Shadow Mode
 
 `chimera_memory/memory_enhancement_shadow.py` wires real memory-file operations
-to the enhancement queue without cutting over authority. When enabled, changed
-memory files are indexed normally, then queued for enhancement. Current
-frontmatter, local search, embeddings, and recall remain authoritative.
+to the enhancement queue. When enabled, changed memory files are indexed
+normally, then queued for enhancement. Current frontmatter, local search,
+embeddings, and recall remain authoritative until a later explicit writeback
+stage promotes generated metadata.
 
-Shadow mode is opt-in and allowlisted:
+Production auto-enqueue is opt-in and allowlisted:
+
+```text
+CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE=true
+CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS=sarah
+```
+
+Legacy comparison-only shadow mode remains available:
 
 ```text
 CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true
