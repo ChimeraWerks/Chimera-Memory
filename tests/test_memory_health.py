@@ -94,12 +94,34 @@ def test_health_detects_session_rollup_and_duplicate_drift() -> None:
         )
     conn.commit()
 
-    snapshot = collect_cm_health(conn, persona="asa")
+    snapshot = collect_cm_health(conn, persona="asa", repair_session_rollups=False)
 
     assert snapshot["checks"]["session_rollups"]["status"] == "broken"
     assert snapshot["checks"]["session_rollups"]["zero_exchange_sessions_with_rows"] == 1
     assert snapshot["checks"]["duplicate_capture"]["status"] == "degraded"
     assert snapshot["checks"]["duplicate_capture"]["duplicate_groups"] == 1
+
+
+def test_health_auto_repairs_session_rollup_drift() -> None:
+    conn = _conn()
+    transcript_id = _insert_transcript(conn, session_id="stale")
+    conn.execute(
+        "INSERT INTO transcript_embeddings (transcript_id, embedding) VALUES (?, ?)",
+        (transcript_id, pack_embedding([0.0] * 384)),
+    )
+    conn.execute(
+        "INSERT INTO sessions (session_id, persona, started_at, ended_at, exchange_count) VALUES (?, ?, ?, ?, ?)",
+        ("stale", "asa", "2026-05-19T20:00:00Z", "2026-05-19T20:00:00Z", 23),
+    )
+    conn.commit()
+
+    snapshot = collect_cm_health(conn, persona="asa")
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["checks"]["session_rollups"]["status"] == "ok"
+    assert snapshot["checks"]["session_rollups"]["mismatch_count"] == 0
+    assert snapshot["checks"]["session_rollups"]["auto_repaired_count"] == 1
+    assert conn.execute("SELECT exchange_count FROM sessions WHERE session_id = 'stale'").fetchone()[0] == 1
 
 
 def test_health_allows_non_conversation_zero_exchange_sessions() -> None:

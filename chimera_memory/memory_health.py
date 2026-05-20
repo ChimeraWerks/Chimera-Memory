@@ -261,11 +261,19 @@ def collect_cm_health(
     worker_states: dict[str, bool] | None = None,
     thresholds: dict[str, int] | None = None,
     now: datetime | None = None,
+    repair_session_rollups: bool = True,
 ) -> dict[str, Any]:
     """Collect a structured health snapshot for CM's automatic background work."""
     from .memory import init_memory_tables
 
     init_memory_tables(conn)
+    repaired_rollups = 0
+    if repair_session_rollups:
+        from .db import repair_session_rollups as _repair_session_rollups
+
+        repaired_rollups = _repair_session_rollups(conn)
+        if repaired_rollups:
+            conn.commit()
     now = now or datetime.now(timezone.utc)
     effective_thresholds = dict(DEFAULT_THRESHOLDS)
     if thresholds:
@@ -279,6 +287,8 @@ def collect_cm_health(
         "duplicate_capture": _check_duplicate_capture(conn),
         "last_success": _check_last_success(conn),
     }
+    if repaired_rollups:
+        checks["session_rollups"]["auto_repaired_count"] = repaired_rollups
     if worker_states:
         checks["workers"] = {
             "status": "ok" if all(worker_states.values()) else "degraded",

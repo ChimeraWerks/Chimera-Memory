@@ -119,6 +119,74 @@ CONVERSATION_ENTRY_TYPES = (
 )
 
 
+def repair_session_rollups(conn: sqlite3.Connection) -> int:
+    """Repair session rows and exchange counts from existing transcript rows."""
+    conn.execute(
+        """
+        INSERT INTO sessions (session_id, persona, started_at, ended_at, exchange_count)
+        SELECT
+            t.session_id,
+            MIN(t.persona),
+            MIN(t.timestamp),
+            MAX(t.timestamp),
+            SUM(CASE
+                WHEN t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
+                THEN 1 ELSE 0 END)
+        FROM transcript t
+        WHERE t.session_id IS NOT NULL AND t.session_id != ''
+        GROUP BY t.session_id
+        ON CONFLICT(session_id) DO NOTHING
+        """
+    )
+    cursor = conn.execute(
+        """
+        UPDATE sessions
+           SET started_at = COALESCE((
+                   SELECT MIN(t.timestamp)
+                     FROM transcript t
+                    WHERE t.session_id = sessions.session_id
+               ), started_at),
+               ended_at = COALESCE((
+                   SELECT MAX(t.timestamp)
+                     FROM transcript t
+                    WHERE t.session_id = sessions.session_id
+               ), ended_at),
+               persona = COALESCE(persona, (
+                   SELECT t.persona
+                     FROM transcript t
+                    WHERE t.session_id = sessions.session_id
+                      AND t.persona IS NOT NULL
+                      AND t.persona != ''
+                    ORDER BY t.id ASC
+                    LIMIT 1
+               )),
+               exchange_count = COALESCE((
+                   SELECT COUNT(*)
+                     FROM transcript t
+                    WHERE t.session_id = sessions.session_id
+                      AND t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
+               ), exchange_count)
+         WHERE EXISTS (
+               SELECT 1
+                 FROM transcript t
+                WHERE t.session_id = sessions.session_id
+           )
+           AND (
+               COALESCE(exchange_count, 0) != COALESCE((
+                   SELECT COUNT(*)
+                     FROM transcript t
+                    WHERE t.session_id = sessions.session_id
+                      AND t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
+               ), 0)
+               OR started_at IS NULL
+               OR ended_at IS NULL
+               OR persona IS NULL
+           )
+        """
+    )
+    return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount >= 0 else 0
+
+
 class TranscriptDB:
     """SQLite database for transcript storage with WAL mode and retry logic."""
 
@@ -421,72 +489,10 @@ class TranscriptDB:
             conn = self._connect()
 
         try:
-            conn.execute(
-                """
-                INSERT INTO sessions (session_id, persona, started_at, ended_at, exchange_count)
-                SELECT
-                    t.session_id,
-                    MIN(t.persona),
-                    MIN(t.timestamp),
-                    MAX(t.timestamp),
-                    SUM(CASE
-                        WHEN t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
-                        THEN 1 ELSE 0 END)
-                FROM transcript t
-                WHERE t.session_id IS NOT NULL AND t.session_id != ''
-                GROUP BY t.session_id
-                ON CONFLICT(session_id) DO NOTHING
-                """
-            )
-            cursor = conn.execute(
-                """
-                UPDATE sessions
-                   SET started_at = COALESCE((
-                           SELECT MIN(t.timestamp)
-                             FROM transcript t
-                            WHERE t.session_id = sessions.session_id
-                       ), started_at),
-                       ended_at = COALESCE((
-                           SELECT MAX(t.timestamp)
-                             FROM transcript t
-                            WHERE t.session_id = sessions.session_id
-                       ), ended_at),
-                       persona = COALESCE(persona, (
-                           SELECT t.persona
-                             FROM transcript t
-                            WHERE t.session_id = sessions.session_id
-                              AND t.persona IS NOT NULL
-                              AND t.persona != ''
-                            ORDER BY t.id ASC
-                            LIMIT 1
-                       )),
-                       exchange_count = COALESCE((
-                           SELECT COUNT(*)
-                             FROM transcript t
-                            WHERE t.session_id = sessions.session_id
-                              AND t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
-                       ), exchange_count)
-                 WHERE EXISTS (
-                       SELECT 1
-                         FROM transcript t
-                        WHERE t.session_id = sessions.session_id
-                   )
-                   AND (
-                       COALESCE(exchange_count, 0) != COALESCE((
-                           SELECT COUNT(*)
-                             FROM transcript t
-                            WHERE t.session_id = sessions.session_id
-                              AND t.entry_type IN ('user_message', 'assistant_message', 'discord_inbound', 'discord_outbound')
-                       ), 0)
-                       OR started_at IS NULL
-                       OR ended_at IS NULL
-                       OR persona IS NULL
-                   )
-                """
-            )
+            repaired = repair_session_rollups(conn)
             if own_conn:
                 conn.commit()
-            return cursor.rowcount if cursor.rowcount is not None and cursor.rowcount >= 0 else 0
+            return repaired
         finally:
             if own_conn:
                 conn.close()
