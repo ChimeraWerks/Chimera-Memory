@@ -97,6 +97,25 @@ Rules:
 - Check budget before claiming queue jobs so denied work stays pending.
 - Local deterministic/dry-run work must not consume provider budget.
 
+### `memory_cli_worker_supervisor.py`
+
+Owns headless CLI worker launch scaffolding:
+
+- worker-local `AGENTS.md`
+- worker-local Codex MCP config with `worker` tool surface
+- bounded Codex `exec` command construction
+- process launch, restart loop, and log file paths
+
+Rules:
+
+- Supervisor code may spawn CLI processes only when explicitly enabled by env.
+- Generated worker MCP config must disable nested CM enhancement, embedding,
+  and health workers to avoid recursive process trees.
+- Do not copy or print provider credentials. Auth reuse is a user/operator
+  setup concern, not supervisor code.
+- Worker output must come back through `memory_worker_submit_result`, not
+  free-form stdout scraping.
+
 ### `memory_live_retrieval.py`
 
 Owns live-retrieval planning lifted from OB1's live retrieval recipe:
@@ -518,6 +537,10 @@ memory_live_retrieval.py
 memory_health.py
   imports embeddings.py
   imports memory_observability.py
+
+memory_cli_worker_supervisor.py
+  imports no CM behavior modules
+  writes worker-local instruction/config files
 
 memory_enhancement_queue.py
   imports memory_frontmatter.py

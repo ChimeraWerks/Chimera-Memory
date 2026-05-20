@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+from types import SimpleNamespace
 
 from chimera_memory import server
 
@@ -115,6 +116,31 @@ def test_enhancement_worker_starts_dry_run_by_default(monkeypatch):
     assert calls == [("thread.start", "chimera-memory-enhancement-worker", True)]
     assert handle is not None
     assert handle["mode"] == "dry_run"
+
+
+def test_enhancement_worker_can_start_cli_worker_supervisor(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_load(env):
+        calls.append(("load", env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"]))
+        return SimpleNamespace(worker_id="worker-1", provider="openai", worker_root=tmp_path / "worker")
+
+    def fake_start(config):
+        calls.append(("start", config))
+        return {"thread": object(), "stop_event": object()}
+
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE", "cli_worker")
+    monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path))
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.load_codex_cli_worker_config", fake_load)
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.start_codex_cli_worker_supervisor", fake_start)
+
+    handle = server._start_memory_enhancement_worker()
+
+    assert calls[0] == ("load", "cli_worker")
+    assert calls[1][0] == "start"
+    assert calls[1][1].worker_id == "worker-1"
+    assert handle is not None
+    assert handle["mode"] == "cli_worker"
 
 
 def test_background_bootstrap_logs_failures(monkeypatch, caplog):

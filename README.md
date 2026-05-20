@@ -323,6 +323,11 @@ launcher itself is not implemented yet. `chimera-memory enhance worker-fake`
 exercises the same claim/budget/submit protocol with deterministic local
 metadata for tests and operator smoke checks.
 
+Codex CLI worker supervision is available as an explicit opt-in by setting
+`CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`. It launches bounded
+`codex exec` worker passes with a worker-local `AGENTS.md` and worker-only MCP
+config. It is disabled by default; dry-run remains the no-provider floor.
+
 ### What It Does
 
 When a memory file is written or updated AND shadow mode is enabled for that persona (via `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true` plus the persona-allowlist env var), the indexer enqueues it for enhancement. A sidecar worker pulls jobs, sends them to the configured provider, and writes the extracted metadata back to a dedicated shadow table. Inspect the per-job outcome via `memory_enhancement_shadow_report` (status, type inference, sensitivity escalation, topic/entity overlap with frontmatter tags). The separate `memory_review_pending` / `memory_review_action` tools govern memory files themselves, not enhancement output.

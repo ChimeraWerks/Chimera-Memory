@@ -3231,7 +3231,7 @@ def _start_memory_enhancement_worker() -> dict[str, object] | None:
         return None
 
     mode = os.environ.get("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE", "dry_run").strip().lower().replace("-", "_")
-    if mode not in {"dry_run", "provider"}:
+    if mode not in {"dry_run", "provider", "cli_worker"}:
         mode = "dry_run"
 
     log = logging.getLogger("chimera_memory.enhancement-worker")
@@ -3249,6 +3249,20 @@ def _start_memory_enhancement_worker() -> dict[str, object] | None:
         maximum=100,
     )
     current_persona = os.environ.get("CHIMERA_PERSONA_NAME") or os.environ.get("TRANSCRIPT_PERSONA") or None
+
+    if mode == "cli_worker":
+        from .memory_cli_worker_supervisor import load_codex_cli_worker_config, start_codex_cli_worker_supervisor
+
+        config = load_codex_cli_worker_config(os.environ)
+        handle = start_codex_cli_worker_supervisor(config)
+        log.info(
+            "memory enhancement CLI worker supervisor started worker_id=%s provider=%s root=%s",
+            config.worker_id,
+            config.provider,
+            config.worker_root,
+        )
+        handle["mode"] = mode
+        return handle
 
     def _run_once() -> None:
         from .db import TranscriptDB
