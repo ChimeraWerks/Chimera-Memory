@@ -1,9 +1,11 @@
 """JSONL indexer: import log, backfill, and file watching."""
 
 import hashlib
+import fnmatch
 import json
 import logging
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -16,6 +18,8 @@ from .sanitizer import sanitize_content
 log = logging.getLogger(__name__)
 
 BATCH_SIZE = 500
+TRANSCRIPT_EXCLUDE_GLOBS_ENV = "CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_GLOBS"
+TRANSCRIPT_EXCLUDE_SESSION_IDS_ENV = "CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_SESSION_IDS"
 
 
 def get_file_hash(filepath: Path) -> str:
@@ -25,6 +29,14 @@ def get_file_hash(filepath: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _split_filter_env(value: str | None) -> list[str]:
+    return [part.strip() for part in re.split(r"[;,\n]+", str(value or "")) if part.strip()]
+
+
+def _normalize_filter_pattern(value: str) -> str:
+    return str(value or "").strip().replace("\\", "/").lower().rstrip("/")
 
 
 class Indexer:
@@ -45,6 +57,8 @@ class Indexer:
         self.recursive = self.parser.recursive if recursive is None else recursive
         persona_root = os.environ.get("CHIMERA_PERSONA_ROOT")
         self.persona_root = self._normalize_path(persona_root) if persona_root else None
+        self.exclude_globs = [_normalize_filter_pattern(pattern) for pattern in _split_filter_env(os.environ.get(TRANSCRIPT_EXCLUDE_GLOBS_ENV))]
+        self.exclude_session_ids = set(_split_filter_env(os.environ.get(TRANSCRIPT_EXCLUDE_SESSION_IDS_ENV)))
         self._stop_event = threading.Event()
         self._watcher_thread = None
         self._poll_thread = None
@@ -59,6 +73,23 @@ class Indexer:
             return str(value).replace("\\", "/").lower().rstrip("/")
 
     def _should_index_file(self, path: Path) -> bool:
+        normalized_path = self._normalize_path(path) or str(path).replace("\\", "/").lower()
+        for pattern in self.exclude_globs:
+            if not pattern:
+                continue
+            if (
+                fnmatch.fnmatch(normalized_path, pattern)
+                or fnmatch.fnmatch(path.name.lower(), pattern)
+                or pattern in normalized_path
+            ):
+                log.info("Skipping %s: matched transcript exclude glob", path)
+                return False
+        if self.exclude_session_ids:
+            metadata = self.parser.extract_session_metadata(path)
+            session_id = str(metadata.get("session_id") or "").strip()
+            if session_id in self.exclude_session_ids:
+                log.info("Skipping %s: matched transcript exclude session id", path)
+                return False
         if self.parser.format_name != "codex" or not self.persona_root:
             return True
         metadata = self.parser.extract_session_metadata(path)

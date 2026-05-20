@@ -52,6 +52,49 @@ def test_mark_existing_files_seen_starts_tail_at_current_eof(tmp_path):
     assert db.stats()["entry_count"] == 0
 
 
+def test_indexer_excludes_worker_jsonl_by_glob(monkeypatch, tmp_path):
+    jsonl_dir = tmp_path / "sessions"
+    worker_dir = jsonl_dir / "workers"
+    worker_dir.mkdir(parents=True)
+    write_jsonl(jsonl_dir, "normal.jsonl", [
+        {"type": "user", "message": {"content": "normal content"}, "timestamp": "2026-04-05T10:00:00Z", "sessionId": "normal-1", "uuid": "u1"},
+    ])
+    write_jsonl(worker_dir, "memory-worker.jsonl", [
+        {"type": "user", "message": {"content": "worker private content"}, "timestamp": "2026-04-05T10:00:00Z", "sessionId": "worker-1", "uuid": "w1"},
+    ])
+    db = TranscriptDB(tmp_path / "transcript.db")
+    monkeypatch.setenv("CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_GLOBS", "*/workers/*.jsonl")
+
+    indexer = Indexer(db, jsonl_dir, persona="asa", recursive=True)
+    indexer.backfill()
+
+    assert db.stats()["entry_count"] == 1
+    with db.connection() as conn:
+        rows = conn.execute("SELECT content FROM transcript ORDER BY id").fetchall()
+    assert [row["content"] for row in rows] == ["normal content"]
+
+
+def test_indexer_excludes_worker_jsonl_by_session_id(monkeypatch, tmp_path):
+    jsonl_dir = tmp_path / "sessions"
+    jsonl_dir.mkdir()
+    write_jsonl(jsonl_dir, "normal.jsonl", [
+        {"type": "user", "message": {"content": "normal content"}, "timestamp": "2026-04-05T10:00:00Z", "sessionId": "normal-1", "uuid": "u1"},
+    ])
+    write_jsonl(jsonl_dir, "worker.jsonl", [
+        {"type": "user", "message": {"content": "worker private content"}, "timestamp": "2026-04-05T10:00:00Z", "sessionId": "worker-session", "uuid": "w1"},
+    ])
+    db = TranscriptDB(tmp_path / "transcript.db")
+    monkeypatch.setenv("CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_SESSION_IDS", "worker-session")
+
+    indexer = Indexer(db, jsonl_dir, persona="asa")
+    indexer.backfill()
+
+    assert db.stats()["entry_count"] == 1
+    with db.connection() as conn:
+        rows = conn.execute("SELECT content FROM transcript ORDER BY id").fetchall()
+    assert [row["content"] for row in rows] == ["normal content"]
+
+
 def run():
     global tmpdir
     tmpdir = tempfile.mkdtemp()

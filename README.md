@@ -504,6 +504,23 @@ Every JSONL file is tracked with an MD5 hash. On restart or re-run:
 
 First backfill of 31 sessions (55MB JSONL): **~2 seconds.** Re-run: **~0.3 seconds.**
 
+### Transcript Exclusions
+
+Worker and supervisor logs can be excluded before parsing so they do not enter
+normal transcript recall or semantic search. This is required for future
+persistent CLI memory workers, whose own JSONL audit trail must not create a
+self-referential enhancement loop.
+
+- `CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_GLOBS` skips matching JSONL paths. Separate multiple patterns with `;`, `,`, or newlines.
+- `CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_SESSION_IDS` skips JSONL files whose extracted session id matches one of the listed IDs.
+
+Example:
+
+```bash
+CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_GLOBS="*/memory-workers/*.jsonl"
+CHIMERA_MEMORY_TRANSCRIPT_EXCLUDE_SESSION_IDS="codex-memory-worker-1"
+```
+
 ### Identity Cascade
 
 Per-persona launches can now provide a minimal identity and let CM derive the rest. If `CHIMERA_PERSONA_ID=role/name` is set, CM derives `CHIMERA_PERSONA_NAME`, `TRANSCRIPT_PERSONA`, and the per-persona transcript DB path when explicit env/config values are absent. If `CHIMERA_PERSONA_ROOT` is also set, CM derives `CHIMERA_PERSONAS_DIR` and `CHIMERA_SHARED_ROOT`.
