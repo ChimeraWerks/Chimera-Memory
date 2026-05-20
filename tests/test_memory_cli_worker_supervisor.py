@@ -12,6 +12,7 @@ from chimera_memory.memory_cli_worker_supervisor import (
     claude_worker_mcp_config,
     claude_worker_prompt,
     codex_worker_command,
+    codex_worker_config_toml,
     codex_worker_mcp_config,
     codex_worker_prompt,
     ensure_agy_worker_files,
@@ -167,6 +168,20 @@ def test_codex_worker_mcp_config_uses_worker_surface_and_disables_nested_workers
     assert env["TRANSCRIPT_PERSONA"] == "asa"
 
 
+def test_codex_worker_config_toml_uses_current_mcp_shape(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    rendered = codex_worker_config_toml(config)
+
+    assert rendered.startswith("# ")
+    assert '[mcp_servers."chimera-memory-worker"]' in rendered
+    assert 'command = "chimera-memory-test"' in rendered
+    assert 'args = ["serve"]' in rendered
+    assert '[mcp_servers."chimera-memory-worker".env]' in rendered
+    assert 'CHIMERA_MEMORY_MCP_SURFACE = "worker"' in rendered
+    assert f'TRANSCRIPT_DB_PATH = "{str(tmp_path / "transcript.db").replace("\\", "\\\\")}"' in rendered
+
+
 def test_claude_worker_mcp_config_uses_worker_surface_and_disables_nested_workers(tmp_path: Path) -> None:
     config = _claude_config(tmp_path)
 
@@ -208,9 +223,12 @@ def test_ensure_codex_worker_files_writes_agents_and_mcp_config(tmp_path: Path) 
 
     agents = Path(files["agents"]).read_text(encoding="utf-8")
     mcp_config = Path(files["mcp_config"]).read_text(encoding="utf-8")
+    legacy_mcp_config = Path(files["mcp_legacy_json"]).read_text(encoding="utf-8")
     assert "CM Enhancement Worker" in agents
     assert "Do not write memories directly" in agents
+    assert '[mcp_servers."chimera-memory-worker"]' in mcp_config
     assert "chimera-memory-worker" in mcp_config
+    assert "chimera-memory-worker" in legacy_mcp_config
     assert Path(files["sessions"]).is_dir()
     assert Path(files["logs"]).is_dir()
 
@@ -258,8 +276,8 @@ def test_codex_worker_command_is_headless_and_read_only(tmp_path: Path) -> None:
     assert "--json" in command
     assert "--sandbox" in command
     assert "read-only" in command
-    assert "--ask-for-approval" in command
-    assert "never" in command
+    assert "--ephemeral" in command
+    assert "--skip-git-repo-check" in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert command[-1] == "-"
 

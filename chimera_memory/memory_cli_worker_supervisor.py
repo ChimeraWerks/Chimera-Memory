@@ -415,6 +415,26 @@ def codex_worker_mcp_config(config: CodexCliWorkerConfig) -> dict[str, Any]:
     )
 
 
+def _toml_string(value: object) -> str:
+    return json.dumps(str(value or ""))
+
+
+def codex_worker_config_toml(config: CodexCliWorkerConfig) -> str:
+    """Render the Codex 0.131+ MCP config.toml for the worker server."""
+    server = codex_worker_mcp_config(config)["mcpServers"]["chimera-memory-worker"]
+    lines = [
+        f"# {GENERATED_SENTINEL}",
+        '[mcp_servers."chimera-memory-worker"]',
+        f"command = {_toml_string(server['command'])}",
+        "args = [" + ", ".join(_toml_string(arg) for arg in server["args"]) + "]",
+        "",
+        '[mcp_servers."chimera-memory-worker".env]',
+    ]
+    for key in sorted(server["env"]):
+        lines.append(f"{key} = {_toml_string(server['env'][key])}")
+    return "\n".join(lines) + "\n"
+
+
 def claude_worker_mcp_config(config: ClaudeCliWorkerConfig) -> dict[str, Any]:
     return _worker_mcp_config(
         db_path=config.db_path,
@@ -445,14 +465,22 @@ def ensure_codex_worker_files(config: CodexCliWorkerConfig) -> dict[str, str]:
     if not agents_path.exists() or GENERATED_SENTINEL in agents_path.read_text(encoding="utf-8", errors="ignore"):
         agents_path.write_text(agents_text, encoding="utf-8")
 
-    mcp_path = config.codex_home / "mcp_servers.json"
-    mcp_path.write_text(json.dumps(codex_worker_mcp_config(config), indent=2) + "\n", encoding="utf-8")
+    config_toml_path = config.codex_home / "config.toml"
+    if (
+        not config_toml_path.exists()
+        or GENERATED_SENTINEL in config_toml_path.read_text(encoding="utf-8", errors="ignore")
+    ):
+        config_toml_path.write_text(codex_worker_config_toml(config), encoding="utf-8")
+
+    legacy_mcp_path = config.codex_home / "mcp_servers.json"
+    legacy_mcp_path.write_text(json.dumps(codex_worker_mcp_config(config), indent=2) + "\n", encoding="utf-8")
 
     return {
         "worker_root": str(config.worker_root),
         "codex_home": str(config.codex_home),
         "agents": str(agents_path),
-        "mcp_config": str(mcp_path),
+        "mcp_config": str(config_toml_path),
+        "mcp_legacy_json": str(legacy_mcp_path),
         "sessions": str(config.worker_root / "sessions"),
         "logs": str(config.worker_root / "logs"),
     }
@@ -533,8 +561,8 @@ def codex_worker_command(config: CodexCliWorkerConfig) -> list[str]:
         "--json",
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
+        "--ephemeral",
+        "--skip-git-repo-check",
         "--cd",
         str(config.worker_root),
     ]
@@ -854,7 +882,8 @@ def inspect_cli_worker_setup(
                 "worker_root": str(config.worker_root),
                 "codex_home": str(config.codex_home),
                 "agents": str(config.worker_root / "AGENTS.md"),
-                "mcp_config": str(config.codex_home / "mcp_servers.json"),
+                "mcp_config": str(config.codex_home / "config.toml"),
+                "mcp_legacy_json": str(config.codex_home / "mcp_servers.json"),
                 "sessions": str(config.worker_root / "sessions"),
                 "logs": str(config.worker_root / "logs"),
             }
