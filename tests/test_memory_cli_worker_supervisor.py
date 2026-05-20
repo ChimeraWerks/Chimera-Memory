@@ -280,6 +280,7 @@ def test_inspect_cli_worker_setup_can_initialize_codex_files(tmp_path: Path, mon
     assert receipt["launch_performed"] is False
     assert receipt["files"]["agents"]["exists"] is True
     assert receipt["files"]["mcp_config"]["exists"] is True
+    assert receipt["command_preview"] == codex_worker_command(load_codex_cli_worker_config())
 
 
 def test_inspect_cli_worker_setup_reports_missing_uninitialized_claude_files(
@@ -296,3 +297,4 @@ def test_inspect_cli_worker_setup_reports_missing_uninitialized_claude_files(
     assert receipt["initialized"] is False
     assert receipt["launch_performed"] is False
     assert receipt["files"]["claude"]["exists"] is False
+    assert receipt["command_preview"] == claude_worker_command(load_claude_cli_worker_config())

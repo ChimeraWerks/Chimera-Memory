@@ -597,11 +597,7 @@ def inspect_cli_worker_setup(
         }
         for name, path in files.items()
     }
-    command_preview = [
-        part
-        for part in command
-        if part not in {"--json", "--print", "--output-format", "--permission-mode", "--strict-mcp-config"}
-    ]
+    command_preview = list(command)
     ok = bool(shutil.which(executable)) and all(
         item["exists"]
         for key, item in file_status.items()
