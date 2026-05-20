@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 from chimera_memory.memory_cli_worker_supervisor import (
@@ -24,6 +25,7 @@ from chimera_memory.memory_cli_worker_supervisor import (
     load_codex_cli_worker_config,
     start_agy_cli_worker_once,
     start_claude_cli_worker_once,
+    start_claude_cli_worker_supervisor,
     start_codex_cli_worker_once,
 )
 
@@ -201,6 +203,19 @@ def test_load_claude_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> N
     config = load_claude_cli_worker_config(env)
 
     assert config.effort == "max"
+
+
+def test_load_claude_cli_worker_config_prefers_cmd_shim(tmp_path: Path, monkeypatch) -> None:
+    shim = tmp_path / "claude.cmd"
+
+    def fake_which(name: str) -> str | None:
+        return str(shim) if name == "claude.cmd" else None
+
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", fake_which)
+
+    config = load_claude_cli_worker_config({"CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state")})
+
+    assert config.claude_bin == str(shim)
 
 
 def test_load_agy_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) -> None:
@@ -480,6 +495,32 @@ def test_start_claude_cli_worker_once_feeds_prompt_and_mcp_config(tmp_path: Path
     assert handle.stderr_log.parent == config.worker_root / "logs"
     handle.stop()
     assert process.terminated is True
+
+
+def test_claude_worker_supervisor_records_launch_failures(tmp_path: Path) -> None:
+    config = ClaudeCliWorkerConfig(
+        worker_id="claude-worker-test",
+        provider="anthropic",
+        db_path=str(tmp_path / "transcript.db"),
+        worker_root=tmp_path / "claude-worker-root",
+        claude_bin="missing-claude",
+        mcp_command="chimera-memory-test",
+        restart_interval_seconds=0.05,
+    )
+
+    def fake_popen(args, **kwargs):
+        raise FileNotFoundError("missing-claude")
+
+    handle = start_claude_cli_worker_supervisor(config, popen_factory=fake_popen)
+    try:
+        deadline = time.time() + 2
+        while time.time() < deadline and not handle["state"].get("launch_error_count"):
+            time.sleep(0.02)
+        assert handle["state"]["launch_error_count"] >= 1
+        assert "missing-claude" in str(handle["state"]["last_error"])
+    finally:
+        handle["stop_event"].set()
+        handle["thread"].join(timeout=2)
 
 
 def test_start_agy_cli_worker_once_feeds_prompt_and_sets_isolated_home(tmp_path: Path) -> None:

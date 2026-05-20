@@ -7,6 +7,7 @@ queue, budget, validation, and database writes through the worker MCP surface.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -145,6 +146,18 @@ def _default_codex_bin(env: Mapping[str, str]) -> str:
     return "codex"
 
 
+def _default_claude_bin(env: Mapping[str, str]) -> str:
+    found = shutil.which("claude.cmd") or shutil.which("claude")
+    if found:
+        return found
+    app_data = str(env.get("APPDATA") or "").strip()
+    if app_data:
+        candidate = Path(app_data) / "npm" / "claude.cmd"
+        if candidate.exists():
+            return str(candidate)
+    return "claude"
+
+
 def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexCliWorkerConfig:
     """Load explicit Codex worker configuration from environment values."""
     source = env or os.environ
@@ -221,7 +234,7 @@ def load_claude_cli_worker_config(env: Mapping[str, str] | None = None) -> Claud
         provider=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"), default="anthropic", max_chars=80),
         db_path=db_path,
         worker_root=worker_root,
-        claude_bin=_clean(source.get("CHIMERA_MEMORY_CLAUDE_BIN"), default="claude"),
+        claude_bin=_clean(source.get("CHIMERA_MEMORY_CLAUDE_BIN"), default=_default_claude_bin(source)),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_MODEL"), max_chars=120),
         effort=_env_choice(
@@ -817,11 +830,19 @@ def start_codex_cli_worker_supervisor(
 ) -> dict[str, object]:
     """Start a background supervisor that launches bounded Codex worker passes."""
     stop_event = threading.Event()
-    state: dict[str, object] = {"handle": None, "launch_count": 0}
+    state: dict[str, object] = {"handle": None, "launch_count": 0, "launch_error_count": 0, "last_error": ""}
+    log = logging.getLogger("chimera_memory.cli-worker")
 
     def _loop() -> None:
         while not stop_event.is_set():
-            handle = start_codex_cli_worker_once(config, popen_factory=popen_factory)
+            try:
+                handle = start_codex_cli_worker_once(config, popen_factory=popen_factory)
+            except Exception as exc:
+                state["launch_error_count"] = int(state.get("launch_error_count") or 0) + 1
+                state["last_error"] = str(exc)
+                log.exception("codex cli worker launch failed worker_id=%s", config.worker_id)
+                stop_event.wait(config.restart_interval_seconds)
+                continue
             state["handle"] = handle
             state["launch_count"] = int(state.get("launch_count") or 0) + 1
             while handle.process.poll() is None and not stop_event.wait(1.0):
@@ -829,6 +850,16 @@ def start_codex_cli_worker_supervisor(
             if stop_event.is_set():
                 handle.stop()
                 break
+            returncode = handle.process.poll()
+            if returncode not in (0, None):
+                state["last_error"] = f"process exited {returncode}"
+                log.warning(
+                    "codex cli worker exited nonzero worker_id=%s returncode=%s stdout=%s stderr=%s",
+                    config.worker_id,
+                    returncode,
+                    handle.stdout_log,
+                    handle.stderr_log,
+                )
             stop_event.wait(config.restart_interval_seconds)
 
     thread = threading.Thread(
@@ -847,11 +878,19 @@ def start_claude_cli_worker_supervisor(
 ) -> dict[str, object]:
     """Start a background supervisor that launches bounded Claude worker passes."""
     stop_event = threading.Event()
-    state: dict[str, object] = {"handle": None, "launch_count": 0}
+    state: dict[str, object] = {"handle": None, "launch_count": 0, "launch_error_count": 0, "last_error": ""}
+    log = logging.getLogger("chimera_memory.cli-worker")
 
     def _loop() -> None:
         while not stop_event.is_set():
-            handle = start_claude_cli_worker_once(config, popen_factory=popen_factory)
+            try:
+                handle = start_claude_cli_worker_once(config, popen_factory=popen_factory)
+            except Exception as exc:
+                state["launch_error_count"] = int(state.get("launch_error_count") or 0) + 1
+                state["last_error"] = str(exc)
+                log.exception("claude cli worker launch failed worker_id=%s", config.worker_id)
+                stop_event.wait(config.restart_interval_seconds)
+                continue
             state["handle"] = handle
             state["launch_count"] = int(state.get("launch_count") or 0) + 1
             while handle.process.poll() is None and not stop_event.wait(1.0):
@@ -859,6 +898,16 @@ def start_claude_cli_worker_supervisor(
             if stop_event.is_set():
                 handle.stop()
                 break
+            returncode = handle.process.poll()
+            if returncode not in (0, None):
+                state["last_error"] = f"process exited {returncode}"
+                log.warning(
+                    "claude cli worker exited nonzero worker_id=%s returncode=%s stdout=%s stderr=%s",
+                    config.worker_id,
+                    returncode,
+                    handle.stdout_log,
+                    handle.stderr_log,
+                )
             stop_event.wait(config.restart_interval_seconds)
 
     thread = threading.Thread(
@@ -877,11 +926,19 @@ def start_agy_cli_worker_supervisor(
 ) -> dict[str, object]:
     """Start a background supervisor that launches bounded Antigravity worker passes."""
     stop_event = threading.Event()
-    state: dict[str, object] = {"handle": None, "launch_count": 0}
+    state: dict[str, object] = {"handle": None, "launch_count": 0, "launch_error_count": 0, "last_error": ""}
+    log = logging.getLogger("chimera_memory.cli-worker")
 
     def _loop() -> None:
         while not stop_event.is_set():
-            handle = start_agy_cli_worker_once(config, popen_factory=popen_factory)
+            try:
+                handle = start_agy_cli_worker_once(config, popen_factory=popen_factory)
+            except Exception as exc:
+                state["launch_error_count"] = int(state.get("launch_error_count") or 0) + 1
+                state["last_error"] = str(exc)
+                log.exception("agy cli worker launch failed worker_id=%s", config.worker_id)
+                stop_event.wait(config.restart_interval_seconds)
+                continue
             state["handle"] = handle
             state["launch_count"] = int(state.get("launch_count") or 0) + 1
             while handle.process.poll() is None and not stop_event.wait(1.0):
@@ -889,6 +946,16 @@ def start_agy_cli_worker_supervisor(
             if stop_event.is_set():
                 handle.stop()
                 break
+            returncode = handle.process.poll()
+            if returncode not in (0, None):
+                state["last_error"] = f"process exited {returncode}"
+                log.warning(
+                    "agy cli worker exited nonzero worker_id=%s returncode=%s stdout=%s stderr=%s",
+                    config.worker_id,
+                    returncode,
+                    handle.stdout_log,
+                    handle.stderr_log,
+                )
             stop_event.wait(config.restart_interval_seconds)
 
     thread = threading.Thread(
