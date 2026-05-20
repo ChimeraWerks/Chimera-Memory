@@ -550,6 +550,17 @@ def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
         "--print",
         "--output-format",
         "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--allowedTools",
+        ",".join(
+            [
+                "mcp__chimera-memory-worker__memory_worker_heartbeat",
+                "mcp__chimera-memory-worker__memory_worker_budget",
+                "mcp__chimera-memory-worker__memory_worker_claim_next",
+                "mcp__chimera-memory-worker__memory_worker_submit_result",
+            ]
+        ),
         "--permission-mode",
         "dontAsk",
         "--mcp-config",

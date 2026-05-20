@@ -273,6 +273,16 @@ def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> Non
     assert "--print" in command
     assert "--output-format" in command
     assert "stream-json" in command
+    assert "--verbose" in command
+    assert "--no-session-persistence" in command
+    assert "--allowedTools" in command
+    allowed_tools = command[command.index("--allowedTools") + 1].split(",")
+    assert allowed_tools == [
+        "mcp__chimera-memory-worker__memory_worker_heartbeat",
+        "mcp__chimera-memory-worker__memory_worker_budget",
+        "mcp__chimera-memory-worker__memory_worker_claim_next",
+        "mcp__chimera-memory-worker__memory_worker_submit_result",
+    ]
     assert "--permission-mode" in command
     assert "dontAsk" in command
     assert "--mcp-config" in command
