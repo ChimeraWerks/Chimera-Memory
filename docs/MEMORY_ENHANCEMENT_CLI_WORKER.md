@@ -1,7 +1,7 @@
 # Memory Enhancement CLI Worker
 
-Status: Protocol, exclusion, budget, fake-worker, and Codex supervisor
-slices implemented. Claude Code supervisor not implemented.
+Status: Protocol, exclusion, budget, fake-worker, Codex supervisor, and
+Claude Code supervisor slices implemented.
 
 This document captures the proposed replacement for subscription-backed HTTP
 enrichment calls: a persistent headless CLI memory worker supervised by
@@ -207,6 +207,17 @@ Codex supervisor status:
   recursion
 - defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/codex-memory-worker`
 
+Claude Code supervisor status:
+
+- opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` and
+  `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=claude`
+- launches bounded `claude --print --output-format stream-json` worker passes
+- creates worker-local `CLAUDE.md`
+- creates worker-local `.mcp.json` with worker-only CM tools
+- sets nested CM maintenance workers off in the child MCP server to prevent
+  recursion
+- defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/claude-memory-worker`
+
 ## Budget And Rate Posture
 
 Subscription-backed workers must be conservative by default:
@@ -250,6 +261,6 @@ Mitigations:
 4. Add provider budget governor shared by HTTP and CLI transports. Shipped.
 5. Add fake worker harness for tests. Shipped via `chimera-memory enhance worker-fake`.
 6. Add Codex headless worker supervisor. Shipped as an explicit opt-in bounded `codex exec` supervisor.
-7. Add Claude Code headless worker supervisor.
+7. Add Claude Code headless worker supervisor. Shipped as an explicit opt-in bounded `claude --print` supervisor.
 8. Make `cli_worker` the default subscription-backed enhancement transport.
 9. Keep `http_oauth` as fallback and `dry_run` as the no-provider floor.

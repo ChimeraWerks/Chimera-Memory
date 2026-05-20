@@ -102,8 +102,11 @@ Rules:
 Owns headless CLI worker launch scaffolding:
 
 - worker-local `AGENTS.md`
+- worker-local `CLAUDE.md`
 - worker-local Codex MCP config with `worker` tool surface
+- worker-local Claude MCP config with `worker` tool surface
 - bounded Codex `exec` command construction
+- bounded Claude `--print` command construction
 - process launch, restart loop, and log file paths
 
 Rules:

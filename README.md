@@ -323,10 +323,12 @@ launcher itself is not implemented yet. `chimera-memory enhance worker-fake`
 exercises the same claim/budget/submit protocol with deterministic local
 metadata for tests and operator smoke checks.
 
-Codex CLI worker supervision is available as an explicit opt-in by setting
-`CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`. It launches bounded
-`codex exec` worker passes with a worker-local `AGENTS.md` and worker-only MCP
-config. It is disabled by default; dry-run remains the no-provider floor.
+CLI worker supervision is available as an explicit opt-in by setting
+`CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`. Codex launches bounded
+`codex exec` worker passes with a worker-local `AGENTS.md`; Claude Code
+launches bounded `claude --print` worker passes with a worker-local
+`CLAUDE.md`. Both use worker-only MCP config and are disabled by default;
+dry-run remains the no-provider floor.
 
 ### What It Does
 

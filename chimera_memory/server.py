@@ -3251,17 +3251,30 @@ def _start_memory_enhancement_worker() -> dict[str, object] | None:
     current_persona = os.environ.get("CHIMERA_PERSONA_NAME") or os.environ.get("TRANSCRIPT_PERSONA") or None
 
     if mode == "cli_worker":
-        from .memory_cli_worker_supervisor import load_codex_cli_worker_config, start_codex_cli_worker_supervisor
+        from .memory_cli_worker_supervisor import (
+            load_claude_cli_worker_config,
+            load_codex_cli_worker_config,
+            start_claude_cli_worker_supervisor,
+            start_codex_cli_worker_supervisor,
+        )
 
-        config = load_codex_cli_worker_config(os.environ)
-        handle = start_codex_cli_worker_supervisor(config)
+        runtime = os.environ.get("CHIMERA_MEMORY_CLI_WORKER_RUNTIME", "codex").strip().lower().replace("-", "_")
+        if runtime in {"claude", "claude_code", "anthropic"}:
+            config = load_claude_cli_worker_config(os.environ)
+            handle = start_claude_cli_worker_supervisor(config)
+        else:
+            runtime = "codex"
+            config = load_codex_cli_worker_config(os.environ)
+            handle = start_codex_cli_worker_supervisor(config)
         log.info(
-            "memory enhancement CLI worker supervisor started worker_id=%s provider=%s root=%s",
+            "memory enhancement CLI worker supervisor started runtime=%s worker_id=%s provider=%s root=%s",
+            runtime,
             config.worker_id,
             config.provider,
             config.worker_root,
         )
         handle["mode"] = mode
+        handle["runtime"] = runtime
         return handle
 
     def _run_once() -> None:

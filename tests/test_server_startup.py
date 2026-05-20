@@ -141,6 +141,33 @@ def test_enhancement_worker_can_start_cli_worker_supervisor(monkeypatch, tmp_pat
     assert calls[1][1].worker_id == "worker-1"
     assert handle is not None
     assert handle["mode"] == "cli_worker"
+    assert handle["runtime"] == "codex"
+
+
+def test_enhancement_worker_can_start_claude_cli_worker_supervisor(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_load(env):
+        calls.append(("load", env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"]))
+        return SimpleNamespace(worker_id="claude-worker-1", provider="anthropic", worker_root=tmp_path / "worker")
+
+    def fake_start(config):
+        calls.append(("start", config))
+        return {"thread": object(), "stop_event": object()}
+
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE", "cli_worker")
+    monkeypatch.setenv("CHIMERA_MEMORY_CLI_WORKER_RUNTIME", "claude")
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.load_claude_cli_worker_config", fake_load)
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.start_claude_cli_worker_supervisor", fake_start)
+
+    handle = server._start_memory_enhancement_worker()
+
+    assert calls[0] == ("load", "claude")
+    assert calls[1][0] == "start"
+    assert calls[1][1].worker_id == "claude-worker-1"
+    assert handle is not None
+    assert handle["mode"] == "cli_worker"
+    assert handle["runtime"] == "claude"
 
 
 def test_background_bootstrap_logs_failures(monkeypatch, caplog):

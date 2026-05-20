@@ -1,12 +1,19 @@
 from pathlib import Path
 
 from chimera_memory.memory_cli_worker_supervisor import (
+    ClaudeCliWorkerConfig,
     CodexCliWorkerConfig,
+    claude_worker_command,
+    claude_worker_mcp_config,
+    claude_worker_prompt,
     codex_worker_command,
     codex_worker_mcp_config,
     codex_worker_prompt,
+    ensure_claude_worker_files,
     ensure_codex_worker_files,
+    load_claude_cli_worker_config,
     load_codex_cli_worker_config,
+    start_claude_cli_worker_once,
     start_codex_cli_worker_once,
 )
 
@@ -56,6 +63,19 @@ def _config(tmp_path: Path) -> CodexCliWorkerConfig:
     )
 
 
+def _claude_config(tmp_path: Path) -> ClaudeCliWorkerConfig:
+    return ClaudeCliWorkerConfig(
+        worker_id="claude-worker-test",
+        provider="anthropic",
+        db_path=str(tmp_path / "transcript.db"),
+        worker_root=tmp_path / "claude-worker-root",
+        claude_bin="claude-test",
+        mcp_command="chimera-memory-test",
+        model="sonnet",
+        persona="sarah",
+    )
+
+
 def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) -> None:
     env = {
         "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
@@ -71,6 +91,22 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "codex-memory-worker"
     assert config.codex_home == config.worker_root / ".codex"
+
+
+def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "TRANSCRIPT_DB_PATH": str(tmp_path / "db.sqlite"),
+        "CHIMERA_MEMORY_CLAUDE_WORKER_ID": "claude-worker-1",
+        "CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER": "anthropic",
+    }
+
+    config = load_claude_cli_worker_config(env)
+
+    assert config.worker_id == "claude-worker-1"
+    assert config.provider == "anthropic"
+    assert config.db_path == str(tmp_path / "db.sqlite")
+    assert config.worker_root == tmp_path / "state" / "workers" / "claude-memory-worker"
 
 
 def test_codex_worker_mcp_config_uses_worker_surface_and_disables_nested_workers(tmp_path: Path) -> None:
@@ -90,6 +126,23 @@ def test_codex_worker_mcp_config_uses_worker_surface_and_disables_nested_workers
     assert env["TRANSCRIPT_PERSONA"] == "asa"
 
 
+def test_claude_worker_mcp_config_uses_worker_surface_and_disables_nested_workers(tmp_path: Path) -> None:
+    config = _claude_config(tmp_path)
+
+    payload = claude_worker_mcp_config(config)
+
+    server = payload["mcpServers"]["chimera-memory-worker"]
+    assert server["command"] == "chimera-memory-test"
+    assert server["args"] == ["serve"]
+    env = server["env"]
+    assert env["TRANSCRIPT_DB_PATH"] == str(tmp_path / "transcript.db")
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "worker"
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER"] == "false"
+    assert env["CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER"] == "false"
+    assert env["CHIMERA_MEMORY_HEALTH_WORKER"] == "false"
+    assert env["TRANSCRIPT_PERSONA"] == "sarah"
+
+
 def test_ensure_codex_worker_files_writes_agents_and_mcp_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
 
@@ -99,6 +152,20 @@ def test_ensure_codex_worker_files_writes_agents_and_mcp_config(tmp_path: Path) 
     mcp_config = Path(files["mcp_config"]).read_text(encoding="utf-8")
     assert "CM Enhancement Worker" in agents
     assert "Do not write memories directly" in agents
+    assert "chimera-memory-worker" in mcp_config
+    assert Path(files["sessions"]).is_dir()
+    assert Path(files["logs"]).is_dir()
+
+
+def test_ensure_claude_worker_files_writes_claude_md_and_mcp_config(tmp_path: Path) -> None:
+    config = _claude_config(tmp_path)
+
+    files = ensure_claude_worker_files(config)
+
+    claude_md = Path(files["claude"]).read_text(encoding="utf-8")
+    mcp_config = Path(files["mcp_config"]).read_text(encoding="utf-8")
+    assert "CM Enhancement Worker" in claude_md
+    assert "Do not write memories directly" in claude_md
     assert "chimera-memory-worker" in mcp_config
     assert Path(files["sessions"]).is_dir()
     assert Path(files["logs"]).is_dir()
@@ -117,6 +184,22 @@ def test_codex_worker_command_is_headless_and_read_only(tmp_path: Path) -> None:
     assert "never" in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     assert command[-1] == "-"
+
+
+def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> None:
+    config = _claude_config(tmp_path)
+
+    command = claude_worker_command(config)
+
+    assert command[0] == "claude-test"
+    assert "--print" in command
+    assert "--output-format" in command
+    assert "stream-json" in command
+    assert "--permission-mode" in command
+    assert "dontAsk" in command
+    assert "--mcp-config" in command
+    assert "--strict-mcp-config" in command
+    assert "--dangerously-skip-permissions" not in command
 
 
 def test_start_codex_cli_worker_once_feeds_prompt_and_sets_codex_home(tmp_path: Path) -> None:
@@ -143,8 +226,40 @@ def test_start_codex_cli_worker_once_feeds_prompt_and_sets_codex_home(tmp_path: 
     assert process.terminated is True
 
 
+def test_start_claude_cli_worker_once_feeds_prompt_and_mcp_config(tmp_path: Path) -> None:
+    config = _claude_config(tmp_path)
+    captured = {}
+    process = _FakeProcess()
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return process
+
+    handle = start_claude_cli_worker_once(config, popen_factory=fake_popen)
+
+    assert captured["args"] == claude_worker_command(config)
+    assert captured["kwargs"]["cwd"] == str(config.worker_root)
+    assert "CHIMERA_MEMORY_CLAUDE_WORKER_ID" in captured["kwargs"]["env"]
+    assert "memory_worker_claim_next" in process.stdin.text
+    assert "provider: anthropic" in process.stdin.text
+    assert process.stdin.closed is True
+    assert handle.stdout_log.parent == config.worker_root / "logs"
+    assert handle.stderr_log.parent == config.worker_root / "logs"
+    handle.stop()
+    assert process.terminated is True
+
+
 def test_codex_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     prompt = codex_worker_prompt(_config(tmp_path))
+
+    assert "Run one bounded worker pass" in prompt
+    assert "memory_worker_claim_next" in prompt
+    assert "Heartbeat idle and stop" in prompt
+
+
+def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
+    prompt = claude_worker_prompt(_claude_config(tmp_path))
 
     assert "Run one bounded worker pass" in prompt
     assert "memory_worker_claim_next" in prompt
