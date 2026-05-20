@@ -24,6 +24,7 @@ from .memory_enhancement_queue import (
     memory_enhancement_claim_next,
     memory_enhancement_complete,
 )
+from .memory_provider_governor import provider_governor_check, provider_usage_record
 
 
 class MemoryEnhancementClient(Protocol):
@@ -89,10 +90,22 @@ def run_memory_enhancement_provider_batch(
     failures: list[dict[str, Any]] = []
     llm_call_count = 0
     wall_clock_stopped = False
+    governor_stopped = False
+    governor_status: dict[str, Any] | None = None
 
     for _ in range(max_jobs):
         if wall_clock_budget is not None and time.monotonic() - started_at >= wall_clock_budget:
             wall_clock_stopped = True
+            break
+        governor_status = provider_governor_check(
+            conn,
+            provider=plan.selected.provider_id,
+            budget=plan.budget,
+            requested_calls=1,
+            transport="http_oauth" if plan.selected.uses_user_oauth else "provider_api",
+        )
+        if not governor_status.get("allowed", False):
+            governor_stopped = True
             break
         job = memory_enhancement_claim_next(conn, persona=persona)
         if job is None:
@@ -102,6 +115,14 @@ def run_memory_enhancement_provider_batch(
         llm_call_count += 1
         try:
             response_payload = dict(client.invoke(invocation))
+            provider_usage_record(
+                conn,
+                provider=plan.selected.provider_id,
+                transport="http_oauth" if plan.selected.uses_user_oauth else "provider_api",
+                credential_mode="oauth" if plan.selected.uses_user_oauth else "byok",
+                job_id=str(job["job_id"]),
+                status="succeeded",
+            )
             result = memory_enhancement_complete(
                 conn,
                 job_id=str(job["job_id"]),
@@ -148,6 +169,15 @@ def run_memory_enhancement_provider_batch(
             category = classify_enhancement_failure(str(exc))
 
         failure_payload = _safe_failure_payload(category, plan, job)
+        provider_usage_record(
+            conn,
+            provider=plan.selected.provider_id,
+            transport="http_oauth" if plan.selected.uses_user_oauth else "provider_api",
+            credential_mode="oauth" if plan.selected.uses_user_oauth else "byok",
+            job_id=str(job["job_id"]),
+            status="failed",
+            failure_category=category,
+        )
         memory_enhancement_complete(
             conn,
             job_id=str(job["job_id"]),
@@ -178,6 +208,8 @@ def run_memory_enhancement_provider_batch(
         "wall_clock_seconds": round(time.monotonic() - started_at, 3),
         "wall_clock_budget_seconds": wall_clock_budget,
         "wall_clock_stopped": wall_clock_stopped,
+        "governor_stopped": governor_stopped,
+        "governor": governor_status,
     }
 
 

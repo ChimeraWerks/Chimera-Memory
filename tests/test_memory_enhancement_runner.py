@@ -187,6 +187,40 @@ def test_provider_runner_respects_hard_llm_call_cap_before_claiming(tmp_path: Pa
     assert statuses == ["pending", "pending"]
 
 
+def test_provider_runner_respects_shared_provider_governor_before_claiming(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_runner_memory(conn, tmp_path, "one.md")
+    memory_enhancement_enqueue(conn, file_path="one.md")
+    conn.execute(
+        """
+        INSERT INTO memory_provider_usage_events (provider, transport, status)
+        VALUES ('openai', 'http_oauth', 'succeeded')
+        """
+    )
+    conn.commit()
+    client = StaticMemoryEnhancementClient([{"memory_type": "semantic", "summary": "first"}])
+
+    receipt = run_memory_enhancement_provider_batch(
+        conn,
+        client=client,
+        env={
+            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
+            "CHIMERA_MEMORY_ENHANCEMENT_PER_MINUTE_CALL_CAP": "1",
+        },
+        limit=10,
+    )
+
+    assert receipt["processed_count"] == 0
+    assert receipt["failure_count"] == 0
+    assert receipt["llm_call_count"] == 0
+    assert receipt["governor_stopped"] is True
+    assert receipt["governor"]["reason"] == "per_minute_call_cap"
+    assert client.invocations == []
+    row = conn.execute("SELECT status, locked_at FROM memory_enhancement_jobs").fetchone()
+    assert row == ("pending", None)
+
+
 def test_provider_runner_respects_wall_clock_budget_before_next_claim(
     monkeypatch, tmp_path: Path
 ) -> None:

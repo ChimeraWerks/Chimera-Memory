@@ -236,7 +236,7 @@ Mitigations:
 1. Add worker protocol tables and MCP tools. Shipped.
 2. Add result schema validation and writeback gate. Shipped at the protocol boundary.
 3. Add worker JSONL/path exclusion to transcript ingestion. Shipped with env-driven glob and session-id filters.
-4. Add provider budget governor shared by HTTP and CLI transports.
+4. Add provider budget governor shared by HTTP and CLI transports. Shipped.
 5. Add fake worker harness for tests.
 6. Add Codex headless worker supervisor.
 7. Add Claude Code headless worker supervisor.

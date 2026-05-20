@@ -514,6 +514,29 @@ CREATE TABLE IF NOT EXISTS memory_worker_heartbeats (
 
 CREATE INDEX IF NOT EXISTS idx_memory_worker_heartbeats_capability
 ON memory_worker_heartbeats(capability, status, last_seen_at);
+
+CREATE TABLE IF NOT EXISTS memory_provider_usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    provider TEXT NOT NULL,
+    transport TEXT DEFAULT '',
+    credential_mode TEXT DEFAULT '',
+    worker_id TEXT DEFAULT '',
+    job_id TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'succeeded'
+        CHECK(status IN ('succeeded', 'failed', 'skipped', 'deferred')),
+    failure_category TEXT DEFAULT '',
+    tokens_in INTEGER DEFAULT 0,
+    tokens_out INTEGER DEFAULT 0,
+    latency_ms INTEGER DEFAULT 0,
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_provider_usage_provider_time
+ON memory_provider_usage_events(provider, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_memory_provider_usage_worker_time
+ON memory_provider_usage_events(worker_id, created_at);
 """
 
 

@@ -70,6 +70,7 @@ Do not use `memory.py` as a dumping ground. It is now the facade/orchestration l
 - `chimera_memory/memory_enhancement.py`: model-free sidecar request/response contract and untrusted-content wrapper.
 - `chimera_memory/memory_enhancement_provider.py`: provider priority, credential references, budget policy, safe invocation envelope, bounded failure categories.
 - `chimera_memory/memory_model_catalog.py`: bundled/offline-first models.dev catalog parser/cache for recommended OpenAI, Anthropic, Gemini/Google, OpenRouter, and LM Studio memory-enhancement models.
+- `chimera_memory/memory_provider_governor.py`: shared provider usage ledger and budget allow/deny checks for enhancement transports.
 - `chimera_memory/memory_enhancement_runner.py`: provider-aware batch runner using an injected client protocol. No token storage or provider-specific network code.
 - `chimera_memory/memory_enhancement_queue.py`: SQLite queue for enhancement jobs, enqueue/claim/complete helpers.
 - `chimera_memory/memory_frontmatter.py`: markdown frontmatter parsing shared by indexing and enhancement enqueue.
@@ -97,6 +98,7 @@ Dependency direction matters:
 - Atom/Blogger import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
 - Profile export helpers may depend on frontmatter parsing, sanitizer helpers, and observability audit emission, but must not import the `memory.py` facade.
 - Enhancement provider policy may depend on the sidecar contract only.
+- Provider governor may depend on provider budget policy and observability JSON helpers.
 - Enhancement runner may depend on provider policy and enhancement queue helpers.
 - Enhancement queue may depend on frontmatter, observability, entity graph helpers, and the sidecar contract.
 - Avoid imports from `memory.py` inside focused modules. Importing the facade from a focused module risks a circular import.

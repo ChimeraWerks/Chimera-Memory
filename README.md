@@ -475,6 +475,14 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` uses the configured provider plan.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT=10` controls jobs per tick.
+- `CHIMERA_MEMORY_ENHANCEMENT_PER_MINUTE_CALL_CAP=30` caps shared provider calls per minute.
+- `CHIMERA_MEMORY_ENHANCEMENT_DAILY_SOFT_CALL_CAP=5000` caps shared provider calls per day.
+- `CHIMERA_MEMORY_ENHANCEMENT_MONTHLY_HARD_CALL_CAP=100000` caps shared provider calls per 30-day window.
+
+Provider-backed transports share a SQLite usage ledger. The runner checks the
+governor before claiming a job, so exhausted budgets leave work pending instead
+of stranded in `running`. `dry_run` and local deterministic work do not consume
+provider budget.
 
 Provider login/import is exposed through safe CLI receipts:
 

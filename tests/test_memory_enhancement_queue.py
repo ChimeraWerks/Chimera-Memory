@@ -274,6 +274,14 @@ def test_memory_worker_submit_result_completes_owned_job(tmp_path: Path) -> None
     assert heartbeat == ("idle", "")
     events = memory_audit_query(conn, event_type="memory_worker_result_submitted", persona="asa")
     assert events[0]["payload"]["diagnostics"] == {"latency_ms": 123}
+    usage = conn.execute(
+        """
+        SELECT provider, transport, credential_mode, worker_id, job_id,
+               status, tokens_in, tokens_out, latency_ms
+        FROM memory_provider_usage_events
+        """
+    ).fetchone()
+    assert usage == ("openai", "cli_worker", "oauth", "owner-worker", claimed["job"]["job_id"], "succeeded", 0, 0, 123)
 
 
 def test_memory_worker_submit_result_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -317,8 +325,28 @@ def test_memory_worker_heartbeat_and_budget() -> None:
     assert heartbeat["ok"] is True
     assert heartbeat["heartbeat"]["metadata"] == {"pid": 123}
     assert budget["ok"] is True
-    assert budget["mode"] == "configured_caps_only"
+    assert budget["mode"] == "shared_provider_governor"
     assert budget["budget"]["max_output_tokens"] > 0
+
+
+def test_memory_worker_budget_uses_shared_provider_governor(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_PER_MINUTE_CALL_CAP", "1")
+    conn.execute(
+        """
+        INSERT INTO memory_provider_usage_events (provider, transport, worker_id, status)
+        VALUES ('openai', 'cli_worker', 'worker-1', 'succeeded')
+        """
+    )
+    conn.commit()
+
+    budget = memory_worker_budget(conn, worker_id="worker-1", provider="openai")
+
+    assert budget["ok"] is True
+    assert budget["allowed"] is False
+    assert budget["reason"] == "per_minute_call_cap"
+    assert budget["usage"]["minute"] == 1
 
 
 def test_memory_enhancement_enqueue_authored_builds_pending_job() -> None:

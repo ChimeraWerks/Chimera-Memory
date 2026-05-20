@@ -81,6 +81,22 @@ Rules:
 - Health checks must not import `memory.py` at module import time.
 - Keep checks local and cheap enough for `serve` to run every few minutes.
 
+### `memory_provider_governor.py`
+
+Owns shared provider traffic accounting for enhancement transports:
+
+- provider usage ledger writes
+- rolling minute/day/month usage counts
+- budget-cap allow/deny checks
+- shared enforcement surface for HTTP providers and future CLI workers
+
+Rules:
+
+- Store provider/model/transport metadata only. Do not store prompts,
+  responses, credential refs, tokens, or raw errors.
+- Check budget before claiming queue jobs so denied work stays pending.
+- Local deterministic/dry-run work must not consume provider budget.
+
 ### `memory_live_retrieval.py`
 
 Owns live-retrieval planning lifted from OB1's live retrieval recipe:

@@ -19,6 +19,7 @@ from .memory_enhancement import (
 from .memory_entities import apply_enhancement_entities
 from .memory_frontmatter import parse_frontmatter
 from .memory_observability import _json_object, _json_text, record_memory_audit_event
+from .memory_provider_governor import provider_governor_check, provider_usage_record
 
 ENHANCEMENT_JOB_STATUSES = {"pending", "running", "succeeded", "failed", "skipped"}
 WORKER_HEARTBEAT_STATUSES = {"idle", "running", "stopping", "failed"}
@@ -31,6 +32,18 @@ def _utc_now() -> str:
 
 def _clean_worker_text(value: object, *, max_chars: int = 120) -> str:
     return str(value or "").strip()[:max_chars]
+
+
+def _diagnostic_int(mapping: dict | None, *keys: str) -> int:
+    source = mapping if isinstance(mapping, dict) else {}
+    for key in keys:
+        try:
+            value = int(source.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value:
+            return max(0, value)
+    return 0
 
 
 def _find_memory_file_for_enhancement(conn: sqlite3.Connection, file_path: str):
@@ -650,6 +663,21 @@ def memory_worker_submit_result(
     )
     if not completed.get("ok"):
         return completed
+    provider_usage_record(
+        conn,
+        provider=actual_provider,
+        transport="cli_worker",
+        credential_mode="oauth",
+        worker_id=worker_id,
+        job_id=job_id,
+        status=status,
+        failure_category=error if status == "failed" else "",
+        tokens_in=_diagnostic_int(diagnostics, "tokens_in", "input_tokens"),
+        tokens_out=_diagnostic_int(diagnostics, "tokens_out", "output_tokens"),
+        latency_ms=_diagnostic_int(diagnostics, "latency_ms"),
+        metadata={"source": "memory_worker_submit_result"},
+        commit=False,
+    )
     record_memory_audit_event(
         conn,
         "memory_worker_result_submitted",
@@ -689,7 +717,6 @@ def memory_worker_budget(
     This first protocol slice exposes configured caps but does not yet maintain
     a persisted consumption ledger.
     """
-    del conn
     worker_id = _clean_worker_text(worker_id)
     capability = _clean_worker_text(capability, max_chars=80) or "enhancement"
     provider = _clean_worker_text(provider, max_chars=80)
@@ -700,13 +727,23 @@ def memory_worker_budget(
     from .memory_enhancement_provider import load_enhancement_budget
 
     budget = load_enhancement_budget(os.environ)
+    governor = provider_governor_check(
+        conn,
+        provider=provider,
+        budget=budget,
+        requested_calls=1,
+        transport="cli_worker",
+        worker_id=worker_id,
+    )
     return {
         "ok": True,
-        "allowed": True,
+        "allowed": bool(governor.get("allowed", False)),
+        "reason": governor.get("reason", ""),
         "worker_id": worker_id,
         "capability": capability,
         "provider": provider,
-        "mode": "configured_caps_only",
+        "mode": "shared_provider_governor",
+        "usage": governor.get("usage", {}),
         "budget": {
             "max_input_tokens": budget.max_input_tokens,
             "max_input_chars": budget.max_input_chars,
