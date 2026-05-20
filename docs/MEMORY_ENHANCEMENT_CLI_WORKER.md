@@ -203,6 +203,8 @@ Codex supervisor status:
 - launches bounded `codex exec` worker passes, not an always-on TUI
 - resolves the Codex executable with `shutil.which("codex")` or the Windows
   npm shim unless `CHIMERA_MEMORY_CODEX_BIN` is set
+- sets reasoning effort with `CHIMERA_MEMORY_CODEX_WORKER_EFFORT` or the
+  shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
 - creates worker-local `AGENTS.md`
 - creates worker-local Codex `config.toml` and legacy `mcp_servers.json` with
   worker-only CM tools
@@ -225,6 +227,8 @@ Claude Code supervisor status:
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` and
   `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=claude`
 - launches bounded `claude --print --output-format stream-json` worker passes
+- sets reasoning effort with `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT` or the
+  shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
 - creates worker-local `CLAUDE.md`
 - creates worker-local `.mcp.json` with worker-only CM tools
 - sets nested CM maintenance workers off in the child MCP server to prevent

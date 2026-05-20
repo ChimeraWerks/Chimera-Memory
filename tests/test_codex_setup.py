@@ -321,6 +321,7 @@ def test_codex_install_prefers_codex_cli_worker_for_openai_provider(tmp_path: Pa
     assert receipt["provider_worker_runtime"] == "codex"
     assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "cli_worker"
     assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "codex"
+    assert env["CHIMERA_MEMORY_CLI_WORKER_EFFORT"] == "medium"
     assert env["CHIMERA_MEMORY_CODEX_WORKER_PROVIDER"] == "openai"
     assert "Provider worker runtime: codex" in text
 
@@ -344,6 +345,7 @@ def test_codex_install_prefers_claude_cli_worker_for_anthropic_provider(tmp_path
     assert receipt["provider_worker_runtime"] == "claude"
     assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "cli_worker"
     assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "claude"
+    assert env["CHIMERA_MEMORY_CLI_WORKER_EFFORT"] == "medium"
     assert env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] == "anthropic"
 
 
@@ -366,6 +368,7 @@ def test_codex_install_prefers_agy_cli_worker_for_google_provider(tmp_path: Path
     assert receipt["provider_worker_runtime"] == "agy"
     assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "cli_worker"
     assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "agy"
+    assert env["CHIMERA_MEMORY_CLI_WORKER_EFFORT"] == "medium"
     assert env["CHIMERA_MEMORY_AGY_WORKER_PROVIDER"] == "google"
 
 

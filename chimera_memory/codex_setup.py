@@ -435,6 +435,7 @@ def _build_codex_install_env(
         runtime = worker_transport["runtime"]
         if runtime:
             env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] = runtime
+            env["CHIMERA_MEMORY_CLI_WORKER_EFFORT"] = "medium"
         if runtime == "codex":
             env["CHIMERA_MEMORY_CODEX_WORKER_PROVIDER"] = provider
         elif runtime == "claude":

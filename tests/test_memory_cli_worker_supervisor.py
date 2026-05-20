@@ -132,7 +132,20 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "codex-memory-worker"
     assert config.codex_home == config.worker_root / ".codex"
+    assert config.effort == "medium"
     assert config.bypass_approvals_and_sandbox is True
+
+
+def test_load_codex_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "CHIMERA_MEMORY_CLI_WORKER_EFFORT": "high",
+        "CHIMERA_MEMORY_CODEX_WORKER_EFFORT": "xhigh",
+    }
+
+    config = load_codex_cli_worker_config(env)
+
+    assert config.effort == "xhigh"
 
 
 def test_load_codex_cli_worker_config_can_disable_bypass(tmp_path: Path) -> None:
@@ -173,6 +186,19 @@ def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
     assert config.provider == "anthropic"
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "claude-memory-worker"
+    assert config.effort == "medium"
+
+
+def test_load_claude_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "CHIMERA_MEMORY_CLI_WORKER_EFFORT": "high",
+        "CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT": "max",
+    }
+
+    config = load_claude_cli_worker_config(env)
+
+    assert config.effort == "max"
 
 
 def test_load_agy_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) -> None:
@@ -321,6 +347,8 @@ def test_codex_worker_command_uses_bypass_for_exec_mcp_approval_compat(tmp_path:
     assert "--skip-git-repo-check" in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "--sandbox" not in command
+    assert "-c" in command
+    assert 'model_reasoning_effort="medium"' in command
     assert command[-1] == "-"
 
 
@@ -355,6 +383,8 @@ def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> Non
     ]
     assert "--permission-mode" in command
     assert "dontAsk" in command
+    assert "--effort" in command
+    assert command[command.index("--effort") + 1] == "medium"
     assert "--mcp-config" in command
     assert "--strict-mcp-config" in command
     assert "--dangerously-skip-permissions" not in command

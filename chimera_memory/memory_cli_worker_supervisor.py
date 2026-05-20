@@ -35,6 +35,7 @@ class CodexCliWorkerConfig:
     codex_bin: str = "codex"
     mcp_command: str = "chimera-memory"
     model: str = ""
+    effort: str = "medium"
     bypass_approvals_and_sandbox: bool = True
     poll_interval_seconds: int = 60
     restart_interval_seconds: int = 30
@@ -50,6 +51,7 @@ class ClaudeCliWorkerConfig:
     claude_bin: str = "claude"
     mcp_command: str = "chimera-memory"
     model: str = ""
+    effort: str = "medium"
     poll_interval_seconds: int = 60
     restart_interval_seconds: int = 30
     persona: str = ""
@@ -109,6 +111,20 @@ def _env_int(env: Mapping[str, str], key: str, *, default: int, minimum: int, ma
     return max(minimum, min(maximum, parsed))
 
 
+def _env_choice(
+    env: Mapping[str, str],
+    keys: tuple[str, ...],
+    *,
+    default: str,
+    allowed: set[str],
+) -> str:
+    for key in keys:
+        raw = str(env.get(key, "")).strip().lower()
+        if raw:
+            return raw if raw in allowed else default
+    return default
+
+
 def _state_root(env: Mapping[str, str]) -> Path:
     raw = str(env.get("CHIMERA_MEMORY_STATE_ROOT") or "").strip()
     if raw:
@@ -150,6 +166,12 @@ def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexC
         codex_bin=_clean(source.get("CHIMERA_MEMORY_CODEX_BIN"), default=_default_codex_bin(source)),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MODEL"), max_chars=120),
+        effort=_env_choice(
+            source,
+            ("CHIMERA_MEMORY_CODEX_WORKER_EFFORT", "CHIMERA_MEMORY_CLI_WORKER_EFFORT"),
+            default="medium",
+            allowed={"low", "medium", "high", "xhigh"},
+        ),
         bypass_approvals_and_sandbox=_env_bool(
             source,
             "CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX",
@@ -195,6 +217,12 @@ def load_claude_cli_worker_config(env: Mapping[str, str] | None = None) -> Claud
         claude_bin=_clean(source.get("CHIMERA_MEMORY_CLAUDE_BIN"), default="claude"),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_MODEL"), max_chars=120),
+        effort=_env_choice(
+            source,
+            ("CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT", "CHIMERA_MEMORY_CLI_WORKER_EFFORT"),
+            default="medium",
+            allowed={"low", "medium", "high", "xhigh", "max"},
+        ),
         poll_interval_seconds=_env_int(
             source,
             "CHIMERA_MEMORY_CLAUDE_WORKER_POLL_INTERVAL_SECONDS",
@@ -588,6 +616,8 @@ def codex_worker_command(config: CodexCliWorkerConfig) -> list[str]:
         command.extend(["--sandbox", "read-only"])
     if config.model:
         command.extend(["--model", config.model])
+    if config.effort:
+        command.extend(["-c", f"model_reasoning_effort={json.dumps(config.effort)}"])
     command.append("-")
     return command
 
@@ -619,6 +649,8 @@ def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
     ]
     if config.model:
         command.extend(["--model", config.model])
+    if config.effort:
+        command.extend(["--effort", config.effort])
     return command
 
 
