@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 _embedding_worker_handle: dict[str, object] | None = None
 _health_worker_handle: dict[str, object] | None = None
 _enhancement_worker_handle: dict[str, object] | None = None
+_memory_file_watcher_handle: object | None = None
 
 
 def get_default_jsonl_dir() -> Path:
@@ -3165,6 +3166,40 @@ def _start_transcript_embedding_worker() -> dict[str, object] | None:
     return {"thread": thread, "stop_event": stop_event}
 
 
+def _start_memory_file_indexer() -> object | None:
+    """Index persona memory files and start their live watcher during serve.
+
+    Memory-file indexing used to be lazy, starting only after a memory MCP tool
+    called _ensure_memory_indexed(). That left direct memory file writes
+    invisible to auto-enqueue after restart until a separate memory tool happened
+    to run. Startup owns this now.
+    """
+    log = logging.getLogger("chimera_memory.memory-indexer")
+    if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
+        log.info("memory file watcher disabled for worker MCP surface")
+        return None
+    if not _env_bool("CHIMERA_MEMORY_FILE_WATCHER", default=True):
+        log.info("memory file watcher disabled")
+        return None
+    try:
+        from .db import TranscriptDB
+        from .memory import full_reindex, start_memory_watcher
+
+        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        personas_dir = Path(os.environ.get("CHIMERA_PERSONAS_DIR", "C:/Github/ChimeraPersonas/personas"))
+        db = TranscriptDB(db_path)
+        with db.connection() as conn:
+            updated = full_reindex(conn, personas_dir, embed=True)
+        log.info("memory full_reindex complete updated=%s personas_dir=%s", updated, personas_dir)
+        observer = start_memory_watcher(db, personas_dir)
+        if observer is not None:
+            log.info("memory file watcher active")
+        return observer
+    except Exception:
+        log.exception("memory file indexer bootstrap FAILED; memory auto-enqueue may be stale")
+        return None
+
+
 def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dict[str, object] | None:
     """Periodically persist CM health snapshots so silent drift is visible."""
     if not _env_bool("CHIMERA_MEMORY_HEALTH_WORKER", default=True):
@@ -3354,6 +3389,20 @@ def _stop_transcript_embedding_worker(handle: dict[str, object] | None) -> None:
         thread.join(timeout=5)
 
 
+def _stop_memory_file_watcher(handle: object | None) -> None:
+    if handle is None:
+        return
+    stop = getattr(handle, "stop", None)
+    join = getattr(handle, "join", None)
+    try:
+        if callable(stop):
+            stop()
+        if callable(join):
+            join(timeout=5)
+    except Exception:
+        pass
+
+
 def _stop_memory_enhancement_worker(handle: dict[str, object] | None) -> None:
     if not handle:
         return
@@ -3378,13 +3427,15 @@ def _stop_cm_health_worker(handle: dict[str, object] | None) -> None:
 
 def _bootstrap_startup_services() -> object | None:
     """Start live maintenance without making MCP registration depend on it."""
-    global _embedding_worker_handle, _health_worker_handle, _enhancement_worker_handle
+    global _embedding_worker_handle, _health_worker_handle, _enhancement_worker_handle, _memory_file_watcher_handle
     indexer = _start_transcript_indexer()
+    _memory_file_watcher_handle = _start_memory_file_indexer()
     _embedding_worker_handle = _start_transcript_embedding_worker()
     _enhancement_worker_handle = _start_memory_enhancement_worker()
     _health_worker_handle = _start_cm_health_worker(
         {
             "transcript_indexer": indexer is not None,
+            "memory_file_watcher": _memory_file_watcher_handle is not None,
             "transcript_embedding_worker": _embedding_worker_handle is not None,
             "memory_enhancement_worker": _enhancement_worker_handle is not None,
         }
@@ -3449,6 +3500,7 @@ def main():
         _stop_cm_health_worker(_health_worker_handle)
         _stop_memory_enhancement_worker(_enhancement_worker_handle)
         _stop_transcript_embedding_worker(_embedding_worker_handle)
+        _stop_memory_file_watcher(_memory_file_watcher_handle)
         logging.getLogger("chimera_memory").info("server exiting (pid=%s)", os.getpid())
 
 

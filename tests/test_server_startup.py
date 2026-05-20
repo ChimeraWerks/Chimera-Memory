@@ -66,6 +66,7 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     calls = []
 
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
+    monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
     monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
     monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append(("health", worker_states)) or object())
@@ -75,12 +76,14 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
 
     assert calls == [
         "indexer",
+        "memory",
         "embedder",
         "enhancement",
         (
             "health",
             {
                 "transcript_indexer": True,
+                "memory_file_watcher": True,
                 "transcript_embedding_worker": True,
                 "memory_enhancement_worker": True,
             },
@@ -194,6 +197,56 @@ def test_enhancement_worker_can_start_agy_cli_worker_supervisor(monkeypatch, tmp
     assert handle is not None
     assert handle["mode"] == "cli_worker"
     assert handle["runtime"] == "agy"
+
+
+def test_start_memory_file_indexer_indexes_and_watches(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeConn:
+        def __enter__(self):
+            calls.append("connect")
+            return object()
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append("close")
+            return False
+
+    class FakeDB:
+        def __init__(self, db_path):
+            self.db_path = db_path
+
+        def connection(self):
+            return FakeConn()
+
+    observer = object()
+
+    def fake_reindex(conn, personas_dir, embed=True):
+        calls.append(("reindex", personas_dir, embed))
+        return 2
+
+    def fake_watch(db, personas_dir):
+        calls.append(("watch", db.db_path, personas_dir))
+        return observer
+
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setenv("CHIMERA_PERSONAS_DIR", str(tmp_path / "personas"))
+    monkeypatch.setattr("chimera_memory.db.TranscriptDB", FakeDB)
+    monkeypatch.setattr("chimera_memory.memory.full_reindex", fake_reindex)
+    monkeypatch.setattr("chimera_memory.memory.start_memory_watcher", fake_watch)
+
+    assert server._start_memory_file_indexer() is observer
+    assert calls == [
+        "connect",
+        ("reindex", tmp_path / "personas", True),
+        "close",
+        ("watch", str(tmp_path / "transcript.db"), tmp_path / "personas"),
+    ]
+
+
+def test_start_memory_file_indexer_skips_worker_surface(monkeypatch):
+    monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "worker")
+
+    assert server._start_memory_file_indexer() is None
 
 
 def test_background_bootstrap_logs_failures(monkeypatch, caplog):
