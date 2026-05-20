@@ -301,6 +301,73 @@ def test_codex_install_can_reuse_provider_login_without_echoing_tokens(tmp_path:
     assert "TEST_ONLY_OPENAI_REFRESH" not in text
 
 
+def test_codex_install_prefers_codex_cli_worker_for_openai_provider(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    jsonl_dir.mkdir()
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona_id="developer/asa",
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        provider="openai",
+        enable_provider_worker=True,
+    )
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["chimera-memory"]["env"]
+    text = format_codex_install_report(receipt)
+
+    assert receipt["provider_worker_mode"] == "cli_worker"
+    assert receipt["provider_worker_runtime"] == "codex"
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "cli_worker"
+    assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "codex"
+    assert env["CHIMERA_MEMORY_CODEX_WORKER_PROVIDER"] == "openai"
+    assert "Provider worker runtime: codex" in text
+
+
+def test_codex_install_prefers_claude_cli_worker_for_anthropic_provider(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    jsonl_dir.mkdir()
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona_id="developer/asa",
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        provider="anthropic",
+        enable_provider_worker=True,
+    )
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["chimera-memory"]["env"]
+
+    assert receipt["provider_worker_mode"] == "cli_worker"
+    assert receipt["provider_worker_runtime"] == "claude"
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "cli_worker"
+    assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "claude"
+    assert env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] == "anthropic"
+
+
+def test_codex_install_keeps_http_provider_mode_when_no_cli_worker_exists(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    jsonl_dir.mkdir()
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona_id="developer/asa",
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        provider="google",
+        enable_provider_worker=True,
+    )
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["chimera-memory"]["env"]
+
+    assert receipt["provider_worker_mode"] == "provider"
+    assert receipt["provider_worker_runtime"] == ""
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "provider"
+    assert "CHIMERA_MEMORY_CLI_WORKER_RUNTIME" not in env
+
+
 def test_codex_template_builds_safe_config_without_secrets() -> None:
     config = build_codex_mcp_config(
         persona="asa",

@@ -481,7 +481,9 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER=false` disables the worker.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=dry_run` is the default.
-- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` uses the configured provider plan.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` uses a supervised Codex/Claude CLI worker.
+- `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude` selects the CLI runtime for `cli_worker`.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` remains the direct HTTP/provider fallback.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT=10` controls jobs per tick.
 - `CHIMERA_MEMORY_ENHANCEMENT_PER_MINUTE_CALL_CAP=30` caps shared provider calls per minute.

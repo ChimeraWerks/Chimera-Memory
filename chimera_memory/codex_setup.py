@@ -145,6 +145,7 @@ def install_codex_mcp_config(
         oauth_store=resolved_oauth_store,
         enable_provider_worker=enable_provider_worker,
     )
+    worker_transport = _provider_worker_transport(selected_provider, enable_provider_worker)
     provider_auth = _maybe_import_provider_auth(
         provider_id=selected_provider,
         reuse_provider_auth=reuse_provider_auth,
@@ -181,7 +182,8 @@ def install_codex_mcp_config(
         "mcp_surface": mcp_surface.strip() or "persona",
         "provider": selected_provider or "dry_run",
         "provider_auth": provider_auth,
-        "provider_worker_mode": "provider" if enable_provider_worker else "dry_run",
+        "provider_worker_mode": worker_transport["mode"],
+        "provider_worker_runtime": worker_transport["runtime"],
         "action": "create" if not existed else "update",
     }
 
@@ -201,6 +203,9 @@ def format_codex_install_report(result: Mapping[str, Any]) -> str:
         f"Provider: {result.get('provider')}",
         f"Provider worker: {result.get('provider_worker_mode')}",
     ]
+    worker_runtime = str(result.get("provider_worker_runtime") or "")
+    if worker_runtime:
+        lines.append(f"Provider worker runtime: {worker_runtime}")
     provider_auth = result.get("provider_auth")
     if isinstance(provider_auth, Mapping) and provider_auth.get("status") != "not_requested":
         lines.append(f"Provider auth: {provider_auth.get('status')}")
@@ -416,7 +421,15 @@ def _build_codex_install_env(
     if provider and provider != "dry_run":
         env["CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY"] = provider
     if enable_provider_worker:
-        env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] = "provider"
+        worker_transport = _provider_worker_transport(provider, enable_provider_worker)
+        env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] = worker_transport["mode"]
+        runtime = worker_transport["runtime"]
+        if runtime:
+            env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] = runtime
+        if runtime == "codex":
+            env["CHIMERA_MEMORY_CODEX_WORKER_PROVIDER"] = provider
+        elif runtime == "claude":
+            env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] = provider
     if persona_id:
         env["CHIMERA_PERSONA_ID"] = persona_id
         derived_name = _persona_name_from_id(persona_id)
@@ -428,6 +441,18 @@ def _build_codex_install_env(
     if cleaned_root:
         env["CHIMERA_PERSONA_ROOT"] = cleaned_root
     return env
+
+
+def _provider_worker_transport(provider: str, enabled: bool) -> dict[str, str]:
+    if not enabled:
+        return {"mode": "dry_run", "runtime": ""}
+    if provider == "openai":
+        return {"mode": "cli_worker", "runtime": "codex"}
+    if provider == "anthropic":
+        return {"mode": "cli_worker", "runtime": "claude"}
+    if provider and provider != "dry_run":
+        return {"mode": "provider", "runtime": ""}
+    return {"mode": "dry_run", "runtime": ""}
 
 
 def _install_provider_id(value: str) -> str:

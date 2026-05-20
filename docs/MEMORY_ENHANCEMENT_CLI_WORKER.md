@@ -262,5 +262,5 @@ Mitigations:
 5. Add fake worker harness for tests. Shipped via `chimera-memory enhance worker-fake`.
 6. Add Codex headless worker supervisor. Shipped as an explicit opt-in bounded `codex exec` supervisor.
 7. Add Claude Code headless worker supervisor. Shipped as an explicit opt-in bounded `claude --print` supervisor.
-8. Make `cli_worker` the default subscription-backed enhancement transport.
-9. Keep `http_oauth` as fallback and `dry_run` as the no-provider floor.
+8. Make `cli_worker` the default subscription-backed enhancement transport. Shipped for explicit OpenAI/Anthropic provider-worker setup.
+9. Keep `http_oauth` as fallback and `dry_run` as the no-provider floor. Shipped: Google/other provider-backed setup keeps direct provider mode, dry-run remains default.
