@@ -73,6 +73,24 @@ def _config(tmp_path: Path) -> CodexCliWorkerConfig:
     )
 
 
+def _config_without_codex_bypass(tmp_path: Path) -> CodexCliWorkerConfig:
+    config = _config(tmp_path)
+    return CodexCliWorkerConfig(
+        worker_id=config.worker_id,
+        provider=config.provider,
+        db_path=config.db_path,
+        worker_root=config.worker_root,
+        codex_home=config.codex_home,
+        codex_bin=config.codex_bin,
+        mcp_command=config.mcp_command,
+        model=config.model,
+        bypass_approvals_and_sandbox=False,
+        poll_interval_seconds=config.poll_interval_seconds,
+        restart_interval_seconds=config.restart_interval_seconds,
+        persona=config.persona,
+    )
+
+
 def _claude_config(tmp_path: Path) -> ClaudeCliWorkerConfig:
     return ClaudeCliWorkerConfig(
         worker_id="claude-worker-test",
@@ -114,6 +132,18 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "codex-memory-worker"
     assert config.codex_home == config.worker_root / ".codex"
+    assert config.bypass_approvals_and_sandbox is True
+
+
+def test_load_codex_cli_worker_config_can_disable_bypass(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX": "false",
+    }
+
+    config = load_codex_cli_worker_config(env)
+
+    assert config.bypass_approvals_and_sandbox is False
 
 
 def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
@@ -267,19 +297,28 @@ def test_ensure_agy_worker_files_writes_agents_gemini_and_mcp_config(tmp_path: P
     assert Path(files["logs"]).is_dir()
 
 
-def test_codex_worker_command_is_headless_and_read_only(tmp_path: Path) -> None:
+def test_codex_worker_command_uses_bypass_for_exec_mcp_approval_compat(tmp_path: Path) -> None:
     config = _config(tmp_path)
 
     command = codex_worker_command(config)
 
     assert command[:2] == ["codex-test", "exec"]
     assert "--json" in command
-    assert "--sandbox" in command
-    assert "read-only" in command
     assert "--ephemeral" in command
     assert "--skip-git-repo-check" in command
-    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "--sandbox" not in command
     assert command[-1] == "-"
+
+
+def test_codex_worker_command_can_disable_bypass_for_future_codex_versions(tmp_path: Path) -> None:
+    config = _config_without_codex_bypass(tmp_path)
+
+    command = codex_worker_command(config)
+
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert "--sandbox" in command
+    assert "read-only" in command
 
 
 def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> None:

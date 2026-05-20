@@ -202,10 +202,21 @@ Codex supervisor status:
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`
 - launches bounded `codex exec` worker passes, not an always-on TUI
 - creates worker-local `AGENTS.md`
-- creates worker-local Codex `mcp_servers.json` with worker-only CM tools
+- creates worker-local Codex `config.toml` and legacy `mcp_servers.json` with
+  worker-only CM tools
+- uses `--dangerously-bypass-approvals-and-sandbox` by default because current
+  `codex exec` cancels worker MCP tool calls without it
+- set `CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX=false` to
+  return to read-only sandbox mode when Codex supports non-interactive MCP
+  approvals cleanly
 - sets nested CM maintenance workers off in the child MCP server to prevent
   recursion
 - defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/codex-memory-worker`
+
+Codex bypass mode is accepted only inside the worker containment envelope:
+isolated `CODEX_HOME`, ephemeral session, worker-only MCP surface, temporary
+worker root, CM-side schema validation, budget governor, shadow writes, and no
+direct authoritative memory writes.
 
 Claude Code supervisor status:
 

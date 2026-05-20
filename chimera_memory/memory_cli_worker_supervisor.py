@@ -35,6 +35,7 @@ class CodexCliWorkerConfig:
     codex_bin: str = "codex"
     mcp_command: str = "chimera-memory"
     model: str = ""
+    bypass_approvals_and_sandbox: bool = True
     poll_interval_seconds: int = 60
     restart_interval_seconds: int = 30
     persona: str = ""
@@ -137,6 +138,11 @@ def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexC
         codex_bin=_clean(source.get("CHIMERA_MEMORY_CODEX_BIN"), default="codex"),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MODEL"), max_chars=120),
+        bypass_approvals_and_sandbox=_env_bool(
+            source,
+            "CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX",
+            default=True,
+        ),
         poll_interval_seconds=_env_int(
             source,
             "CHIMERA_MEMORY_CODEX_WORKER_POLL_INTERVAL_SECONDS",
@@ -559,13 +565,15 @@ def codex_worker_command(config: CodexCliWorkerConfig) -> list[str]:
         config.codex_bin,
         "exec",
         "--json",
-        "--sandbox",
-        "read-only",
         "--ephemeral",
         "--skip-git-repo-check",
         "--cd",
         str(config.worker_root),
     ]
+    if config.bypass_approvals_and_sandbox:
+        command.append("--dangerously-bypass-approvals-and-sandbox")
+    else:
+        command.extend(["--sandbox", "read-only"])
     if config.model:
         command.extend(["--model", config.model])
     command.append("-")
