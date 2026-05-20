@@ -297,10 +297,45 @@ def test_memory_worker_submit_result_rejects_unknown_fields(tmp_path: Path) -> N
         job_id=claimed["job"]["job_id"],
         status="succeeded",
         result_payload={"summary": "ok", "write_this_file": "no"},
+        actual_provider="google",
     )
 
     assert result["ok"] is False
     assert "unknown result fields" in result["error"]
+    job = conn.execute(
+        "SELECT status, locked_by_worker FROM memory_enhancement_jobs WHERE job_id = ?",
+        (claimed["job"]["job_id"],),
+    ).fetchone()
+    assert job == ("running", "owner-worker")
+
+
+def test_memory_worker_submit_result_requires_summary_and_provider_on_success(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    memory_enhancement_enqueue(conn, file_path="target.md")
+    claimed = memory_worker_claim_next(conn, worker_id="owner-worker")
+
+    missing_provider = memory_worker_submit_result(
+        conn,
+        worker_id="owner-worker",
+        job_id=claimed["job"]["job_id"],
+        status="succeeded",
+        result_payload={"summary": "Useful metadata."},
+    )
+    empty_summary = memory_worker_submit_result(
+        conn,
+        worker_id="owner-worker",
+        job_id=claimed["job"]["job_id"],
+        status="succeeded",
+        result_payload={"summary": ""},
+        actual_provider="google",
+    )
+
+    assert missing_provider["ok"] is False
+    assert missing_provider["error"] == "actual_provider is required for succeeded worker result"
+    assert empty_summary["ok"] is False
+    assert empty_summary["error"] == "summary is required for succeeded worker result"
     job = conn.execute(
         "SELECT status, locked_by_worker FROM memory_enhancement_jobs WHERE job_id = ?",
         (claimed["job"]["job_id"],),
@@ -327,6 +362,18 @@ def test_memory_worker_heartbeat_and_budget() -> None:
     assert budget["ok"] is True
     assert budget["mode"] == "shared_provider_governor"
     assert budget["budget"]["max_output_tokens"] > 0
+
+
+def test_memory_worker_heartbeat_preserves_provider_when_later_heartbeat_omits_it() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+
+    memory_worker_heartbeat(conn, worker_id="worker-1", provider="google", status="running")
+    heartbeat = memory_worker_heartbeat(conn, worker_id="worker-1", status="idle")
+
+    assert heartbeat["ok"] is True
+    assert heartbeat["heartbeat"]["provider"] == "google"
+    assert heartbeat["heartbeat"]["status"] == "idle"
 
 
 def test_memory_worker_budget_uses_shared_provider_governor(monkeypatch) -> None:

@@ -459,7 +459,7 @@ def memory_worker_heartbeat(
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(worker_id) DO UPDATE SET
             capability = excluded.capability,
-            provider = excluded.provider,
+            provider = COALESCE(NULLIF(excluded.provider, ''), memory_worker_heartbeats.provider),
             status = excluded.status,
             current_job_id = excluded.current_job_id,
             last_seen_at = excluded.last_seen_at,
@@ -618,6 +618,9 @@ def _validate_worker_result_payload(result_payload: object) -> tuple[bool, str]:
     unknown = sorted(str(key) for key in result_payload.keys() if str(key) not in allowed)
     if unknown:
         return False, f"unknown result fields: {', '.join(unknown[:5])}"
+    summary = str(result_payload.get("summary") or "").strip()
+    if not summary:
+        return False, "summary is required for succeeded worker result"
     return True, ""
 
 
@@ -649,6 +652,8 @@ def memory_worker_submit_result(
     if str(job.get("locked_by_worker") or "") != worker_id:
         return {"ok": False, "error": "worker does not own this job", "job_id": job_id}
     if status == "succeeded":
+        if not actual_provider.strip():
+            return {"ok": False, "error": "actual_provider is required for succeeded worker result", "job_id": job_id}
         valid, validation_error = _validate_worker_result_payload(result_payload or {})
         if not valid:
             return {"ok": False, "error": validation_error, "job_id": job_id}

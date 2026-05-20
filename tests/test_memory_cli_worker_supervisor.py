@@ -372,7 +372,9 @@ def test_codex_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 
     assert "Run one bounded worker pass" in prompt
     assert "memory_worker_claim_next" in prompt
-    assert "Heartbeat idle and stop" in prompt
+    assert "actual_provider=`openai`" in prompt
+    assert "Do not submit success with an empty summary" in prompt
+    assert "Heartbeat idle with provider `openai`" in prompt
 
 
 def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
@@ -380,7 +382,9 @@ def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 
     assert "Run one bounded worker pass" in prompt
     assert "memory_worker_claim_next" in prompt
-    assert "Heartbeat idle and stop" in prompt
+    assert "actual_provider=`anthropic`" in prompt
+    assert "Do not submit success with an empty summary" in prompt
+    assert "Heartbeat idle with provider `anthropic`" in prompt
 
 
 def test_agy_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
@@ -388,7 +392,9 @@ def test_agy_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 
     assert "Run one bounded worker pass" in prompt
     assert "memory_worker_claim_next" in prompt
-    assert "Heartbeat idle and stop" in prompt
+    assert "actual_provider=`google`" in prompt
+    assert "Do not submit success with an empty summary" in prompt
+    assert "Heartbeat idle with provider `google`" in prompt
 
 
 def test_inspect_cli_worker_setup_can_initialize_codex_files(tmp_path: Path, monkeypatch) -> None:
