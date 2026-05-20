@@ -32,6 +32,7 @@ class CodexCliWorkerConfig:
     db_path: str
     worker_root: Path
     codex_home: Path
+    codex_auth_path: Path | None = None
     codex_bin: str = "codex"
     mcp_command: str = "chimera-memory"
     model: str = ""
@@ -156,6 +157,11 @@ def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexC
         source.get("CHIMERA_MEMORY_CODEX_WORKER_CODEX_HOME")
         or worker_root / ".codex"
     ).expanduser()
+    codex_auth_path = Path(
+        source.get("CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH")
+        or source.get("CHIMERA_MEMORY_CODEX_AUTH_PATH")
+        or Path.home() / ".codex" / "auth.json"
+    ).expanduser()
     db_path = str(source.get("TRANSCRIPT_DB_PATH") or state_root / "transcript.db")
     return CodexCliWorkerConfig(
         worker_id=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_ID"), default="codex-memory-worker-1"),
@@ -163,6 +169,7 @@ def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexC
         db_path=db_path,
         worker_root=worker_root,
         codex_home=codex_home,
+        codex_auth_path=codex_auth_path,
         codex_bin=_clean(source.get("CHIMERA_MEMORY_CODEX_BIN"), default=_default_codex_bin(source)),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MODEL"), max_chars=120),
@@ -521,9 +528,19 @@ def ensure_codex_worker_files(config: CodexCliWorkerConfig) -> dict[str, str]:
     legacy_mcp_path = config.codex_home / "mcp_servers.json"
     legacy_mcp_path.write_text(json.dumps(codex_worker_mcp_config(config), indent=2) + "\n", encoding="utf-8")
 
+    auth_path = config.codex_home / "auth.json"
+    if config.codex_auth_path and config.codex_auth_path.exists():
+        try:
+            same_file = config.codex_auth_path.resolve() == auth_path.resolve()
+        except OSError:
+            same_file = False
+        if not same_file:
+            shutil.copy2(config.codex_auth_path, auth_path)
+
     return {
         "worker_root": str(config.worker_root),
         "codex_home": str(config.codex_home),
+        "auth": str(auth_path),
         "agents": str(agents_path),
         "mcp_config": str(config_toml_path),
         "mcp_legacy_json": str(legacy_mcp_path),

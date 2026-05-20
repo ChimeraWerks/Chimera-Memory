@@ -497,6 +497,7 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_CODEX_WORKER_EFFORT=low|medium|high|xhigh` overrides Codex worker effort.
 - `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT=low|medium|high|xhigh|max` overrides Claude worker effort.
 - `CHIMERA_MEMORY_CODEX_BIN=...` overrides automatic Codex executable detection.
+- `CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH=...` overrides the Codex auth file copied into the isolated worker home.
 - `CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX=true` is the Codex worker default for non-interactive MCP calls.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` remains the direct HTTP/provider fallback.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.

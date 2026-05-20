@@ -205,6 +205,8 @@ Codex supervisor status:
   npm shim unless `CHIMERA_MEMORY_CODEX_BIN` is set
 - sets reasoning effort with `CHIMERA_MEMORY_CODEX_WORKER_EFFORT` or the
   shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
+- copies the existing Codex auth file into the isolated worker `CODEX_HOME`
+  unless `CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH` points somewhere else
 - creates worker-local `AGENTS.md`
 - creates worker-local Codex `config.toml` and legacy `mcp_servers.json` with
   worker-only CM tools

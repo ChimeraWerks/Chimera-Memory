@@ -123,6 +123,7 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
         "TRANSCRIPT_DB_PATH": str(tmp_path / "db.sqlite"),
         "CHIMERA_MEMORY_CODEX_WORKER_ID": "worker-1",
         "CHIMERA_MEMORY_CODEX_WORKER_PROVIDER": "openai",
+        "CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH": str(tmp_path / "auth.json"),
     }
 
     config = load_codex_cli_worker_config(env)
@@ -132,6 +133,7 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "codex-memory-worker"
     assert config.codex_home == config.worker_root / ".codex"
+    assert config.codex_auth_path == tmp_path / "auth.json"
     assert config.effort == "medium"
     assert config.bypass_approvals_and_sandbox is True
 
@@ -300,6 +302,34 @@ def test_ensure_codex_worker_files_writes_agents_and_mcp_config(tmp_path: Path) 
     assert "chimera-memory-worker" in legacy_mcp_config
     assert Path(files["sessions"]).is_dir()
     assert Path(files["logs"]).is_dir()
+
+
+def test_ensure_codex_worker_files_copies_auth_into_isolated_home(tmp_path: Path) -> None:
+    source_auth = tmp_path / "source-auth.json"
+    source_auth.write_text('{"access_token":"TEST_ONLY_TOKEN"}\n', encoding="utf-8")
+    base = _config(tmp_path)
+    config = CodexCliWorkerConfig(
+        worker_id=base.worker_id,
+        provider=base.provider,
+        db_path=base.db_path,
+        worker_root=base.worker_root,
+        codex_home=base.codex_home,
+        codex_auth_path=source_auth,
+        codex_bin=base.codex_bin,
+        mcp_command=base.mcp_command,
+        model=base.model,
+        effort=base.effort,
+        bypass_approvals_and_sandbox=base.bypass_approvals_and_sandbox,
+        poll_interval_seconds=base.poll_interval_seconds,
+        restart_interval_seconds=base.restart_interval_seconds,
+        persona=base.persona,
+    )
+
+    files = ensure_codex_worker_files(config)
+
+    copied = config.codex_home / "auth.json"
+    assert files["auth"] == str(copied)
+    assert copied.read_text(encoding="utf-8") == source_auth.read_text(encoding="utf-8")
 
 
 def test_ensure_claude_worker_files_writes_claude_md_and_mcp_config(tmp_path: Path) -> None:
