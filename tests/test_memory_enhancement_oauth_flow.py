@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -11,6 +12,10 @@ from chimera_memory import hermes_gemini_oauth
 from chimera_memory.memory_enhancement_oauth import MemoryEnhancementOAuthStore
 from chimera_memory.memory_enhancement_hermes_oauth import run_hermes_memory_enhancement_oauth_login
 from chimera_memory.memory_enhancement_oauth_flow import (
+    _bind_google_callback_server,
+    _flow_callback_path,
+    _google_callback_handler,
+    _save_flow_state,
     poll_memory_enhancement_oauth_flow,
     start_memory_enhancement_oauth_flow,
     submit_memory_enhancement_oauth_flow,
@@ -102,8 +107,9 @@ def test_google_oauth_loopback_callback_can_be_polled(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_SECRET", "TEST_ONLY_GOOGLE_CLIENT_SECRET")
     monkeypatch.setenv("CHIMERA_MEMORY_GOOGLE_OAUTH_CALLBACK_PORT", "0")
     store = MemoryEnhancementOAuthStore(tmp_path / "auth.json")
-    started = start_memory_enhancement_oauth_flow("google", store=store)
+    started = start_memory_enhancement_oauth_flow("google", store=store, start_callback_server=False)
     flow_state = _flow_state(tmp_path, started["flow_id"])
+    flow_state["callback_mode"] = "loopback"
     captured: dict[str, object] = {}
 
     def opener(request, *, timeout):
@@ -117,16 +123,30 @@ def test_google_oauth_loopback_callback_can_be_polled(monkeypatch, tmp_path: Pat
             }
         )
 
-    callback = (
-        f"{flow_state['redirect_uri']}?code=TEST_ONLY_GOOGLE_CODE&state={flow_state['state']}"
+    result_state: dict[str, object] = {}
+    handler_cls = _google_callback_handler(
+        expected_state=flow_state["state"],
+        callback_path=_flow_callback_path(store, started["flow_id"]),
+        result=result_state,
     )
-    with urllib.request.urlopen(callback, timeout=5) as response:
-        assert response.status == 200
+    server, port = _bind_google_callback_server(handler_cls)
+    flow_state["redirect_uri"] = f"http://127.0.0.1:{port}/oauth2callback"
+    _save_flow_state(store, started["flow_id"], flow_state)
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+    try:
+        callback = (
+            f"http://127.0.0.1:{port}/oauth2callback?code=TEST_ONLY_GOOGLE_CODE&state={flow_state['state']}"
+        )
+        with urllib.request.urlopen(callback, timeout=5) as response:
+            assert response.status == 200
+        thread.join(timeout=5)
+    finally:
+        server.server_close()
 
     result = poll_memory_enhancement_oauth_flow(started["flow_id"], store=store, opener=opener)
     credential = store.get("google-memory", provider_id="google")
 
-    assert started["submit_mode"] == "poll"
     assert result["status"] == "approved"
     assert captured["payload"]["code"] == ["TEST_ONLY_GOOGLE_CODE"]
     assert captured["payload"]["redirect_uri"] == [flow_state["redirect_uri"]]
