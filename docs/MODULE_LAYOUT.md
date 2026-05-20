@@ -492,11 +492,14 @@ This tiny module exists to avoid circular imports between `memory.py` and `memor
 
 ### `enhancement_worker.py`
 
-Owns the deterministic dry-run worker for Phase 5c.
+Owns deterministic local enhancement workers:
+
+- legacy dry-run queue consumer
+- fake CLI-worker harness that exercises worker claim/budget/submit protocol
 
 Rules:
 
-- This is not the real OAuth/model adapter.
+- These are not the real OAuth/model adapter or headless CLI launcher.
 - Keep deterministic behavior for tests.
 - Real sidecar/model work should land behind explicit provider boundaries.
 

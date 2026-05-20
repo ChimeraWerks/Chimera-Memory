@@ -301,7 +301,7 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 | `memory_worker_claim_next` | Worker-surface tool. Atomically claim one pending enhancement job and return a strict JSON worker payload. |
 | `memory_worker_submit_result` | Worker-surface tool. Submit strict JSON output for a claimed job; CM validates before writeback. |
 | `memory_worker_heartbeat` | Worker-surface tool. Record liveness for a supervised memory worker. |
-| `memory_worker_budget` | Worker-surface tool. Return configured worker budget caps. Consumption-ledger enforcement is future work. |
+| `memory_worker_budget` | Worker-surface tool. Return shared provider-governor budget status before work is claimed. |
 
 ### Cognitive Analytics
 
@@ -319,7 +319,9 @@ Worker protocol note: CM also exposes a restricted `worker` MCP surface with
 `memory_worker_claim_next`, `memory_worker_submit_result`,
 `memory_worker_heartbeat`, and `memory_worker_budget`. This is the deterministic
 protocol layer for future persistent CLI enhancement workers. The headless CLI
-launcher itself is not implemented yet.
+launcher itself is not implemented yet. `chimera-memory enhance worker-fake`
+exercises the same claim/budget/submit protocol with deterministic local
+metadata for tests and operator smoke checks.
 
 ### What It Does
 

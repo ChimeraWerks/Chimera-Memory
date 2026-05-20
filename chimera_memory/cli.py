@@ -142,6 +142,16 @@ def main():
     sub_enhance_dry_run.add_argument("--persona", help="Only process jobs for this persona")
     sub_enhance_dry_run.add_argument("--limit", type=int, default=10, help="Maximum jobs to process")
     sub_enhance_dry_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub_enhance_worker_fake = enhance_subparsers.add_parser(
+        "worker-fake",
+        help="Exercise the CLI-worker protocol with deterministic local metadata",
+    )
+    sub_enhance_worker_fake.add_argument("--db", help="Path to transcript.db")
+    sub_enhance_worker_fake.add_argument("--persona", help="Only process jobs for this persona")
+    sub_enhance_worker_fake.add_argument("--worker-id", default="fake-memory-worker", help="Stable fake worker id")
+    sub_enhance_worker_fake.add_argument("--provider", default="", help="Optional provider claim and budget scope")
+    sub_enhance_worker_fake.add_argument("--limit", type=int, default=10, help="Maximum jobs to process")
+    sub_enhance_worker_fake.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub_enhance_sidecar_run = enhance_subparsers.add_parser("sidecar-run", help="Process queued jobs through an HTTP sidecar")
     sub_enhance_sidecar_run.add_argument("--db", help="Path to transcript.db")
     sub_enhance_sidecar_run.add_argument("--endpoint", required=True, help="Sidecar endpoint URL")
@@ -627,6 +637,32 @@ def _run_enhance(args):
             payload,
             json_output=args.json,
             lines=[f"Processed enhancement jobs: {len(processed)}"],
+        )
+        return
+
+    if args.enhance_command == "worker-fake":
+        from .enhancement_worker import run_memory_enhancement_fake_worker
+
+        conn = _open_memory_db(args.db)
+        try:
+            receipt = run_memory_enhancement_fake_worker(
+                conn,
+                worker_id=args.worker_id,
+                persona=args.persona,
+                provider=args.provider,
+                limit=args.limit,
+            )
+        finally:
+            conn.close()
+
+        _emit_json_or_lines(
+            receipt,
+            json_output=args.json,
+            lines=[
+                f"Processed enhancement jobs: {receipt['processed_count']}",
+                f"Failed enhancement jobs: {receipt['failure_count']}",
+                f"Budget stopped: {receipt['budget_stopped']}",
+            ],
         )
         return
 

@@ -1,6 +1,7 @@
 # Memory Enhancement CLI Worker
 
-Status: Protocol slice implemented. Headless CLI launcher not implemented.
+Status: Protocol, exclusion, budget, and fake-worker slices implemented.
+Headless CLI launcher not implemented.
 
 This document captures the proposed replacement for subscription-backed HTTP
 enrichment calls: a persistent headless CLI memory worker supervised by
@@ -237,7 +238,7 @@ Mitigations:
 2. Add result schema validation and writeback gate. Shipped at the protocol boundary.
 3. Add worker JSONL/path exclusion to transcript ingestion. Shipped with env-driven glob and session-id filters.
 4. Add provider budget governor shared by HTTP and CLI transports. Shipped.
-5. Add fake worker harness for tests.
+5. Add fake worker harness for tests. Shipped via `chimera-memory enhance worker-fake`.
 6. Add Codex headless worker supervisor.
 7. Add Claude Code headless worker supervisor.
 8. Make `cli_worker` the default subscription-backed enhancement transport.

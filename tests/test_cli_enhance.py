@@ -188,6 +188,43 @@ def test_cli_enhance_enqueue_and_dry_run_json(tmp_path: Path, monkeypatch, capsy
     assert processed["processed"][0]["result_payload"]["can_use_as_instruction"] is False
 
 
+def test_cli_enhance_worker_fake_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    db_path = tmp_path / "transcript.db"
+    memory_path = tmp_path / "cli-worker-fake.md"
+    _index_cli_memory(db_path, memory_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        init_memory_tables(conn)
+        enqueued = memory_enhancement_enqueue(conn, file_path=memory_path.name)
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "chimera-memory",
+            "enhance",
+            "worker-fake",
+            "--db",
+            str(db_path),
+            "--persona",
+            "asa",
+            "--worker-id",
+            "fake-cli-worker",
+            "--json",
+        ],
+    )
+    main()
+
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["processed_count"] == 1
+    assert receipt["failure_count"] == 0
+    assert receipt["worker_id"] == "fake-cli-worker"
+    assert receipt["processed"][0]["job_id"] == enqueued["job"]["job_id"]
+    assert receipt["processed"][0]["actual_provider"] == "dry_run"
+
+
 def test_cli_enhance_authored_enqueue_json(tmp_path: Path, monkeypatch, capsys) -> None:
     db_path = tmp_path / "transcript.db"
     conn = sqlite3.connect(db_path)
