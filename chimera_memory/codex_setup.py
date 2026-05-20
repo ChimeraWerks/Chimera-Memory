@@ -342,7 +342,16 @@ def inspect_codex_mcp_config(config_path: str | Path | None = None) -> dict[str,
     else:
         _check(checks, "identity_env", "ok", "Persona identity resolves via explicit and derived fields.")
 
-    _check_latest_health_snapshot(checks, runtime_values.get("TRANSCRIPT_DB_PATH", ""))
+    db_source = _runtime_source(resolved_fields, "TRANSCRIPT_DB_PATH")
+    if db_source == "derived:CHIMERA_PERSONA_ID":
+        _check(
+            checks,
+            "cm_health",
+            "info",
+            "CM health snapshot skipped: TRANSCRIPT_DB_PATH is derived from persona identity.",
+        )
+    else:
+        _check_latest_health_snapshot(checks, runtime_values.get("TRANSCRIPT_DB_PATH", ""))
 
     return _finalize(result)
 

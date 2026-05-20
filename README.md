@@ -491,6 +491,7 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=dry_run` is the default.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` uses a supervised Codex/Claude/Antigravity CLI worker.
 - `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude|agy` selects the CLI runtime for `cli_worker`.
+- `CHIMERA_MEMORY_CODEX_BIN=...` overrides automatic Codex executable detection.
 - `CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX=true` is the Codex worker default for non-interactive MCP calls.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` remains the direct HTTP/provider fallback.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.

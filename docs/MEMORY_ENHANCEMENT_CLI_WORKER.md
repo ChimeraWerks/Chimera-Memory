@@ -201,6 +201,8 @@ Codex supervisor status:
 
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`
 - launches bounded `codex exec` worker passes, not an always-on TUI
+- resolves the Codex executable with `shutil.which("codex")` or the Windows
+  npm shim unless `CHIMERA_MEMORY_CODEX_BIN` is set
 - creates worker-local `AGENTS.md`
 - creates worker-local Codex `config.toml` and legacy `mcp_servers.json` with
   worker-only CM tools

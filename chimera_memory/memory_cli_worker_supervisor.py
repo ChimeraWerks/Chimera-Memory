@@ -116,6 +116,18 @@ def _state_root(env: Mapping[str, str]) -> Path:
     return Path.home() / ".chimera-memory"
 
 
+def _default_codex_bin(env: Mapping[str, str]) -> str:
+    found = shutil.which("codex")
+    if found:
+        return found
+    app_data = str(env.get("APPDATA") or "").strip()
+    if app_data:
+        candidate = Path(app_data) / "npm" / "codex.cmd"
+        if candidate.exists():
+            return str(candidate)
+    return "codex"
+
+
 def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexCliWorkerConfig:
     """Load explicit Codex worker configuration from environment values."""
     source = env or os.environ
@@ -135,7 +147,7 @@ def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexC
         db_path=db_path,
         worker_root=worker_root,
         codex_home=codex_home,
-        codex_bin=_clean(source.get("CHIMERA_MEMORY_CODEX_BIN"), default="codex"),
+        codex_bin=_clean(source.get("CHIMERA_MEMORY_CODEX_BIN"), default=_default_codex_bin(source)),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CODEX_WORKER_MODEL"), max_chars=120),
         bypass_approvals_and_sandbox=_env_bool(

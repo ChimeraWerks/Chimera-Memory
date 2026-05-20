@@ -146,6 +146,19 @@ def test_load_codex_cli_worker_config_can_disable_bypass(tmp_path: Path) -> None
     assert config.bypass_approvals_and_sandbox is False
 
 
+def test_load_codex_cli_worker_config_resolves_codex_shim(tmp_path: Path, monkeypatch) -> None:
+    expected = str(tmp_path / "bin" / "codex.cmd")
+    monkeypatch.setattr(
+        "chimera_memory.memory_cli_worker_supervisor.shutil.which",
+        lambda command: expected if command == "codex" else None,
+    )
+    env = {"CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state")}
+
+    config = load_codex_cli_worker_config(env)
+
+    assert config.codex_bin == expected
+
+
 def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
     env = {
         "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
