@@ -24,6 +24,10 @@ from .memory_enhancement_queue import (
     memory_enhancement_complete,
     memory_enhancement_enqueue,
     memory_enhancement_enqueue_authored,
+    memory_worker_budget,
+    memory_worker_claim_next,
+    memory_worker_heartbeat,
+    memory_worker_submit_result,
 )
 from .memory_enhancement_shadow import memory_enhancement_shadow_enqueue
 from .memory_entities import (

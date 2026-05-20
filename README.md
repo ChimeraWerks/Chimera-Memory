@@ -298,6 +298,10 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 | `memory_enhancement_provider_plan` | Show the selected enhancement provider and budget caps without exposing credential refs. |
 | `memory_enhancement_enqueue` | Queue an indexed memory file for metadata enrichment. |
 | `memory_enhancement_dry_run` | Process queued enhancement jobs with deterministic local metadata. No model call required. |
+| `memory_worker_claim_next` | Worker-surface tool. Atomically claim one pending enhancement job and return a strict JSON worker payload. |
+| `memory_worker_submit_result` | Worker-surface tool. Submit strict JSON output for a claimed job; CM validates before writeback. |
+| `memory_worker_heartbeat` | Worker-surface tool. Record liveness for a supervised memory worker. |
+| `memory_worker_budget` | Worker-surface tool. Return configured worker budget caps. Consumption-ledger enforcement is future work. |
 
 ### Cognitive Analytics
 
@@ -310,6 +314,12 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 ## Memory Enhancement (Optional Sidecar)
 
 The memory enhancement system extracts structured metadata (topics, entities, action items) from your curated memory files using a configurable LLM provider. Output lives in a separate database table for inspection ... it does **not** edit memory files, change agent behavior, or get treated as instructions until you explicitly promote it.
+
+Worker protocol note: CM also exposes a restricted `worker` MCP surface with
+`memory_worker_claim_next`, `memory_worker_submit_result`,
+`memory_worker_heartbeat`, and `memory_worker_budget`. This is the deterministic
+protocol layer for future persistent CLI enhancement workers. The headless CLI
+launcher itself is not implemented yet.
 
 ### What It Does
 

@@ -9,6 +9,10 @@ from chimera_memory.memory import (
     memory_enhancement_complete,
     memory_enhancement_enqueue,
     memory_enhancement_enqueue_authored,
+    memory_worker_budget,
+    memory_worker_claim_next,
+    memory_worker_heartbeat,
+    memory_worker_submit_result,
     memory_entity_connections,
     memory_entity_query,
 )
@@ -179,6 +183,142 @@ def test_memory_enhancement_complete_failure_records_error(tmp_path: Path) -> No
 
     events = memory_audit_query(conn, event_type="memory_enhancement_failed", persona="asa")
     assert len(events) == 1
+
+
+def test_memory_worker_claims_job_with_scoped_payload(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    enqueued = memory_enhancement_enqueue(conn, file_path="target.md", requested_provider="openai")
+
+    result = memory_worker_claim_next(
+        conn,
+        worker_id="codex-worker-1",
+        capability="enhancement",
+        persona="asa",
+        provider="openai",
+    )
+
+    assert result["ok"] is True
+    assert result["job"]["job_id"] == enqueued["job"]["job_id"]
+    assert result["job"]["status"] == "running"
+    assert result["job"]["locked_by_worker"] == "codex-worker-1"
+    assert result["worker_request"]["schema_version"] == "chimera-memory.worker.enhance.v1"
+    assert result["worker_request"]["source_ref"]["kind"] == "memory_file"
+    assert "UNTRUSTED MEMORY CONTENT" in result["worker_request"]["content"]["text"]
+    heartbeat = conn.execute(
+        "SELECT status, current_job_id FROM memory_worker_heartbeats WHERE worker_id = ?",
+        ("codex-worker-1",),
+    ).fetchone()
+    assert heartbeat == ("running", enqueued["job"]["job_id"])
+    events = memory_audit_query(conn, event_type="memory_worker_job_claimed", persona="asa")
+    assert events[0]["payload"]["worker_id"] == "codex-worker-1"
+
+
+def test_memory_worker_submit_result_requires_job_ownership(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    memory_enhancement_enqueue(conn, file_path="target.md")
+    claimed = memory_worker_claim_next(conn, worker_id="owner-worker")
+
+    rejected = memory_worker_submit_result(
+        conn,
+        worker_id="other-worker",
+        job_id=claimed["job"]["job_id"],
+        status="succeeded",
+        result_payload={"summary": "Nope."},
+    )
+
+    assert rejected["ok"] is False
+    assert rejected["error"] == "worker does not own this job"
+    job = conn.execute(
+        "SELECT status, locked_by_worker FROM memory_enhancement_jobs WHERE job_id = ?",
+        (claimed["job"]["job_id"],),
+    ).fetchone()
+    assert job == ("running", "owner-worker")
+
+
+def test_memory_worker_submit_result_completes_owned_job(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    memory_enhancement_enqueue(conn, file_path="target.md")
+    claimed = memory_worker_claim_next(conn, worker_id="owner-worker")
+
+    result = memory_worker_submit_result(
+        conn,
+        worker_id="owner-worker",
+        job_id=claimed["job"]["job_id"],
+        status="succeeded",
+        result_payload={
+            "memory_type": "lesson",
+            "summary": "Worker protocol returns strict JSON.",
+            "topics": ["memory-enhancement"],
+            "confidence": 0.9,
+        },
+        actual_provider="openai",
+        actual_model="gpt-test",
+        diagnostics={"latency_ms": 123},
+    )
+
+    assert result["ok"] is True
+    assert result["job"]["status"] == "succeeded"
+    assert result["job"]["locked_by_worker"] == ""
+    assert result["job"]["actual_provider"] == "openai"
+    assert result["job"]["result_payload"]["summary"] == "Worker protocol returns strict JSON."
+    heartbeat = conn.execute(
+        "SELECT status, current_job_id FROM memory_worker_heartbeats WHERE worker_id = ?",
+        ("owner-worker",),
+    ).fetchone()
+    assert heartbeat == ("idle", "")
+    events = memory_audit_query(conn, event_type="memory_worker_result_submitted", persona="asa")
+    assert events[0]["payload"]["diagnostics"] == {"latency_ms": 123}
+
+
+def test_memory_worker_submit_result_rejects_unknown_fields(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    memory_enhancement_enqueue(conn, file_path="target.md")
+    claimed = memory_worker_claim_next(conn, worker_id="owner-worker")
+
+    result = memory_worker_submit_result(
+        conn,
+        worker_id="owner-worker",
+        job_id=claimed["job"]["job_id"],
+        status="succeeded",
+        result_payload={"summary": "ok", "write_this_file": "no"},
+    )
+
+    assert result["ok"] is False
+    assert "unknown result fields" in result["error"]
+    job = conn.execute(
+        "SELECT status, locked_by_worker FROM memory_enhancement_jobs WHERE job_id = ?",
+        (claimed["job"]["job_id"],),
+    ).fetchone()
+    assert job == ("running", "owner-worker")
+
+
+def test_memory_worker_heartbeat_and_budget() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+
+    heartbeat = memory_worker_heartbeat(
+        conn,
+        worker_id="worker-1",
+        capability="enhancement",
+        provider="openai",
+        status="idle",
+        metadata={"pid": 123},
+    )
+    budget = memory_worker_budget(conn, worker_id="worker-1", provider="openai")
+
+    assert heartbeat["ok"] is True
+    assert heartbeat["heartbeat"]["metadata"] == {"pid": 123}
+    assert budget["ok"] is True
+    assert budget["mode"] == "configured_caps_only"
+    assert budget["budget"]["max_output_tokens"] > 0
 
 
 def test_memory_enhancement_enqueue_authored_builds_pending_job() -> None:

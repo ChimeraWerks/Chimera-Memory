@@ -32,6 +32,15 @@ PERSONA_TRANSCRIPT_TOOLS = frozenset(
 
 PERSONA_TOOLS = PERSONA_MEMORY_TOOLS | PERSONA_TRANSCRIPT_TOOLS
 
+WORKER_TOOLS = frozenset(
+    {
+        "memory_worker_claim_next",
+        "memory_worker_submit_result",
+        "memory_worker_heartbeat",
+        "memory_worker_budget",
+    }
+)
+
 
 def normalize_mcp_surface(value: object) -> str:
     """Normalize a configured MCP surface name."""
@@ -42,6 +51,8 @@ def normalize_mcp_surface(value: object) -> str:
         return "persona"
     if surface in {"persona_memory", "memory", "memory_only"}:
         return "persona_memory"
+    if surface in {"worker", "memory_worker", "enhancement_worker"}:
+        return "worker"
     return "full"
 
 
@@ -61,6 +72,8 @@ def allowed_tools_for_surface(surface: object) -> frozenset[str] | None:
         return PERSONA_TOOLS
     if normalized == "persona_memory":
         return PERSONA_MEMORY_TOOLS
+    if normalized == "worker":
+        return WORKER_TOOLS
     return None
 
 

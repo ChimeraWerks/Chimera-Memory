@@ -2562,6 +2562,100 @@ def create_server():
         return "\n".join(lines)
 
     @server.tool()
+    def memory_worker_claim_next(
+        worker_id: str,
+        capability: str = "enhancement",
+        persona: str | None = None,
+        provider: str = "",
+    ) -> str:
+        """Claim one pending memory-worker job and return a strict JSON job payload."""
+        from .memory import memory_worker_claim_next as _claim
+
+        result = _claim(
+            _get_memory_conn(),
+            worker_id=worker_id,
+            capability=capability,
+            persona=persona,
+            provider=provider,
+        )
+        return json.dumps(result, indent=2)
+
+    @server.tool()
+    def memory_worker_submit_result(
+        worker_id: str,
+        job_id: str,
+        status: str,
+        result_payload_json: str = "{}",
+        error: str = "",
+        actual_provider: str = "",
+        actual_model: str = "",
+        diagnostics_json: str = "{}",
+    ) -> str:
+        """Submit a strict JSON worker result for a claimed enhancement job."""
+        from .memory import memory_worker_submit_result as _submit
+
+        try:
+            result_payload = json.loads(result_payload_json or "{}")
+        except json.JSONDecodeError as exc:
+            return json.dumps({"ok": False, "error": f"invalid result_payload_json: {exc}"}, indent=2)
+        try:
+            diagnostics = json.loads(diagnostics_json or "{}")
+        except json.JSONDecodeError as exc:
+            return json.dumps({"ok": False, "error": f"invalid diagnostics_json: {exc}"}, indent=2)
+        result = _submit(
+            _get_memory_conn(),
+            worker_id=worker_id,
+            job_id=job_id,
+            status=status,
+            result_payload=result_payload if isinstance(result_payload, dict) else {},
+            error=error,
+            actual_provider=actual_provider,
+            actual_model=actual_model,
+            diagnostics=diagnostics if isinstance(diagnostics, dict) else {},
+        )
+        return json.dumps(result, indent=2)
+
+    @server.tool()
+    def memory_worker_heartbeat(
+        worker_id: str,
+        capability: str = "enhancement",
+        provider: str = "",
+        status: str = "idle",
+        current_job_id: str = "",
+        metadata_json: str = "{}",
+    ) -> str:
+        """Record liveness for a supervised memory worker."""
+        from .memory import memory_worker_heartbeat as _heartbeat
+
+        try:
+            metadata = json.loads(metadata_json or "{}")
+        except json.JSONDecodeError as exc:
+            return json.dumps({"ok": False, "error": f"invalid metadata_json: {exc}"}, indent=2)
+        result = _heartbeat(
+            _get_memory_conn(),
+            worker_id=worker_id,
+            capability=capability,
+            provider=provider,
+            status=status,
+            current_job_id=current_job_id,
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
+        return json.dumps(result, indent=2)
+
+    @server.tool()
+    def memory_worker_budget(worker_id: str, capability: str = "enhancement", provider: str = "") -> str:
+        """Return configured worker budget caps for a supervised memory worker."""
+        from .memory import memory_worker_budget as _budget
+
+        result = _budget(
+            _get_memory_conn(),
+            worker_id=worker_id,
+            capability=capability,
+            provider=provider,
+        )
+        return json.dumps(result, indent=2)
+
+    @server.tool()
     def memory_enhancement_shadow_report(persona: str | None = None, limit: int = 20) -> str:
         """Compare recent shadow enhancement results against authoritative frontmatter."""
         _ensure_memory_indexed()

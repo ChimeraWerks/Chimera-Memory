@@ -473,7 +473,8 @@ CREATE TABLE IF NOT EXISTS memory_enhancement_jobs (
     result_payload TEXT DEFAULT '{}',
     error TEXT DEFAULT '',
     attempt_count INTEGER NOT NULL DEFAULT 0,
-    locked_at TEXT
+    locked_at TEXT,
+    locked_by_worker TEXT DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_enhancement_jobs_status
@@ -492,13 +493,27 @@ WHERE status IN ('pending', 'running');
 CREATE TRIGGER IF NOT EXISTS memory_enhancement_jobs_au_updated_at
 AFTER UPDATE OF
     status, requested_provider, requested_model, request_payload,
-    result_payload, error, attempt_count, locked_at
+    result_payload, error, attempt_count, locked_at, locked_by_worker
 ON memory_enhancement_jobs
 BEGIN
     UPDATE memory_enhancement_jobs
        SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
      WHERE id = NEW.id;
 END;
+
+CREATE TABLE IF NOT EXISTS memory_worker_heartbeats (
+    worker_id TEXT PRIMARY KEY,
+    capability TEXT NOT NULL DEFAULT 'enhancement',
+    provider TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'idle'
+        CHECK(status IN ('idle', 'running', 'stopping', 'failed')),
+    current_job_id TEXT DEFAULT '',
+    last_seen_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_worker_heartbeats_capability
+ON memory_worker_heartbeats(capability, status, last_seen_at);
 """
 
 
@@ -635,4 +650,26 @@ def _migrate_memory_enhancement_jobs_schema(conn: sqlite3.Connection) -> None:
         columns,
         "actual_model",
         "actual_model TEXT DEFAULT ''",
+    )
+    _ensure_table_column(
+        conn,
+        "memory_enhancement_jobs",
+        columns,
+        "locked_by_worker",
+        "locked_by_worker TEXT DEFAULT ''",
+    )
+    conn.executescript(
+        """
+        DROP TRIGGER IF EXISTS memory_enhancement_jobs_au_updated_at;
+        CREATE TRIGGER memory_enhancement_jobs_au_updated_at
+        AFTER UPDATE OF
+            status, requested_provider, requested_model, request_payload,
+            result_payload, error, attempt_count, locked_at, locked_by_worker
+        ON memory_enhancement_jobs
+        BEGIN
+            UPDATE memory_enhancement_jobs
+               SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = NEW.id;
+        END;
+        """
     )

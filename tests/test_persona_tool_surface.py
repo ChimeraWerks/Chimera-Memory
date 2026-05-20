@@ -37,6 +37,12 @@ def test_persona_facing_alias_tools_are_registered_additively() -> None:
 
     # Compatibility tools stay registered until a later MCP filtering slice.
     assert {"memory_authored_writeback", "memory_review_pending", "memory_review_action"} <= functions
+    assert {
+        "memory_worker_claim_next",
+        "memory_worker_submit_result",
+        "memory_worker_heartbeat",
+        "memory_worker_budget",
+    } <= functions
 
 
 def test_promote_snapshot_is_documented_as_implemented() -> None:
@@ -105,9 +111,24 @@ def test_persona_mcp_surface_filters_admin_tools(monkeypatch, tmp_path: Path) ->
     assert len(tools) <= 11
 
 
+def test_worker_mcp_surface_exposes_only_worker_tools(monkeypatch, tmp_path: Path) -> None:
+    _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "worker")
+
+    tools = _tool_names(create_server())
+
+    assert tools == {
+        "memory_worker_claim_next",
+        "memory_worker_submit_result",
+        "memory_worker_heartbeat",
+        "memory_worker_budget",
+    }
+
+
 def test_mcp_surface_policy_normalizes_unknown_to_full() -> None:
     assert normalize_mcp_surface("persona") == "persona"
     assert normalize_mcp_surface("memory-only") == "persona_memory"
+    assert normalize_mcp_surface("memory-worker") == "worker"
     assert normalize_mcp_surface("wat") == "full"
     assert tool_allowed("memory_import_chatgpt_export", "wat") is True
     assert tool_allowed("memory_import_chatgpt_export", "persona") is False
