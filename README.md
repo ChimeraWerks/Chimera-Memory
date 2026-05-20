@@ -330,6 +330,10 @@ launches bounded `claude --print` worker passes with a worker-local
 `CLAUDE.md`. Both use worker-only MCP config and are disabled by default;
 dry-run remains the no-provider floor.
 
+Run `chimera-memory enhance worker-doctor --runtime codex --init` or
+`--runtime claude --init` to create and inspect the generated worker files
+without launching the provider CLI.
+
 ### What It Does
 
 When a memory file is written or updated AND shadow mode is enabled for that persona (via `CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE=true` plus the persona-allowlist env var), the indexer enqueues it for enhancement. A sidecar worker pulls jobs, sends them to the configured provider, and writes the extracted metadata back to a dedicated shadow table. Inspect the per-job outcome via `memory_enhancement_shadow_report` (status, type inference, sensitivity escalation, topic/entity overlap with frontmatter tags). The separate `memory_review_pending` / `memory_review_action` tools govern memory files themselves, not enhancement output.

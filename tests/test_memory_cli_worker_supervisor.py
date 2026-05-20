@@ -11,6 +11,7 @@ from chimera_memory.memory_cli_worker_supervisor import (
     codex_worker_prompt,
     ensure_claude_worker_files,
     ensure_codex_worker_files,
+    inspect_cli_worker_setup,
     load_claude_cli_worker_config,
     load_codex_cli_worker_config,
     start_claude_cli_worker_once,
@@ -264,3 +265,34 @@ def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     assert "Run one bounded worker pass" in prompt
     assert "memory_worker_claim_next" in prompt
     assert "Heartbeat idle and stop" in prompt
+
+
+def test_inspect_cli_worker_setup_can_initialize_codex_files(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", lambda command: command)
+
+    receipt = inspect_cli_worker_setup(runtime="codex", init=True)
+
+    assert receipt["ok"] is True
+    assert receipt["runtime"] == "codex"
+    assert receipt["initialized"] is True
+    assert receipt["launch_performed"] is False
+    assert receipt["files"]["agents"]["exists"] is True
+    assert receipt["files"]["mcp_config"]["exists"] is True
+
+
+def test_inspect_cli_worker_setup_reports_missing_uninitialized_claude_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", lambda command: command)
+
+    receipt = inspect_cli_worker_setup(runtime="claude", init=False)
+
+    assert receipt["ok"] is False
+    assert receipt["runtime"] == "claude"
+    assert receipt["initialized"] is False
+    assert receipt["launch_performed"] is False
+    assert receipt["files"]["claude"]["exists"] is False

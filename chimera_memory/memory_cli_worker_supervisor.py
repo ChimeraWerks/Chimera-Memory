@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -546,3 +547,76 @@ def start_claude_cli_worker_supervisor(
     )
     thread.start()
     return {"thread": thread, "stop_event": stop_event, "config": config, "state": state}
+
+
+def inspect_cli_worker_setup(
+    *,
+    runtime: str = "codex",
+    env: Mapping[str, str] | None = None,
+    init: bool = False,
+) -> dict[str, Any]:
+    """Inspect CLI-worker readiness without launching a provider CLI."""
+    normalized = _clean(runtime, default="codex", max_chars=40).lower().replace("-", "_")
+    source = env or os.environ
+    if normalized in {"claude", "claude_code", "anthropic"}:
+        config = load_claude_cli_worker_config(source)
+        if init:
+            files = ensure_claude_worker_files(config)
+        else:
+            files = {
+                "worker_root": str(config.worker_root),
+                "claude": str(config.worker_root / "CLAUDE.md"),
+                "mcp_config": str(config.worker_root / ".mcp.json"),
+                "sessions": str(config.worker_root / "sessions"),
+                "logs": str(config.worker_root / "logs"),
+            }
+        command = claude_worker_command(config)
+        runtime_id = "claude"
+        executable = config.claude_bin
+    else:
+        config = load_codex_cli_worker_config(source)
+        if init:
+            files = ensure_codex_worker_files(config)
+        else:
+            files = {
+                "worker_root": str(config.worker_root),
+                "codex_home": str(config.codex_home),
+                "agents": str(config.worker_root / "AGENTS.md"),
+                "mcp_config": str(config.codex_home / "mcp_servers.json"),
+                "sessions": str(config.worker_root / "sessions"),
+                "logs": str(config.worker_root / "logs"),
+            }
+        command = codex_worker_command(config)
+        runtime_id = "codex"
+        executable = config.codex_bin
+
+    file_status = {
+        name: {
+            "path": path,
+            "exists": Path(path).exists(),
+        }
+        for name, path in files.items()
+    }
+    command_preview = [
+        part
+        for part in command
+        if part not in {"--json", "--print", "--output-format", "--permission-mode", "--strict-mcp-config"}
+    ]
+    ok = bool(shutil.which(executable)) and all(
+        item["exists"]
+        for key, item in file_status.items()
+        if key in {"worker_root", "mcp_config", "agents", "claude", "sessions", "logs"}
+    )
+    return {
+        "ok": ok,
+        "runtime": runtime_id,
+        "initialized": init,
+        "worker_id": config.worker_id,
+        "provider": config.provider,
+        "persona": config.persona,
+        "executable": executable,
+        "executable_found": bool(shutil.which(executable)),
+        "files": file_status,
+        "command_preview": command_preview,
+        "launch_performed": False,
+    }

@@ -225,6 +225,33 @@ def test_cli_enhance_worker_fake_json(tmp_path: Path, monkeypatch, capsys) -> No
     assert receipt["processed"][0]["actual_provider"] == "dry_run"
 
 
+def test_cli_enhance_worker_doctor_json_initializes_without_launching(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", lambda command: command)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "chimera-memory",
+            "enhance",
+            "worker-doctor",
+            "--runtime",
+            "codex",
+            "--init",
+            "--json",
+        ],
+    )
+
+    main()
+
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["ok"] is True
+    assert receipt["runtime"] == "codex"
+    assert receipt["initialized"] is True
+    assert receipt["launch_performed"] is False
+    assert receipt["files"]["mcp_config"]["exists"] is True
+
+
 def test_cli_enhance_authored_enqueue_json(tmp_path: Path, monkeypatch, capsys) -> None:
     db_path = tmp_path / "transcript.db"
     conn = sqlite3.connect(db_path)

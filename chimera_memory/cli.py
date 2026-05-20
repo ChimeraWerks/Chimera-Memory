@@ -152,6 +152,13 @@ def main():
     sub_enhance_worker_fake.add_argument("--provider", default="", help="Optional provider claim and budget scope")
     sub_enhance_worker_fake.add_argument("--limit", type=int, default=10, help="Maximum jobs to process")
     sub_enhance_worker_fake.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub_enhance_worker_doctor = enhance_subparsers.add_parser(
+        "worker-doctor",
+        help="Inspect CLI-worker readiness without launching a provider CLI",
+    )
+    sub_enhance_worker_doctor.add_argument("--runtime", default="codex", help="Worker runtime: codex or claude")
+    sub_enhance_worker_doctor.add_argument("--init", action="store_true", help="Create generated worker files before inspecting")
+    sub_enhance_worker_doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub_enhance_sidecar_run = enhance_subparsers.add_parser("sidecar-run", help="Process queued jobs through an HTTP sidecar")
     sub_enhance_sidecar_run.add_argument("--db", help="Path to transcript.db")
     sub_enhance_sidecar_run.add_argument("--endpoint", required=True, help="Sidecar endpoint URL")
@@ -664,6 +671,22 @@ def _run_enhance(args):
                 f"Budget stopped: {receipt['budget_stopped']}",
             ],
         )
+        return
+
+    if args.enhance_command == "worker-doctor":
+        from .memory_cli_worker_supervisor import inspect_cli_worker_setup
+
+        receipt = inspect_cli_worker_setup(runtime=args.runtime, init=args.init)
+        status = "ok" if receipt.get("ok") else "warning"
+        lines = [
+            f"CLI worker setup: {status}",
+            f"Runtime: {receipt.get('runtime')}",
+            f"Worker: {receipt.get('worker_id')}",
+            f"Provider: {receipt.get('provider')}",
+            f"Executable found: {receipt.get('executable_found')}",
+            f"Launch performed: {receipt.get('launch_performed')}",
+        ]
+        _emit_json_or_lines(receipt, json_output=args.json, lines=lines)
         return
 
     if args.enhance_command == "sidecar-run":
