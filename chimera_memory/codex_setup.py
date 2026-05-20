@@ -430,6 +430,8 @@ def _build_codex_install_env(
             env["CHIMERA_MEMORY_CODEX_WORKER_PROVIDER"] = provider
         elif runtime == "claude":
             env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] = provider
+        elif runtime == "agy":
+            env["CHIMERA_MEMORY_AGY_WORKER_PROVIDER"] = provider
     if persona_id:
         env["CHIMERA_PERSONA_ID"] = persona_id
         derived_name = _persona_name_from_id(persona_id)
@@ -450,6 +452,8 @@ def _provider_worker_transport(provider: str, enabled: bool) -> dict[str, str]:
         return {"mode": "cli_worker", "runtime": "codex"}
     if provider == "anthropic":
         return {"mode": "cli_worker", "runtime": "claude"}
+    if provider == "google":
+        return {"mode": "cli_worker", "runtime": "agy"}
     if provider and provider != "dry_run":
         return {"mode": "provider", "runtime": ""}
     return {"mode": "dry_run", "runtime": ""}

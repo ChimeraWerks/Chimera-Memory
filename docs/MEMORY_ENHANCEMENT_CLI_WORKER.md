@@ -218,6 +218,20 @@ Claude Code supervisor status:
   recursion
 - defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/claude-memory-worker`
 
+Antigravity CLI supervisor status:
+
+- opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` and
+  `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=agy`
+- launches bounded `agy --print` worker passes, not the interactive TUI
+- creates worker-local `AGENTS.md` and `GEMINI.md`
+- creates worker-local Antigravity CLI `mcp_config.json` with worker-only CM
+  tools
+- sets nested CM maintenance workers off in the child MCP server to prevent
+  recursion
+- defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/agy-memory-worker`
+- uses `CHIMERA_MEMORY_AGY_BIN` or local Antigravity install detection because
+  `agy` may be a shell alias rather than a PATH executable
+
 ## Budget And Rate Posture
 
 Subscription-backed workers must be conservative by default:

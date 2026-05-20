@@ -327,12 +327,13 @@ CLI worker supervision is available as an explicit opt-in by setting
 `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`. Codex launches bounded
 `codex exec` worker passes with a worker-local `AGENTS.md`; Claude Code
 launches bounded `claude --print` worker passes with a worker-local
-`CLAUDE.md`. Both use worker-only MCP config and are disabled by default;
-dry-run remains the no-provider floor.
+`CLAUDE.md`; Antigravity CLI launches bounded `agy --print` worker passes with
+worker-local `AGENTS.md` and `GEMINI.md`. All use worker-only MCP config and
+are disabled by default; dry-run remains the no-provider floor.
 
 Run `chimera-memory enhance worker-doctor --runtime codex --init` or
-`--runtime claude --init` to create and inspect the generated worker files
-without launching the provider CLI.
+`--runtime claude --init` or `--runtime agy --init` to create and inspect the
+generated worker files without launching the provider CLI.
 
 ### What It Does
 
@@ -485,8 +486,8 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER=false` disables the worker.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=dry_run` is the default.
-- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` uses a supervised Codex/Claude CLI worker.
-- `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude` selects the CLI runtime for `cli_worker`.
+- `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` uses a supervised Codex/Claude/Antigravity CLI worker.
+- `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude|agy` selects the CLI runtime for `cli_worker`.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` remains the direct HTTP/provider fallback.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT=10` controls jobs per tick.

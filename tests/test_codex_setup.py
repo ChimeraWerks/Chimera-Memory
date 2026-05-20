@@ -347,7 +347,7 @@ def test_codex_install_prefers_claude_cli_worker_for_anthropic_provider(tmp_path
     assert env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] == "anthropic"
 
 
-def test_codex_install_keeps_http_provider_mode_when_no_cli_worker_exists(tmp_path: Path) -> None:
+def test_codex_install_prefers_agy_cli_worker_for_google_provider(tmp_path: Path) -> None:
     config_path = tmp_path / "mcp_servers.json"
     jsonl_dir = tmp_path / "sessions"
     jsonl_dir.mkdir()
@@ -362,10 +362,11 @@ def test_codex_install_keeps_http_provider_mode_when_no_cli_worker_exists(tmp_pa
     )
     env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["chimera-memory"]["env"]
 
-    assert receipt["provider_worker_mode"] == "provider"
-    assert receipt["provider_worker_runtime"] == ""
-    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "provider"
-    assert "CHIMERA_MEMORY_CLI_WORKER_RUNTIME" not in env
+    assert receipt["provider_worker_mode"] == "cli_worker"
+    assert receipt["provider_worker_runtime"] == "agy"
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] == "cli_worker"
+    assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "agy"
+    assert env["CHIMERA_MEMORY_AGY_WORKER_PROVIDER"] == "google"
 
 
 def test_codex_template_builds_safe_config_without_secrets() -> None:

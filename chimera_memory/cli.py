@@ -156,7 +156,7 @@ def main():
         "worker-doctor",
         help="Inspect CLI-worker readiness without launching a provider CLI",
     )
-    sub_enhance_worker_doctor.add_argument("--runtime", default="codex", help="Worker runtime: codex or claude")
+    sub_enhance_worker_doctor.add_argument("--runtime", default="codex", help="Worker runtime: codex, claude, or agy")
     sub_enhance_worker_doctor.add_argument("--init", action="store_true", help="Create generated worker files before inspecting")
     sub_enhance_worker_doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub_enhance_sidecar_run = enhance_subparsers.add_parser("sidecar-run", help="Process queued jobs through an HTTP sidecar")

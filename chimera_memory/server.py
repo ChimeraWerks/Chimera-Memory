@@ -3252,8 +3252,10 @@ def _start_memory_enhancement_worker() -> dict[str, object] | None:
 
     if mode == "cli_worker":
         from .memory_cli_worker_supervisor import (
+            load_agy_cli_worker_config,
             load_claude_cli_worker_config,
             load_codex_cli_worker_config,
+            start_agy_cli_worker_supervisor,
             start_claude_cli_worker_supervisor,
             start_codex_cli_worker_supervisor,
         )
@@ -3262,6 +3264,10 @@ def _start_memory_enhancement_worker() -> dict[str, object] | None:
         if runtime in {"claude", "claude_code", "anthropic"}:
             config = load_claude_cli_worker_config(os.environ)
             handle = start_claude_cli_worker_supervisor(config)
+        elif runtime in {"agy", "antigravity", "google", "gemini"}:
+            runtime = "agy"
+            config = load_agy_cli_worker_config(os.environ)
+            handle = start_agy_cli_worker_supervisor(config)
         else:
             runtime = "codex"
             config = load_codex_cli_worker_config(os.environ)

@@ -54,6 +54,22 @@ class ClaudeCliWorkerConfig:
     persona: str = ""
 
 
+@dataclass(frozen=True)
+class AgyCliWorkerConfig:
+    worker_id: str
+    provider: str
+    db_path: str
+    worker_root: Path
+    agy_home: Path
+    agy_bin: str = "agy"
+    mcp_command: str = "chimera-memory"
+    model: str = ""
+    print_timeout: str = "5m"
+    poll_interval_seconds: int = 60
+    restart_interval_seconds: int = 30
+    persona: str = ""
+
+
 @dataclass
 class CodexCliWorkerHandle:
     process: subprocess.Popen
@@ -184,6 +200,64 @@ def load_claude_cli_worker_config(env: Mapping[str, str] | None = None) -> Claud
     )
 
 
+def _default_agy_bin(env: Mapping[str, str]) -> str:
+    found = shutil.which("agy")
+    if found:
+        return found
+    local_app_data = str(env.get("LOCALAPPDATA") or "").strip()
+    if local_app_data:
+        candidate = Path(local_app_data) / "agy" / "bin" / "agy.exe"
+        if candidate.exists():
+            return str(candidate)
+    return "agy"
+
+
+def load_agy_cli_worker_config(env: Mapping[str, str] | None = None) -> AgyCliWorkerConfig:
+    """Load explicit Antigravity CLI worker configuration from environment values."""
+    source = env or os.environ
+    state_root = _state_root(source)
+    worker_root = Path(
+        source.get("CHIMERA_MEMORY_AGY_WORKER_ROOT")
+        or state_root / "workers" / "agy-memory-worker"
+    ).expanduser()
+    agy_home = Path(
+        source.get("CHIMERA_MEMORY_AGY_WORKER_HOME")
+        or worker_root / ".agy-home"
+    ).expanduser()
+    db_path = str(source.get("TRANSCRIPT_DB_PATH") or state_root / "transcript.db")
+    return AgyCliWorkerConfig(
+        worker_id=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_ID"), default="agy-memory-worker-1"),
+        provider=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_PROVIDER"), default="google", max_chars=80),
+        db_path=db_path,
+        worker_root=worker_root,
+        agy_home=agy_home,
+        agy_bin=_clean(source.get("CHIMERA_MEMORY_AGY_BIN"), default=_default_agy_bin(source)),
+        mcp_command=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_MCP_COMMAND"), default="chimera-memory"),
+        model=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_MODEL"), max_chars=120),
+        print_timeout=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_PRINT_TIMEOUT"), default="5m", max_chars=40),
+        poll_interval_seconds=_env_int(
+            source,
+            "CHIMERA_MEMORY_AGY_WORKER_POLL_INTERVAL_SECONDS",
+            default=60,
+            minimum=10,
+            maximum=3600,
+        ),
+        restart_interval_seconds=_env_int(
+            source,
+            "CHIMERA_MEMORY_AGY_WORKER_RESTART_INTERVAL_SECONDS",
+            default=30,
+            minimum=5,
+            maximum=3600,
+        ),
+        persona=_clean(
+            source.get("CHIMERA_MEMORY_AGY_WORKER_PERSONA")
+            or source.get("CHIMERA_PERSONA_NAME")
+            or source.get("TRANSCRIPT_PERSONA"),
+            max_chars=80,
+        ),
+    )
+
+
 def codex_cli_worker_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = env or os.environ
     return _env_bool(source, "CHIMERA_MEMORY_CODEX_WORKER", default=False)
@@ -235,6 +309,14 @@ def claude_worker_claude_md_text(config: ClaudeCliWorkerConfig) -> str:
     )
 
 
+def agy_worker_agents_text(config: AgyCliWorkerConfig) -> str:
+    return _worker_instruction_text(
+        worker_id=config.worker_id,
+        provider=config.provider,
+        title="CM Enhancement Worker",
+    )
+
+
 def _worker_prompt(*, worker_id: str, provider: str, poll_interval_seconds: int, persona: str) -> str:
     persona_clause = f"Only claim jobs for persona `{persona}`." if persona else "Claim any eligible job."
     return "\n".join(
@@ -278,6 +360,15 @@ def claude_worker_prompt(config: ClaudeCliWorkerConfig) -> str:
     )
 
 
+def agy_worker_prompt(config: AgyCliWorkerConfig) -> str:
+    return _worker_prompt(
+        worker_id=config.worker_id,
+        provider=config.provider,
+        poll_interval_seconds=config.poll_interval_seconds,
+        persona=config.persona,
+    )
+
+
 def _worker_mcp_config(*, db_path: str, sessions_dir: Path, persona: str, mcp_command: str) -> dict[str, Any]:
     env = {
         "TRANSCRIPT_DB_PATH": db_path,
@@ -311,6 +402,15 @@ def codex_worker_mcp_config(config: CodexCliWorkerConfig) -> dict[str, Any]:
 
 
 def claude_worker_mcp_config(config: ClaudeCliWorkerConfig) -> dict[str, Any]:
+    return _worker_mcp_config(
+        db_path=config.db_path,
+        sessions_dir=config.worker_root / "sessions",
+        persona=config.persona,
+        mcp_command=config.mcp_command,
+    )
+
+
+def agy_worker_mcp_config(config: AgyCliWorkerConfig) -> dict[str, Any]:
     return _worker_mcp_config(
         db_path=config.db_path,
         sessions_dir=config.worker_root / "sessions",
@@ -367,6 +467,51 @@ def ensure_claude_worker_files(config: ClaudeCliWorkerConfig) -> dict[str, str]:
     }
 
 
+def ensure_agy_worker_files(config: AgyCliWorkerConfig) -> dict[str, str]:
+    """Create worker-local AGENTS/GEMINI instructions and Antigravity MCP config."""
+    config.worker_root.mkdir(parents=True, exist_ok=True)
+    (config.worker_root / "sessions").mkdir(parents=True, exist_ok=True)
+    (config.worker_root / "logs").mkdir(parents=True, exist_ok=True)
+    agy_config_dir = config.agy_home / ".gemini" / "antigravity-cli"
+    agy_config_dir.mkdir(parents=True, exist_ok=True)
+
+    agents_path = config.worker_root / "AGENTS.md"
+    gemini_path = config.worker_root / "GEMINI.md"
+    agents_text = agy_worker_agents_text(config)
+    for path in (agents_path, gemini_path):
+        if not path.exists() or GENERATED_SENTINEL in path.read_text(encoding="utf-8", errors="ignore"):
+            path.write_text(agents_text, encoding="utf-8")
+
+    settings_path = agy_config_dir / "settings.json"
+    if not settings_path.exists():
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "allowNonWorkspaceAccess": False,
+                    "enableTelemetry": False,
+                    "toolPermission": "always-proceed",
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    mcp_path = agy_config_dir / "mcp_config.json"
+    mcp_path.write_text(json.dumps(agy_worker_mcp_config(config), indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "worker_root": str(config.worker_root),
+        "agy_home": str(config.agy_home),
+        "agents": str(agents_path),
+        "gemini": str(gemini_path),
+        "settings": str(settings_path),
+        "mcp_config": str(mcp_path),
+        "sessions": str(config.worker_root / "sessions"),
+        "logs": str(config.worker_root / "logs"),
+    }
+
+
 def codex_worker_command(config: CodexCliWorkerConfig) -> list[str]:
     command = [
         config.codex_bin,
@@ -401,6 +546,21 @@ def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
     ]
     if config.model:
         command.extend(["--model", config.model])
+    return command
+
+
+def agy_worker_command(config: AgyCliWorkerConfig) -> list[str]:
+    command = [
+        config.agy_bin,
+        "--print",
+        "--sandbox",
+        "--print-timeout",
+        config.print_timeout,
+        "--log-file",
+        str(config.worker_root / "logs" / f"{config.worker_id}.agy.log"),
+        "--add-dir",
+        str(config.worker_root),
+    ]
     return command
 
 
@@ -489,6 +649,45 @@ def start_claude_cli_worker_once(
     return CodexCliWorkerHandle(process=process, stdout_log=stdout_log, stderr_log=stderr_log, files=files)
 
 
+def start_agy_cli_worker_once(
+    config: AgyCliWorkerConfig,
+    *,
+    popen_factory: PopenFactory = subprocess.Popen,
+) -> CodexCliWorkerHandle:
+    """Start one headless Antigravity CLI worker pass and feed it the worker prompt."""
+    files = ensure_agy_worker_files(config)
+    logs_dir = Path(files["logs"])
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    stdout_log = logs_dir / f"{config.worker_id}-{stamp}.stdout.jsonl"
+    stderr_log = logs_dir / f"{config.worker_id}-{stamp}.stderr.log"
+    env = os.environ.copy()
+    env["HOME"] = str(config.agy_home)
+    env["USERPROFILE"] = str(config.agy_home)
+    env["XDG_CONFIG_HOME"] = str(config.agy_home / ".config")
+    env["CHIMERA_MEMORY_AGY_WORKER_ID"] = config.worker_id
+    env["CHIMERA_MEMORY_AGY_WORKER_PROVIDER"] = config.provider
+    out = stdout_log.open("w", encoding="utf-8")
+    err = stderr_log.open("w", encoding="utf-8")
+    try:
+        process = popen_factory(
+            agy_worker_command(config),
+            cwd=str(config.worker_root),
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=out,
+            stderr=err,
+            text=True,
+            **_windows_subprocess_kwargs(),
+        )
+    finally:
+        out.close()
+        err.close()
+    if process.stdin is not None:
+        process.stdin.write(agy_worker_prompt(config))
+        process.stdin.close()
+    return CodexCliWorkerHandle(process=process, stdout_log=stdout_log, stderr_log=stderr_log, files=files)
+
+
 def start_codex_cli_worker_supervisor(
     config: CodexCliWorkerConfig,
     *,
@@ -549,6 +748,36 @@ def start_claude_cli_worker_supervisor(
     return {"thread": thread, "stop_event": stop_event, "config": config, "state": state}
 
 
+def start_agy_cli_worker_supervisor(
+    config: AgyCliWorkerConfig,
+    *,
+    popen_factory: PopenFactory = subprocess.Popen,
+) -> dict[str, object]:
+    """Start a background supervisor that launches bounded Antigravity worker passes."""
+    stop_event = threading.Event()
+    state: dict[str, object] = {"handle": None, "launch_count": 0}
+
+    def _loop() -> None:
+        while not stop_event.is_set():
+            handle = start_agy_cli_worker_once(config, popen_factory=popen_factory)
+            state["handle"] = handle
+            state["launch_count"] = int(state.get("launch_count") or 0) + 1
+            while handle.process.poll() is None and not stop_event.wait(1.0):
+                pass
+            if stop_event.is_set():
+                handle.stop()
+                break
+            stop_event.wait(config.restart_interval_seconds)
+
+    thread = threading.Thread(
+        target=_loop,
+        name="chimera-memory-agy-cli-worker",
+        daemon=True,
+    )
+    thread.start()
+    return {"thread": thread, "stop_event": stop_event, "config": config, "state": state}
+
+
 def inspect_cli_worker_setup(
     *,
     runtime: str = "codex",
@@ -573,6 +802,24 @@ def inspect_cli_worker_setup(
         command = claude_worker_command(config)
         runtime_id = "claude"
         executable = config.claude_bin
+    elif normalized in {"agy", "antigravity", "google", "gemini"}:
+        config = load_agy_cli_worker_config(source)
+        if init:
+            files = ensure_agy_worker_files(config)
+        else:
+            files = {
+                "worker_root": str(config.worker_root),
+                "agy_home": str(config.agy_home),
+                "agents": str(config.worker_root / "AGENTS.md"),
+                "gemini": str(config.worker_root / "GEMINI.md"),
+                "settings": str(config.agy_home / ".gemini" / "antigravity-cli" / "settings.json"),
+                "mcp_config": str(config.agy_home / ".gemini" / "antigravity-cli" / "mcp_config.json"),
+                "sessions": str(config.worker_root / "sessions"),
+                "logs": str(config.worker_root / "logs"),
+            }
+        command = agy_worker_command(config)
+        runtime_id = "agy"
+        executable = config.agy_bin
     else:
         config = load_codex_cli_worker_config(source)
         if init:

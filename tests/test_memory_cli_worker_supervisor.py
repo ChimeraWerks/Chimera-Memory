@@ -1,19 +1,27 @@
+import json
 from pathlib import Path
 
 from chimera_memory.memory_cli_worker_supervisor import (
+    AgyCliWorkerConfig,
     ClaudeCliWorkerConfig,
     CodexCliWorkerConfig,
+    agy_worker_command,
+    agy_worker_mcp_config,
+    agy_worker_prompt,
     claude_worker_command,
     claude_worker_mcp_config,
     claude_worker_prompt,
     codex_worker_command,
     codex_worker_mcp_config,
     codex_worker_prompt,
+    ensure_agy_worker_files,
     ensure_claude_worker_files,
     ensure_codex_worker_files,
     inspect_cli_worker_setup,
+    load_agy_cli_worker_config,
     load_claude_cli_worker_config,
     load_codex_cli_worker_config,
+    start_agy_cli_worker_once,
     start_claude_cli_worker_once,
     start_codex_cli_worker_once,
 )
@@ -77,6 +85,19 @@ def _claude_config(tmp_path: Path) -> ClaudeCliWorkerConfig:
     )
 
 
+def _agy_config(tmp_path: Path) -> AgyCliWorkerConfig:
+    return AgyCliWorkerConfig(
+        worker_id="agy-worker-test",
+        provider="google",
+        db_path=str(tmp_path / "transcript.db"),
+        worker_root=tmp_path / "agy-worker-root",
+        agy_home=tmp_path / "agy-home",
+        agy_bin="agy-test",
+        mcp_command="chimera-memory-test",
+        persona="asa",
+    )
+
+
 def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) -> None:
     env = {
         "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
@@ -108,6 +129,25 @@ def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
     assert config.provider == "anthropic"
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "claude-memory-worker"
+
+
+def test_load_agy_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "TRANSCRIPT_DB_PATH": str(tmp_path / "db.sqlite"),
+        "CHIMERA_MEMORY_AGY_WORKER_ID": "agy-worker-1",
+        "CHIMERA_MEMORY_AGY_WORKER_PROVIDER": "google",
+        "CHIMERA_MEMORY_AGY_BIN": "agy-test",
+    }
+
+    config = load_agy_cli_worker_config(env)
+
+    assert config.worker_id == "agy-worker-1"
+    assert config.provider == "google"
+    assert config.db_path == str(tmp_path / "db.sqlite")
+    assert config.worker_root == tmp_path / "state" / "workers" / "agy-memory-worker"
+    assert config.agy_home == config.worker_root / ".agy-home"
+    assert config.agy_bin == "agy-test"
 
 
 def test_codex_worker_mcp_config_uses_worker_surface_and_disables_nested_workers(tmp_path: Path) -> None:
@@ -144,6 +184,23 @@ def test_claude_worker_mcp_config_uses_worker_surface_and_disables_nested_worker
     assert env["TRANSCRIPT_PERSONA"] == "sarah"
 
 
+def test_agy_worker_mcp_config_uses_worker_surface_and_disables_nested_workers(tmp_path: Path) -> None:
+    config = _agy_config(tmp_path)
+
+    payload = agy_worker_mcp_config(config)
+
+    server = payload["mcpServers"]["chimera-memory-worker"]
+    assert server["command"] == "chimera-memory-test"
+    assert server["args"] == ["serve"]
+    env = server["env"]
+    assert env["TRANSCRIPT_DB_PATH"] == str(tmp_path / "transcript.db")
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "worker"
+    assert env["CHIMERA_MEMORY_ENHANCEMENT_WORKER"] == "false"
+    assert env["CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER"] == "false"
+    assert env["CHIMERA_MEMORY_HEALTH_WORKER"] == "false"
+    assert env["TRANSCRIPT_PERSONA"] == "asa"
+
+
 def test_ensure_codex_worker_files_writes_agents_and_mcp_config(tmp_path: Path) -> None:
     config = _config(tmp_path)
 
@@ -168,6 +225,26 @@ def test_ensure_claude_worker_files_writes_claude_md_and_mcp_config(tmp_path: Pa
     assert "CM Enhancement Worker" in claude_md
     assert "Do not write memories directly" in claude_md
     assert "chimera-memory-worker" in mcp_config
+    assert Path(files["sessions"]).is_dir()
+    assert Path(files["logs"]).is_dir()
+
+
+def test_ensure_agy_worker_files_writes_agents_gemini_and_mcp_config(tmp_path: Path) -> None:
+    config = _agy_config(tmp_path)
+
+    files = ensure_agy_worker_files(config)
+
+    agents = Path(files["agents"]).read_text(encoding="utf-8")
+    gemini = Path(files["gemini"]).read_text(encoding="utf-8")
+    mcp_config = Path(files["mcp_config"]).read_text(encoding="utf-8")
+    assert "CM Enhancement Worker" in agents
+    assert "CM Enhancement Worker" in gemini
+    assert "Do not write memories directly" in agents
+    assert json.loads(mcp_config) == agy_worker_mcp_config(config)
+    assert Path(files["settings"]).exists()
+    settings = json.loads(Path(files["settings"]).read_text(encoding="utf-8"))
+    assert settings["allowNonWorkspaceAccess"] is False
+    assert settings["toolPermission"] == "always-proceed"
     assert Path(files["sessions"]).is_dir()
     assert Path(files["logs"]).is_dir()
 
@@ -200,6 +277,20 @@ def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> Non
     assert "dontAsk" in command
     assert "--mcp-config" in command
     assert "--strict-mcp-config" in command
+    assert "--dangerously-skip-permissions" not in command
+
+
+def test_agy_worker_command_is_headless_sandboxed_and_worker_scoped(tmp_path: Path) -> None:
+    config = _agy_config(tmp_path)
+
+    command = agy_worker_command(config)
+
+    assert command[0] == "agy-test"
+    assert "--print" in command
+    assert "--sandbox" in command
+    assert "--add-dir" in command
+    assert str(config.worker_root) in command
+    assert "--log-file" in command
     assert "--dangerously-skip-permissions" not in command
 
 
@@ -251,6 +342,31 @@ def test_start_claude_cli_worker_once_feeds_prompt_and_mcp_config(tmp_path: Path
     assert process.terminated is True
 
 
+def test_start_agy_cli_worker_once_feeds_prompt_and_sets_isolated_home(tmp_path: Path) -> None:
+    config = _agy_config(tmp_path)
+    captured = {}
+    process = _FakeProcess()
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return process
+
+    handle = start_agy_cli_worker_once(config, popen_factory=fake_popen)
+
+    assert captured["args"] == agy_worker_command(config)
+    assert captured["kwargs"]["cwd"] == str(config.worker_root)
+    assert captured["kwargs"]["env"]["HOME"] == str(config.agy_home)
+    assert captured["kwargs"]["env"]["USERPROFILE"] == str(config.agy_home)
+    assert "memory_worker_claim_next" in process.stdin.text
+    assert "provider: google" in process.stdin.text
+    assert process.stdin.closed is True
+    assert handle.stdout_log.parent == config.worker_root / "logs"
+    assert handle.stderr_log.parent == config.worker_root / "logs"
+    handle.stop()
+    assert process.terminated is True
+
+
 def test_codex_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     prompt = codex_worker_prompt(_config(tmp_path))
 
@@ -261,6 +377,14 @@ def test_codex_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 
 def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     prompt = claude_worker_prompt(_claude_config(tmp_path))
+
+    assert "Run one bounded worker pass" in prompt
+    assert "memory_worker_claim_next" in prompt
+    assert "Heartbeat idle and stop" in prompt
+
+
+def test_agy_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
+    prompt = agy_worker_prompt(_agy_config(tmp_path))
 
     assert "Run one bounded worker pass" in prompt
     assert "memory_worker_claim_next" in prompt
@@ -298,3 +422,21 @@ def test_inspect_cli_worker_setup_reports_missing_uninitialized_claude_files(
     assert receipt["launch_performed"] is False
     assert receipt["files"]["claude"]["exists"] is False
     assert receipt["command_preview"] == claude_worker_command(load_claude_cli_worker_config())
+
+
+def test_inspect_cli_worker_setup_can_initialize_agy_files(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setenv("CHIMERA_MEMORY_AGY_BIN", "agy")
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", lambda command: command)
+
+    receipt = inspect_cli_worker_setup(runtime="agy", init=True)
+
+    assert receipt["ok"] is True
+    assert receipt["runtime"] == "agy"
+    assert receipt["initialized"] is True
+    assert receipt["launch_performed"] is False
+    assert receipt["files"]["agents"]["exists"] is True
+    assert receipt["files"]["gemini"]["exists"] is True
+    assert receipt["files"]["mcp_config"]["exists"] is True
+    assert receipt["command_preview"] == agy_worker_command(load_agy_cli_worker_config())
