@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import time
 from pathlib import Path
 
+from chimera_memory.memory_schema import init_memory_tables
 from chimera_memory.memory_cli_worker_supervisor import (
     AgyCliWorkerConfig,
     ClaudeCliWorkerConfig,
@@ -498,10 +500,20 @@ def test_start_claude_cli_worker_once_feeds_prompt_and_mcp_config(tmp_path: Path
 
 
 def test_claude_worker_supervisor_records_launch_failures(tmp_path: Path) -> None:
+    db_path = tmp_path / "transcript.db"
+    with sqlite3.connect(db_path) as conn:
+        init_memory_tables(conn)
+        conn.execute(
+            """
+            INSERT INTO memory_enhancement_jobs (job_id, status, persona, path, requested_provider)
+            VALUES ('job-1', 'pending', 'sarah', 'memory/test.md', 'anthropic')
+            """
+        )
+        conn.commit()
     config = ClaudeCliWorkerConfig(
         worker_id="claude-worker-test",
         provider="anthropic",
-        db_path=str(tmp_path / "transcript.db"),
+        db_path=str(db_path),
         worker_root=tmp_path / "claude-worker-root",
         claude_bin="missing-claude",
         mcp_command="chimera-memory-test",
@@ -518,6 +530,46 @@ def test_claude_worker_supervisor_records_launch_failures(tmp_path: Path) -> Non
             time.sleep(0.02)
         assert handle["state"]["launch_error_count"] >= 1
         assert "missing-claude" in str(handle["state"]["last_error"])
+    finally:
+        handle["stop_event"].set()
+        handle["thread"].join(timeout=2)
+
+
+def test_claude_worker_supervisor_skips_launch_when_queue_empty(tmp_path: Path) -> None:
+    db_path = tmp_path / "transcript.db"
+    with sqlite3.connect(db_path) as conn:
+        init_memory_tables(conn)
+    config = ClaudeCliWorkerConfig(
+        worker_id="claude-worker-test",
+        provider="anthropic",
+        db_path=str(db_path),
+        worker_root=tmp_path / "claude-worker-root",
+        claude_bin="claude-test",
+        mcp_command="chimera-memory-test",
+        restart_interval_seconds=0.05,
+        persona="sarah",
+    )
+    launches = []
+
+    def fake_popen(args, **kwargs):
+        launches.append(args)
+        return _FakeProcess()
+
+    handle = start_claude_cli_worker_supervisor(config, popen_factory=fake_popen)
+    try:
+        deadline = time.time() + 0.2
+        while time.time() < deadline:
+            time.sleep(0.02)
+        assert launches == []
+        assert handle["state"]["idle_skip_count"] >= 1
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT status, provider, metadata FROM memory_worker_heartbeats WHERE worker_id = ?",
+                ("claude-worker-test",),
+            ).fetchone()
+        assert row[0] == "idle"
+        assert row[1] == "anthropic"
+        assert json.loads(row[2])["launch_skipped"] == "no_pending_job"
     finally:
         handle["stop_event"].set()
         handle["thread"].join(timeout=2)

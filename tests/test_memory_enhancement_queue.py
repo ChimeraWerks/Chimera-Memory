@@ -11,6 +11,7 @@ from chimera_memory.memory import (
     memory_enhancement_enqueue_authored,
     memory_worker_budget,
     memory_worker_claim_next,
+    memory_worker_has_pending_job,
     memory_worker_heartbeat,
     memory_worker_submit_result,
     memory_entity_connections,
@@ -124,6 +125,18 @@ def test_memory_enhancement_claim_and_complete_success(tmp_path: Path) -> None:
     assert "memory_enhancement_completed" in event_types
     completed_events = [event for event in events if event["event_type"] == "memory_enhancement_completed"]
     assert completed_events[0]["payload"]["entities"] == {"link_count": 5, "edge_count": 10}
+
+
+def test_memory_worker_has_pending_job_filters_persona_and_provider(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+    memory_enhancement_enqueue(conn, file_path="target.md", requested_provider="anthropic")
+
+    assert memory_worker_has_pending_job(conn, persona="asa", provider="anthropic") is True
+    assert memory_worker_has_pending_job(conn, persona="asa", provider="openai") is False
+    assert memory_worker_has_pending_job(conn, persona="sarah", provider="anthropic") is False
+    assert memory_worker_has_pending_job(conn, persona="asa") is True
 
 
 def test_memory_enhancement_claim_loser_returns_none(tmp_path: Path) -> None:

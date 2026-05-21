@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -125,6 +126,68 @@ def _env_choice(
         if raw:
             return raw if raw in allowed else default
     return default
+
+
+class _LaunchGateConfig(Protocol):
+    worker_id: str
+    provider: str
+    db_path: str
+    persona: str
+
+
+def _should_launch_worker_pass(config: _LaunchGateConfig, *, log: logging.Logger) -> bool:
+    """Check local queue/budget state before spending a provider-backed CLI launch."""
+    from .memory_enhancement_queue import (
+        memory_worker_budget,
+        memory_worker_has_pending_job,
+        memory_worker_heartbeat,
+    )
+
+    try:
+        with sqlite3.connect(config.db_path) as conn:
+            has_work = memory_worker_has_pending_job(
+                conn,
+                persona=config.persona or None,
+                provider=config.provider,
+            )
+            if not has_work:
+                memory_worker_heartbeat(
+                    conn,
+                    worker_id=config.worker_id,
+                    capability="enhancement",
+                    provider=config.provider,
+                    status="idle",
+                    current_job_id="",
+                    metadata={"launch_skipped": "no_pending_job"},
+                )
+                return False
+
+            budget = memory_worker_budget(
+                conn,
+                worker_id=config.worker_id,
+                capability="enhancement",
+                provider=config.provider,
+            )
+            if not budget.get("allowed", False):
+                memory_worker_heartbeat(
+                    conn,
+                    worker_id=config.worker_id,
+                    capability="enhancement",
+                    provider=config.provider,
+                    status="idle",
+                    current_job_id="",
+                    metadata={"launch_skipped": "budget_denied", "reason": budget.get("reason", "")},
+                )
+                return False
+    except sqlite3.Error as exc:
+        log.warning(
+            "cli worker local launch gate failed closed worker_id=%s db=%s error=%s",
+            config.worker_id,
+            config.db_path,
+            exc,
+        )
+        return False
+    return True
 
 
 def _state_root(env: Mapping[str, str]) -> Path:
@@ -835,6 +898,10 @@ def start_codex_cli_worker_supervisor(
 
     def _loop() -> None:
         while not stop_event.is_set():
+            if not _should_launch_worker_pass(config, log=log):
+                state["idle_skip_count"] = int(state.get("idle_skip_count") or 0) + 1
+                stop_event.wait(config.restart_interval_seconds)
+                continue
             try:
                 handle = start_codex_cli_worker_once(config, popen_factory=popen_factory)
             except Exception as exc:
@@ -883,6 +950,10 @@ def start_claude_cli_worker_supervisor(
 
     def _loop() -> None:
         while not stop_event.is_set():
+            if not _should_launch_worker_pass(config, log=log):
+                state["idle_skip_count"] = int(state.get("idle_skip_count") or 0) + 1
+                stop_event.wait(config.restart_interval_seconds)
+                continue
             try:
                 handle = start_claude_cli_worker_once(config, popen_factory=popen_factory)
             except Exception as exc:
@@ -931,6 +1002,10 @@ def start_agy_cli_worker_supervisor(
 
     def _loop() -> None:
         while not stop_event.is_set():
+            if not _should_launch_worker_pass(config, log=log):
+                state["idle_skip_count"] = int(state.get("idle_skip_count") or 0) + 1
+                stop_event.wait(config.restart_interval_seconds)
+                continue
             try:
                 handle = start_agy_cli_worker_once(config, popen_factory=popen_factory)
             except Exception as exc:

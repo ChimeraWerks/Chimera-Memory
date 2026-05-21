@@ -334,6 +334,10 @@ MCP calls otherwise; set
 `CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX=false` to disable it
 when Codex supports non-interactive MCP approvals cleanly.
 
+The CLI supervisor checks the local enhancement queue and provider budget before
+launching any provider CLI. Empty queues produce an idle heartbeat only; they do
+not launch Codex, Claude Code, or Antigravity just to poll for work.
+
 Run `chimera-memory enhance worker-doctor --runtime codex --init` or
 `--runtime claude --init` or `--runtime agy --init` to create and inspect the
 generated worker files without launching the provider CLI.

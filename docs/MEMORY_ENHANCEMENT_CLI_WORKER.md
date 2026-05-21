@@ -193,9 +193,16 @@ The worker supervisor owns:
 - queue lease cleanup if the worker dies
 - stderr/stdout capture without secret leakage
 - provider-specific launch commands
+- local queue and budget checks before provider launch
 
 The supervisor should not scrape free-form conversational output as the primary
 result channel. Results should come through the worker MCP submit tool.
+
+Idle polling must stay deterministic and local. The supervisor checks the
+SQLite queue before launching Codex, Claude Code, or Antigravity; if no matching
+pending job exists, it writes an idle heartbeat and sleeps without starting a
+provider CLI. Provider-backed CLI sessions are for processing known work, not
+for discovering whether work exists.
 
 Codex supervisor status:
 

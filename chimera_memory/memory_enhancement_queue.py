@@ -319,6 +319,34 @@ def memory_enhancement_claim_next(
     return _select_enhancement_job(conn, job_id)
 
 
+def memory_worker_has_pending_job(
+    conn: sqlite3.Connection,
+    *,
+    persona: str | None = None,
+    provider: str = "",
+) -> bool:
+    """Return whether a CLI worker has eligible pending work without claiming it."""
+    provider = _clean_worker_text(provider, max_chars=80)
+    conditions = ["status = 'pending'"]
+    params: list[object] = []
+    if persona:
+        conditions.append("persona = ?")
+        params.append(persona)
+    if provider:
+        conditions.append("(requested_provider = '' OR requested_provider = ?)")
+        params.append(provider)
+    row = conn.execute(
+        f"""
+        SELECT 1 FROM memory_enhancement_jobs
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return row is not None
+
+
 def memory_enhancement_complete(
     conn: sqlite3.Connection,
     *,
