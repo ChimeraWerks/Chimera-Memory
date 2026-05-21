@@ -3,9 +3,14 @@
 Status: Protocol, exclusion, budget, fake-worker, Codex supervisor, and
 Claude Code supervisor slices implemented.
 
-This document captures the proposed replacement for subscription-backed HTTP
-enrichment calls: a persistent headless CLI memory worker supervised by
-ChimeraMemory.
+This document captures the replacement for subscription-backed HTTP enrichment
+calls.
+
+The original target was a persistent headless provider CLI session supervised
+by ChimeraMemory. The current shipped implementation is narrower: a persistent
+CM supervisor launches bounded official CLI passes (`codex exec`,
+`claude --print`, `agy --print`) only when the local queue already has eligible
+work. A true all-day provider CLI session remains a deferred transport mode.
 
 The goal is to keep CM's deterministic core while letting a provider's official
 CLI session own subscription authentication, token refresh, endpoint changes,
@@ -13,13 +18,15 @@ and model invocation behavior.
 
 ## Decision
 
-For subscription-backed frontier enrichment, prefer a persistent headless CLI
-worker over raw HTTP OAuth transport once the worker protocol exists.
+For subscription-backed frontier enrichment, prefer official CLI worker
+transport over raw HTTP OAuth transport once the worker protocol exists.
 
 Transport order:
 
 1. `dry_run`: deterministic local extraction, no model call.
-2. `cli_worker`: persistent headless CLI session, preferred subscription mode.
+2. `cli_worker`: persistent local supervisor plus bounded official CLI passes,
+   preferred subscription mode today.
+   - Future extension: true persistent all-day provider CLI session.
 3. `http_oauth`: direct HTTP OAuth fallback.
 4. `byok`: sanctioned API key or gateway key mode.
 
