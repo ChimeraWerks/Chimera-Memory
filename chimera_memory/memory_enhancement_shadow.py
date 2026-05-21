@@ -28,6 +28,10 @@ def _split_csv(value: object) -> set[str]:
     return {item.strip().lower() for item in str(value or "").split(",") if item.strip()}
 
 
+def _is_memory_index_path(file_path: str) -> bool:
+    return file_path.replace("\\", "/").rstrip("/").split("/")[-1].lower() == "memory.md"
+
+
 def memory_enhancement_shadow_enabled(
     *, persona: str | None = None, env: Mapping[str, str] | None = None
 ) -> bool:
@@ -95,6 +99,39 @@ def memory_enhancement_shadow_enqueue(
     auto_enqueue = memory_enhancement_auto_enqueue_enabled(persona=persona, env=source)
     if not shadow_mode and not auto_enqueue:
         return {"ok": True, "enabled": False, "enqueued": False, "reason": "auto_enqueue_disabled"}
+
+    if _is_memory_index_path(file_path) and not force:
+        payload = {
+            "reason": reason,
+            "file_path": file_path,
+            "enabled": True,
+            "mode": "shadow" if shadow_mode else "auto_enqueue",
+            "shadow_mode": shadow_mode,
+            "auto_enqueue": auto_enqueue,
+            "ok": True,
+            "enqueued": False,
+            "status": "",
+            "explicit_provider_hint": False,
+            "skip_reason": "memory_index_excluded",
+        }
+        record_memory_audit_event(
+            conn,
+            "memory_enhancement_shadow_enqueue",
+            persona=persona,
+            target_kind="memory_file",
+            target_id=file_path,
+            payload=payload,
+            actor="shadow",
+        )
+        return {
+            "ok": True,
+            "enabled": True,
+            "enqueued": False,
+            "reason": "memory_index_excluded",
+            "job_id": "",
+            "status": "",
+            "error": "",
+        }
 
     requested_provider, requested_model, explicit_provider_hint = _shadow_provider_hints(source)
 

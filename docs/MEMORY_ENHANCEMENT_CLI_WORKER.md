@@ -10,7 +10,10 @@ The original target was a persistent headless provider CLI session supervised
 by ChimeraMemory. The shipped implementation is a persistent CM supervisor that
 launches official CLI passes (`codex exec`, `claude --print`, `agy --print`)
 only when the local queue already has eligible work. By default those passes
-reuse one daily provider conversation per worker:
+can reuse one daily provider conversation per worker, but the reuse window is
+capped by `CHIMERA_MEMORY_CLI_WORKER_SESSION_MAX_TURNS` and defaults to one
+pass. That conservative default prevents resumed-session context from growing
+silently during memory metadata work.
 
 - Codex starts a persisted `codex exec` session and resumes it with
   `codex exec resume`.
@@ -18,9 +21,11 @@ reuse one daily provider conversation per worker:
   `--resume`.
 - Antigravity starts a print session and resumes with `--continue`.
 
-Set `CHIMERA_MEMORY_CLI_WORKER_SESSION_MODE=bounded` to return to isolated
-one-shot passes. A true always-running stdin/stdout provider process remains a
-future transport mode if the CLIs expose a stable enough protocol.
+Raise `CHIMERA_MEMORY_CLI_WORKER_SESSION_MAX_TURNS` only after reviewing
+`memory_diagnose mode=cli_worker` cache-read growth. Set
+`CHIMERA_MEMORY_CLI_WORKER_SESSION_MODE=bounded` to return to isolated one-shot
+passes. A true always-running stdin/stdout provider process remains a future
+transport mode if the CLIs expose a stable enough protocol.
 
 The goal is to keep CM's deterministic core while letting a provider's official
 CLI session own subscription authentication, token refresh, endpoint changes,
@@ -229,6 +234,11 @@ session id/day, resumed flag, return code, log paths, claimed/succeeded/failed
 job counts, token usage, cache creation/read tokens, latency, and model.
 Inspect with `memory_diagnose mode=cli_worker`.
 
+Auto-enqueue excludes persona `MEMORY.md` index files and debounces repeated
+same-fingerprint file updates. Index maintenance should not burn provider
+tokens, and one save burst should not create multiple enhancement jobs for the
+same content.
+
 Codex supervisor status:
 
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`
@@ -262,9 +272,14 @@ Claude Code supervisor status:
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` and
   `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=claude`
 - launches `claude --print --output-format stream-json` worker passes and
-  resumes one daily Claude Code session by default
+  can resume a daily Claude Code session when the session turn cap permits it
+- passes an explicit memory-enhancement model; default is the Anthropic
+  memory-enhancement Haiku tier
+- rejects Opus model selection unless
+  `CHIMERA_MEMORY_CLAUDE_WORKER_ALLOW_OPUS=true` is explicitly set
 - sets reasoning effort with `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT` or the
-  shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
+  shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`, and
+  `xhigh`/`max` are downgraded unless Opus is explicitly allowed
 - sets `CLAUDE_CONFIG_DIR` to a worker-local config directory so global
   `~/.claude/CLAUDE.md`, installed plugins, and user settings are not loaded
   into memory enhancement jobs

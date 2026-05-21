@@ -24,6 +24,7 @@ from .memory_provider_governor import provider_governor_check, provider_usage_re
 ENHANCEMENT_JOB_STATUSES = {"pending", "running", "succeeded", "failed", "skipped"}
 WORKER_HEARTBEAT_STATUSES = {"idle", "running", "stopping", "failed"}
 WORKER_CAPABILITIES = {"enhancement"}
+DEFAULT_ENHANCEMENT_ENQUEUE_DEBOUNCE_SECONDS = 60
 
 
 def _utc_now() -> str:
@@ -112,6 +113,7 @@ def memory_enhancement_enqueue(
     requested_provider: str = "",
     requested_model: str = "",
     force: bool = False,
+    debounce_seconds: int = DEFAULT_ENHANCEMENT_ENQUEUE_DEBOUNCE_SECONDS,
 ) -> dict:
     """Queue a memory file for sidecar metadata enhancement."""
     memory_row = _find_memory_file_for_enhancement(conn, file_path)
@@ -140,6 +142,24 @@ def memory_enhancement_enqueue(
             """,
             (existing[0],),
         )
+
+    if not force and debounce_seconds > 0:
+        recent = conn.execute(
+            """
+            SELECT job_id FROM memory_enhancement_jobs
+            WHERE file_id = ?
+              AND content_fingerprint = ?
+              AND julianday(created_at) >= julianday('now') - (? / 86400.0)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (memory_row[0], memory_row[4], max(1, int(debounce_seconds))),
+        ).fetchone()
+        if recent:
+            job = _select_enhancement_job(conn, recent[0])
+            if job:
+                job["dedupe_reason"] = "recent_duplicate"
+            return {"ok": True, "enqueued": False, "job": job, "reason": "recent_duplicate"}
 
     disk_path = Path(memory_row[1])
     try:

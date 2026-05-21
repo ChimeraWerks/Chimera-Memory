@@ -78,6 +78,29 @@ def test_memory_enhancement_enqueue_dedupes_active_job(tmp_path: Path) -> None:
     assert second["job"]["job_id"] == first["job"]["job_id"]
 
 
+def test_memory_enhancement_enqueue_debounces_recent_same_fingerprint(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+
+    first = memory_enhancement_enqueue(conn, file_path="target.md")
+    claimed = memory_enhancement_claim_next(conn, persona="asa")
+    assert claimed is not None
+    memory_enhancement_complete(
+        conn,
+        job_id=claimed["job_id"],
+        status="succeeded",
+        response_payload={"summary": "Done.", "confidence": 0.8},
+    )
+
+    second = memory_enhancement_enqueue(conn, file_path="target.md")
+
+    assert first["enqueued"] is True
+    assert second["enqueued"] is False
+    assert second["reason"] == "recent_duplicate"
+    assert second["job"]["job_id"] == first["job"]["job_id"]
+
+
 def test_memory_enhancement_claim_and_complete_success(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)

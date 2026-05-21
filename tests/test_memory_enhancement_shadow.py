@@ -110,13 +110,13 @@ def test_auto_enqueue_requires_explicit_mode_and_persona_allowlist() -> None:
 def test_auto_enqueue_queues_without_shadow_mode(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)
-    memory_file = tmp_path / "memory.md"
+    memory_file = tmp_path / "note.md"
     memory_file.write_text("---\ntype: semantic\n---\nbody\n", encoding="utf-8")
-    assert index_file(conn, "asa", "memory.md", memory_file)
+    assert index_file(conn, "asa", "note.md", memory_file)
 
     result = memory_enhancement_shadow_enqueue(
         conn,
-        file_path="memory.md",
+        file_path="note.md",
         persona="asa",
         reason="test",
         env={
@@ -131,6 +131,32 @@ def test_auto_enqueue_queues_without_shadow_mode(tmp_path: Path) -> None:
     assert events[0]["payload"]["mode"] == "auto_enqueue"
     assert events[0]["payload"]["shadow_mode"] is False
     assert events[0]["payload"]["auto_enqueue"] is True
+
+
+def test_auto_enqueue_skips_memory_index(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    memory_file = tmp_path / "MEMORY.md"
+    memory_file.write_text("---\ntype: semantic\n---\nindex\n", encoding="utf-8")
+    assert index_file(conn, "asa", "memory/MEMORY.md", memory_file)
+
+    result = memory_enhancement_shadow_enqueue(
+        conn,
+        file_path="memory/MEMORY.md",
+        persona="asa",
+        reason="file_watcher",
+        env={
+            "CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE": "true",
+            "CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS": "asa",
+        },
+    )
+
+    assert result["enabled"] is True
+    assert result["enqueued"] is False
+    assert result["reason"] == "memory_index_excluded"
+    assert conn.execute("SELECT COUNT(*) FROM memory_enhancement_jobs").fetchone()[0] == 0
+    events = memory_audit_query(conn, event_type="memory_enhancement_shadow_enqueue", persona="asa")
+    assert events[0]["payload"]["skip_reason"] == "memory_index_excluded"
 
 
 def test_full_reindex_auto_enqueues_allowed_shadow_persona(tmp_path: Path, monkeypatch) -> None:

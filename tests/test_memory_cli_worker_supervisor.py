@@ -182,6 +182,18 @@ def test_load_codex_cli_worker_config_can_use_bounded_session_mode(tmp_path: Pat
     assert config.session_mode == "bounded"
 
 
+def test_load_codex_cli_worker_config_uses_session_turn_cap(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "CHIMERA_MEMORY_CLI_WORKER_SESSION_MAX_TURNS": "3",
+        "CHIMERA_MEMORY_CODEX_WORKER_SESSION_MAX_TURNS": "2",
+    }
+
+    config = load_codex_cli_worker_config(env)
+
+    assert config.session_max_turns == 2
+
+
 def test_load_codex_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> None:
     env = {
         "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
@@ -235,6 +247,7 @@ def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
     assert config.worker_root == tmp_path / "state" / "workers" / "claude-memory-worker"
     assert config.claude_config_dir == config.worker_root / ".claude"
     assert config.claude_credentials_path == tmp_path / "home" / ".claude" / ".credentials.json"
+    assert config.model == "claude-haiku-4-5"
     assert config.effort == "medium"
     assert config.session_mode == "daily"
 
@@ -261,7 +274,30 @@ def test_load_claude_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> N
 
     config = load_claude_cli_worker_config(env)
 
-    assert config.effort == "max"
+    assert config.effort == "medium"
+
+
+def test_load_claude_cli_worker_config_allows_opus_only_when_explicit(tmp_path: Path) -> None:
+    capped = load_claude_cli_worker_config(
+        {
+            "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+            "CHIMERA_MEMORY_CLAUDE_WORKER_MODEL": "claude-opus-4-7",
+            "CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT": "max",
+        }
+    )
+    allowed = load_claude_cli_worker_config(
+        {
+            "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+            "CHIMERA_MEMORY_CLAUDE_WORKER_MODEL": "claude-opus-4-7",
+            "CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT": "max",
+            "CHIMERA_MEMORY_CLAUDE_WORKER_ALLOW_OPUS": "true",
+        }
+    )
+
+    assert capped.model == "claude-haiku-4-5"
+    assert capped.effort == "medium"
+    assert allowed.model == "claude-opus-4-7"
+    assert allowed.effort == "max"
 
 
 def test_load_claude_cli_worker_config_prefers_cmd_shim(tmp_path: Path, monkeypatch) -> None:
@@ -555,6 +591,39 @@ def test_claude_worker_command_can_use_daily_session(tmp_path: Path) -> None:
     assert resumed[resumed.index("--resume") + 1] == "session-123"
 
 
+def test_claude_worker_session_turn_cap_starts_fresh_session(tmp_path: Path) -> None:
+    config = _claude_config(tmp_path)
+    session_path = config.worker_root / "sessions" / "claude-daily-session.json"
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        json.dumps(
+            {
+                "runtime": "claude",
+                "worker_id": config.worker_id,
+                "provider": config.provider,
+                "session_day": time.strftime("%Y-%m-%d", time.gmtime()),
+                "session_id": "old-session",
+                "turns": 1,
+                "created_at": "2026-05-21T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = {}
+    process = _FakeProcess()
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        return process
+
+    handle = start_claude_cli_worker_once(config, popen_factory=fake_popen)
+
+    assert "--resume" not in captured["args"]
+    assert "old-session" not in captured["args"]
+    assert "--session-id" in captured["args"]
+    handle.stop()
+
+
 def test_agy_worker_command_continues_daily_session(tmp_path: Path) -> None:
     command = agy_worker_command(_agy_config(tmp_path), session={"session_mode": "daily", "resumed": True})
 
@@ -756,9 +825,30 @@ def test_claude_worker_supervisor_records_pass_telemetry(tmp_path: Path) -> None
                 """
                 UPDATE memory_enhancement_jobs
                    SET status = 'succeeded',
-                       locked_by_worker = 'claude-worker-test',
+                       locked_by_worker = '',
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                  WHERE job_id = 'job-1'
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_audit_events (
+                    event_id, event_type, actor, persona, target_kind, target_id, payload
+                ) VALUES (
+                    'event-claim', 'memory_worker_job_claimed', 'system', 'sarah',
+                    'enhancement_job', 'job-1', '{"worker_id": "claude-worker-test"}'
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_audit_events (
+                    event_id, event_type, actor, persona, target_kind, target_id, payload
+                ) VALUES (
+                    'event-submit', 'memory_worker_result_submitted', 'system', 'sarah',
+                    'enhancement_job', 'job-1',
+                    '{"worker_id": "claude-worker-test", "status": "succeeded"}'
+                )
                 """
             )
             conn.commit()

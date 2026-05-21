@@ -498,8 +498,10 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` uses a supervised Codex/Claude/Antigravity CLI worker.
 - `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude|agy` selects the CLI runtime for `cli_worker`.
 - `CHIMERA_MEMORY_CLI_WORKER_EFFORT=medium` sets the default reasoning effort for CLI workers that expose effort controls.
+- `CHIMERA_MEMORY_CLI_WORKER_SESSION_MAX_TURNS=1` caps resumed CLI worker context before starting fresh again.
 - `CHIMERA_MEMORY_CODEX_WORKER_EFFORT=low|medium|high|xhigh` overrides Codex worker effort.
 - `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT=low|medium|high|xhigh|max` overrides Claude worker effort.
+- `CHIMERA_MEMORY_CLAUDE_WORKER_MODEL=...` defaults to the memory-enhancement Haiku tier; Opus is rejected unless `CHIMERA_MEMORY_CLAUDE_WORKER_ALLOW_OPUS=true`.
 - `CHIMERA_MEMORY_CODEX_BIN=...` overrides automatic Codex executable detection.
 - `CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH=...` overrides the Codex auth file copied into the isolated worker home.
 - `CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX=true` is the Codex worker default for non-interactive MCP calls.
@@ -513,7 +515,9 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 Provider-backed transports share a SQLite usage ledger. The runner checks the
 governor before claiming a job, so exhausted budgets leave work pending instead
 of stranded in `running`. `dry_run` and local deterministic work do not consume
-provider budget.
+provider budget. Memory index files named `MEMORY.md` are excluded from
+auto-enqueue, and same-fingerprint file updates are debounced so repeated
+watcher events do not create duplicate provider jobs.
 
 Provider login/import is exposed through safe CLI receipts:
 
