@@ -3442,6 +3442,10 @@ def _stop_cm_health_worker(handle: dict[str, object] | None) -> None:
 
 def _bootstrap_startup_services() -> object | None:
     """Start live maintenance without making MCP registration depend on it."""
+    if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
+        logging.getLogger("chimera_memory.startup").info("startup bootstrap disabled for worker MCP surface")
+        return None
+
     global _embedding_worker_handle, _health_worker_handle, _enhancement_worker_handle, _memory_file_watcher_handle
     indexer = _start_transcript_indexer()
     _memory_file_watcher_handle = _start_memory_file_indexer()
@@ -3490,6 +3494,8 @@ def main():
         "chimera-memory server starting (pid=%s, log=%s)", os.getpid(), log_path
     )
     startup_mode = os.environ.get("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "background").strip().lower()
+    if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
+        startup_mode = "disabled"
     startup_state: dict[str, object | None] = {"indexer": None, "thread": None}
     try:
         server = create_server()

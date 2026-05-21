@@ -22,6 +22,7 @@ def test_main_starts_bootstrap_in_background_by_default(monkeypatch):
             calls.append(("run", transport))
 
     monkeypatch.delenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
     monkeypatch.setattr(server, "_configure_diagnostic_logging", lambda: Path("server.log"))
     monkeypatch.setattr(server, "create_server", lambda: calls.append("create") or FakeServer())
     monkeypatch.setattr(server, "_bootstrap_startup_services", lambda: calls.append("bootstrap"))
@@ -32,6 +33,27 @@ def test_main_starts_bootstrap_in_background_by_default(monkeypatch):
     assert calls == [
         "create",
         ("thread.start", "chimera-memory-startup-bootstrap", True),
+        ("run", "stdio"),
+    ]
+
+
+def test_main_skips_bootstrap_for_worker_surface(monkeypatch):
+    calls = []
+
+    class FakeServer:
+        def run(self, *, transport):
+            calls.append(("run", transport))
+
+    monkeypatch.delenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", raising=False)
+    monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "worker")
+    monkeypatch.setattr(server, "_configure_diagnostic_logging", lambda: Path("server.log"))
+    monkeypatch.setattr(server, "create_server", lambda: calls.append("create") or FakeServer())
+    monkeypatch.setattr(server, "_bootstrap_startup_services", lambda: calls.append("bootstrap"))
+
+    server.main()
+
+    assert calls == [
+        "create",
         ("run", "stdio"),
     ]
 
@@ -65,6 +87,7 @@ def test_main_sync_bootstrap_keeps_indexer_reference_until_shutdown(monkeypatch)
 def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     calls = []
 
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
     monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
@@ -90,6 +113,21 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
         ),
         "prewarm",
     ]
+
+
+def test_bootstrap_skips_live_workers_for_worker_surface(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "worker")
+    monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
+    monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
+    monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
+    monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
+    monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append("health") or object())
+    monkeypatch.setattr(server, "_prewarm_embeddings", lambda: calls.append("prewarm"))
+
+    assert server._bootstrap_startup_services() is None
+    assert calls == []
 
 
 def test_enhancement_worker_disabled_by_env(monkeypatch):
