@@ -184,6 +184,7 @@ def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
         "TRANSCRIPT_DB_PATH": str(tmp_path / "db.sqlite"),
         "CHIMERA_MEMORY_CLAUDE_WORKER_ID": "claude-worker-1",
         "CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER": "anthropic",
+        "USERPROFILE": str(tmp_path / "home"),
     }
 
     config = load_claude_cli_worker_config(env)
@@ -192,7 +193,22 @@ def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
     assert config.provider == "anthropic"
     assert config.db_path == str(tmp_path / "db.sqlite")
     assert config.worker_root == tmp_path / "state" / "workers" / "claude-memory-worker"
+    assert config.claude_config_dir == config.worker_root / ".claude"
+    assert config.claude_credentials_path == tmp_path / "home" / ".claude" / ".credentials.json"
     assert config.effort == "medium"
+
+
+def test_load_claude_cli_worker_config_accepts_isolation_paths(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "CHIMERA_MEMORY_CLAUDE_WORKER_CONFIG_DIR": str(tmp_path / "worker-claude-home"),
+        "CHIMERA_MEMORY_CLAUDE_WORKER_CREDENTIALS_PATH": str(tmp_path / "source-creds.json"),
+    }
+
+    config = load_claude_cli_worker_config(env)
+
+    assert config.claude_config_dir == tmp_path / "worker-claude-home"
+    assert config.claude_credentials_path == tmp_path / "source-creds.json"
 
 
 def test_load_claude_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> None:
@@ -359,8 +375,31 @@ def test_ensure_claude_worker_files_writes_claude_md_and_mcp_config(tmp_path: Pa
     assert "CM Enhancement Worker" in claude_md
     assert "Do not write memories directly" in claude_md
     assert "chimera-memory-worker" in mcp_config
+    assert Path(files["claude_config_dir"]).is_dir()
     assert Path(files["sessions"]).is_dir()
     assert Path(files["logs"]).is_dir()
+
+
+def test_ensure_claude_worker_files_copies_credentials_to_isolated_config(tmp_path: Path) -> None:
+    source_credentials = tmp_path / "source" / ".credentials.json"
+    source_credentials.parent.mkdir(parents=True)
+    source_credentials.write_text('{"test_fixture":"credential-copy"}\n', encoding="utf-8")
+    config = ClaudeCliWorkerConfig(
+        worker_id="claude-worker-test",
+        provider="anthropic",
+        db_path=str(tmp_path / "transcript.db"),
+        worker_root=tmp_path / "claude-worker-root",
+        claude_config_dir=tmp_path / "claude-worker-root" / ".claude",
+        claude_credentials_path=source_credentials,
+        claude_bin="claude-test",
+        mcp_command="chimera-memory-test",
+    )
+
+    files = ensure_claude_worker_files(config)
+
+    copied = Path(files["credentials"])
+    assert copied == config.claude_config_dir / ".credentials.json"
+    assert copied.read_text(encoding="utf-8") == source_credentials.read_text(encoding="utf-8")
 
 
 def test_ensure_agy_worker_files_writes_agents_gemini_and_mcp_config(tmp_path: Path) -> None:
@@ -420,6 +459,10 @@ def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> Non
     assert "stream-json" in command
     assert "--verbose" in command
     assert "--no-session-persistence" in command
+    assert "--disable-slash-commands" in command
+    assert "--setting-sources" in command
+    assert command[command.index("--setting-sources") + 1] == "local"
+    assert "--bare" not in command
     assert "--allowedTools" in command
     allowed_tools = command[command.index("--allowedTools") + 1].split(",")
     assert allowed_tools == [
@@ -489,6 +532,9 @@ def test_start_claude_cli_worker_once_feeds_prompt_and_mcp_config(tmp_path: Path
 
     assert captured["args"] == claude_worker_command(config)
     assert captured["kwargs"]["cwd"] == str(config.worker_root)
+    assert captured["kwargs"]["env"]["CLAUDE_CONFIG_DIR"] == str(config.worker_root / ".claude")
+    assert captured["kwargs"]["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert captured["kwargs"]["env"]["CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS"] == "1"
     assert "CHIMERA_MEMORY_CLAUDE_WORKER_ID" in captured["kwargs"]["env"]
     assert "memory_worker_claim_next" in process.stdin.text
     assert "provider: anthropic" in process.stdin.text

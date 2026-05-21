@@ -245,8 +245,16 @@ Claude Code supervisor status:
 - launches bounded `claude --print --output-format stream-json` worker passes
 - sets reasoning effort with `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT` or the
   shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
+- sets `CLAUDE_CONFIG_DIR` to a worker-local config directory so global
+  `~/.claude/CLAUDE.md`, installed plugins, and user settings are not loaded
+  into memory enhancement jobs
+- copies the existing Claude Code credentials file into the isolated worker
+  config directory unless `CHIMERA_MEMORY_CLAUDE_WORKER_CREDENTIALS_PATH` points
+  somewhere else
 - creates worker-local `CLAUDE.md`
 - creates worker-local `.mcp.json` with worker-only CM tools
+- launches with slash commands disabled, local settings only, strict MCP config,
+  and the four worker MCP tools allowlisted
 - sets nested CM maintenance workers off in the child MCP server to prevent
   recursion
 - defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/claude-memory-worker`

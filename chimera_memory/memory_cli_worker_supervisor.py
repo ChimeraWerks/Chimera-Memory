@@ -51,6 +51,8 @@ class ClaudeCliWorkerConfig:
     provider: str
     db_path: str
     worker_root: Path
+    claude_config_dir: Path | None = None
+    claude_credentials_path: Path | None = None
     claude_bin: str = "claude"
     mcp_command: str = "chimera-memory"
     model: str = ""
@@ -197,6 +199,13 @@ def _state_root(env: Mapping[str, str]) -> Path:
     return Path.home() / ".chimera-memory"
 
 
+def _home_from_env(env: Mapping[str, str]) -> Path:
+    raw = str(env.get("USERPROFILE") or env.get("HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home()
+
+
 def _default_codex_bin(env: Mapping[str, str]) -> str:
     found = shutil.which("codex")
     if found:
@@ -291,12 +300,24 @@ def load_claude_cli_worker_config(env: Mapping[str, str] | None = None) -> Claud
         source.get("CHIMERA_MEMORY_CLAUDE_WORKER_ROOT")
         or state_root / "workers" / "claude-memory-worker"
     ).expanduser()
+    claude_config_dir = Path(
+        source.get("CHIMERA_MEMORY_CLAUDE_WORKER_CONFIG_DIR")
+        or source.get("CHIMERA_MEMORY_CLAUDE_CONFIG_DIR")
+        or worker_root / ".claude"
+    ).expanduser()
+    claude_credentials_path = Path(
+        source.get("CHIMERA_MEMORY_CLAUDE_WORKER_CREDENTIALS_PATH")
+        or source.get("CHIMERA_MEMORY_CLAUDE_CREDENTIALS_PATH")
+        or _home_from_env(source) / ".claude" / ".credentials.json"
+    ).expanduser()
     db_path = str(source.get("TRANSCRIPT_DB_PATH") or state_root / "transcript.db")
     return ClaudeCliWorkerConfig(
         worker_id=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_ID"), default="claude-memory-worker-1"),
         provider=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"), default="anthropic", max_chars=80),
         db_path=db_path,
         worker_root=worker_root,
+        claude_config_dir=claude_config_dir,
+        claude_credentials_path=claude_credentials_path,
         claude_bin=_clean(source.get("CHIMERA_MEMORY_CLAUDE_BIN"), default=_default_claude_bin(source)),
         mcp_command=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_CLAUDE_WORKER_MODEL"), max_chars=120),
@@ -630,6 +651,8 @@ def ensure_claude_worker_files(config: ClaudeCliWorkerConfig) -> dict[str, str]:
     config.worker_root.mkdir(parents=True, exist_ok=True)
     (config.worker_root / "sessions").mkdir(parents=True, exist_ok=True)
     (config.worker_root / "logs").mkdir(parents=True, exist_ok=True)
+    claude_config_dir = config.claude_config_dir or config.worker_root / ".claude"
+    claude_config_dir.mkdir(parents=True, exist_ok=True)
 
     claude_path = config.worker_root / "CLAUDE.md"
     claude_text = claude_worker_claude_md_text(config)
@@ -639,10 +662,18 @@ def ensure_claude_worker_files(config: ClaudeCliWorkerConfig) -> dict[str, str]:
     mcp_path = config.worker_root / ".mcp.json"
     mcp_path.write_text(json.dumps(claude_worker_mcp_config(config), indent=2) + "\n", encoding="utf-8")
 
+    credentials_target = claude_config_dir / ".credentials.json"
+    if config.claude_credentials_path and config.claude_credentials_path.exists():
+        source = config.claude_credentials_path
+        if source.resolve() != credentials_target.resolve():
+            shutil.copy2(source, credentials_target)
+
     return {
         "worker_root": str(config.worker_root),
+        "claude_config_dir": str(claude_config_dir),
         "claude": str(claude_path),
         "mcp_config": str(mcp_path),
+        "credentials": str(credentials_target),
         "sessions": str(config.worker_root / "sessions"),
         "logs": str(config.worker_root / "logs"),
     }
@@ -723,6 +754,9 @@ def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
         "stream-json",
         "--verbose",
         "--no-session-persistence",
+        "--disable-slash-commands",
+        "--setting-sources",
+        "local",
         "--allowedTools",
         ",".join(
             [
@@ -823,6 +857,10 @@ def start_claude_cli_worker_once(
     stdout_log = logs_dir / f"{config.worker_id}-{stamp}.stdout.jsonl"
     stderr_log = logs_dir / f"{config.worker_id}-{stamp}.stderr.log"
     env = os.environ.copy()
+    env["CLAUDE_CONFIG_DIR"] = str(config.claude_config_dir or config.worker_root / ".claude")
+    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+    env["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] = "1"
+    env["CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS"] = "1"
     env["CHIMERA_MEMORY_CLAUDE_WORKER_ID"] = config.worker_id
     env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] = config.provider
     out = stdout_log.open("w", encoding="utf-8")
@@ -1058,8 +1096,10 @@ def inspect_cli_worker_setup(
         else:
             files = {
                 "worker_root": str(config.worker_root),
+                "claude_config_dir": str(config.claude_config_dir or config.worker_root / ".claude"),
                 "claude": str(config.worker_root / "CLAUDE.md"),
                 "mcp_config": str(config.worker_root / ".mcp.json"),
+                "credentials": str((config.claude_config_dir or config.worker_root / ".claude") / ".credentials.json"),
                 "sessions": str(config.worker_root / "sessions"),
                 "logs": str(config.worker_root / "logs"),
             }
