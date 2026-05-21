@@ -7,10 +7,20 @@ This document captures the replacement for subscription-backed HTTP enrichment
 calls.
 
 The original target was a persistent headless provider CLI session supervised
-by ChimeraMemory. The current shipped implementation is narrower: a persistent
-CM supervisor launches bounded official CLI passes (`codex exec`,
-`claude --print`, `agy --print`) only when the local queue already has eligible
-work. A true all-day provider CLI session remains a deferred transport mode.
+by ChimeraMemory. The shipped implementation is a persistent CM supervisor that
+launches official CLI passes (`codex exec`, `claude --print`, `agy --print`)
+only when the local queue already has eligible work. By default those passes
+reuse one daily provider conversation per worker:
+
+- Codex starts a persisted `codex exec` session and resumes it with
+  `codex exec resume`.
+- Claude Code starts with a generated `--session-id` and resumes with
+  `--resume`.
+- Antigravity starts a print session and resumes with `--continue`.
+
+Set `CHIMERA_MEMORY_CLI_WORKER_SESSION_MODE=bounded` to return to isolated
+one-shot passes. A true always-running stdin/stdout provider process remains a
+future transport mode if the CLIs expose a stable enough protocol.
 
 The goal is to keep CM's deterministic core while letting a provider's official
 CLI session own subscription authentication, token refresh, endpoint changes,
@@ -24,9 +34,11 @@ transport over raw HTTP OAuth transport once the worker protocol exists.
 Transport order:
 
 1. `dry_run`: deterministic local extraction, no model call.
-2. `cli_worker`: persistent local supervisor plus bounded official CLI passes,
-   preferred subscription mode today.
-   - Future extension: true persistent all-day provider CLI session.
+2. `cli_worker`: persistent local supervisor plus daily-resumed official CLI
+   sessions, preferred subscription mode today.
+   - Fallback: bounded one-shot passes with
+     `CHIMERA_MEMORY_CLI_WORKER_SESSION_MODE=bounded`.
+   - Future extension: true always-running provider CLI process.
 3. `http_oauth`: direct HTTP OAuth fallback.
 4. `byok`: sanctioned API key or gateway key mode.
 
@@ -211,10 +223,17 @@ pending job exists, it writes an idle heartbeat and sleeps without starting a
 provider CLI. Provider-backed CLI sessions are for processing known work, not
 for discovering whether work exists.
 
+The supervisor records each provider-backed pass in
+`memory_cli_worker_pass_events`: runtime, worker id, provider, session mode,
+session id/day, resumed flag, return code, log paths, claimed/succeeded/failed
+job counts, token usage, cache creation/read tokens, latency, and model.
+Inspect with `memory_diagnose mode=cli_worker`.
+
 Codex supervisor status:
 
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker`
-- launches bounded `codex exec` worker passes, not an always-on TUI
+- launches `codex exec` worker passes and resumes one daily Codex session by
+  default
 - resolves the Codex executable with `shutil.which("codex")` or the Windows
   npm shim unless `CHIMERA_MEMORY_CODEX_BIN` is set
 - sets reasoning effort with `CHIMERA_MEMORY_CODEX_WORKER_EFFORT` or the
@@ -234,15 +253,16 @@ Codex supervisor status:
 - defaults worker state under `CHIMERA_MEMORY_STATE_ROOT/workers/codex-memory-worker`
 
 Codex bypass mode is accepted only inside the worker containment envelope:
-isolated `CODEX_HOME`, ephemeral session, worker-only MCP surface, temporary
-worker root, CM-side schema validation, budget governor, shadow writes, and no
-direct authoritative memory writes.
+isolated `CODEX_HOME`, daily worker session or bounded one-shot session,
+worker-only MCP surface, temporary worker root, CM-side schema validation,
+budget governor, shadow writes, and no direct authoritative memory writes.
 
 Claude Code supervisor status:
 
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` and
   `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=claude`
-- launches bounded `claude --print --output-format stream-json` worker passes
+- launches `claude --print --output-format stream-json` worker passes and
+  resumes one daily Claude Code session by default
 - sets reasoning effort with `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT` or the
   shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
 - sets `CLAUDE_CONFIG_DIR` to a worker-local config directory so global
@@ -263,7 +283,8 @@ Antigravity CLI supervisor status:
 
 - opt-in with `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=cli_worker` and
   `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=agy`
-- launches bounded `agy --print` worker passes, not the interactive TUI
+- launches `agy --print` worker passes and resumes one daily Antigravity
+  conversation by default
 - creates worker-local `AGENTS.md` and `GEMINI.md`
 - creates worker-local Antigravity CLI `mcp_config.json` with worker-only CM
   tools
@@ -315,8 +336,8 @@ Mitigations:
 3. Add worker JSONL/path exclusion to transcript ingestion. Shipped with env-driven glob and session-id filters.
 4. Add provider budget governor shared by HTTP and CLI transports. Shipped.
 5. Add fake worker harness for tests. Shipped via `chimera-memory enhance worker-fake`.
-6. Add Codex headless worker supervisor. Shipped as an explicit opt-in bounded `codex exec` supervisor.
-7. Add Claude Code headless worker supervisor. Shipped as an explicit opt-in bounded `claude --print` supervisor.
+6. Add Codex headless worker supervisor. Shipped as an explicit opt-in `codex exec` supervisor with daily session reuse.
+7. Add Claude Code headless worker supervisor. Shipped as an explicit opt-in `claude --print` supervisor with daily session reuse.
 8. Make `cli_worker` the default subscription-backed enhancement transport. Shipped for explicit OpenAI/Anthropic provider-worker setup.
 9. Keep `http_oauth` as fallback and `dry_run` as the no-provider floor. Shipped: Google/other provider-backed setup keeps direct provider mode, dry-run remains default.
 10. Add CLI-worker readiness doctor. Shipped as `chimera-memory enhance worker-doctor`, with optional `--init` to generate worker files without launching provider CLIs.

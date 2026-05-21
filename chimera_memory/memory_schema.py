@@ -537,6 +537,39 @@ ON memory_provider_usage_events(provider, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_memory_provider_usage_worker_time
 ON memory_provider_usage_events(worker_id, created_at);
+
+CREATE TABLE IF NOT EXISTS memory_cli_worker_pass_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    worker_id TEXT NOT NULL,
+    provider TEXT DEFAULT '',
+    runtime TEXT DEFAULT '',
+    session_mode TEXT DEFAULT '',
+    session_id TEXT DEFAULT '',
+    session_day TEXT DEFAULT '',
+    resumed INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'succeeded'
+        CHECK(status IN ('succeeded', 'failed', 'skipped', 'deferred')),
+    returncode INTEGER DEFAULT 0,
+    stdout_log TEXT DEFAULT '',
+    stderr_log TEXT DEFAULT '',
+    jobs_claimed INTEGER DEFAULT 0,
+    jobs_succeeded INTEGER DEFAULT 0,
+    jobs_failed INTEGER DEFAULT 0,
+    tokens_in INTEGER DEFAULT 0,
+    tokens_out INTEGER DEFAULT 0,
+    cache_creation_input_tokens INTEGER DEFAULT 0,
+    cache_read_input_tokens INTEGER DEFAULT 0,
+    latency_ms INTEGER DEFAULT 0,
+    model TEXT DEFAULT '',
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_cli_worker_pass_worker_time
+ON memory_cli_worker_pass_events(worker_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_memory_cli_worker_pass_provider_time
+ON memory_cli_worker_pass_events(provider, created_at);
 """
 
 

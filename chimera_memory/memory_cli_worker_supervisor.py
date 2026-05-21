@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ class CodexCliWorkerConfig:
     mcp_command: str = "chimera-memory"
     model: str = ""
     effort: str = "medium"
+    session_mode: str = "daily"
     bypass_approvals_and_sandbox: bool = True
     poll_interval_seconds: int = 60
     restart_interval_seconds: int = 30
@@ -57,6 +59,7 @@ class ClaudeCliWorkerConfig:
     mcp_command: str = "chimera-memory"
     model: str = ""
     effort: str = "medium"
+    session_mode: str = "daily"
     poll_interval_seconds: int = 60
     restart_interval_seconds: int = 30
     persona: str = ""
@@ -73,6 +76,7 @@ class AgyCliWorkerConfig:
     mcp_command: str = "chimera-memory"
     model: str = ""
     print_timeout: str = "5m"
+    session_mode: str = "daily"
     poll_interval_seconds: int = 60
     restart_interval_seconds: int = 30
     persona: str = ""
@@ -84,6 +88,16 @@ class CodexCliWorkerHandle:
     stdout_log: Path
     stderr_log: Path
     files: dict[str, str]
+    runtime: str = ""
+    worker_id: str = ""
+    provider: str = ""
+    session_mode: str = "bounded"
+    session_id: str = ""
+    session_day: str = ""
+    session_metadata_path: Path | None = None
+    resumed_session: bool = False
+    started_at_monotonic: float = 0.0
+    started_at_iso: str = ""
 
     def stop(self, timeout_seconds: float = 5.0) -> None:
         if self.process.poll() is not None:
@@ -128,6 +142,23 @@ def _env_choice(
         if raw:
             return raw if raw in allowed else default
     return default
+
+
+def _session_mode(env: Mapping[str, str], runtime: str) -> str:
+    return _env_choice(
+        env,
+        (f"CHIMERA_MEMORY_{runtime.upper()}_WORKER_SESSION_MODE", "CHIMERA_MEMORY_CLI_WORKER_SESSION_MODE"),
+        default="daily",
+        allowed={"daily", "bounded"},
+    )
+
+
+def _utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _utc_day() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 class _LaunchGateConfig(Protocol):
@@ -264,6 +295,7 @@ def load_codex_cli_worker_config(env: Mapping[str, str] | None = None) -> CodexC
             default="medium",
             allowed={"low", "medium", "high", "xhigh"},
         ),
+        session_mode=_session_mode(source, "codex"),
         bypass_approvals_and_sandbox=_env_bool(
             source,
             "CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX",
@@ -327,6 +359,7 @@ def load_claude_cli_worker_config(env: Mapping[str, str] | None = None) -> Claud
             default="medium",
             allowed={"low", "medium", "high", "xhigh", "max"},
         ),
+        session_mode=_session_mode(source, "claude"),
         poll_interval_seconds=_env_int(
             source,
             "CHIMERA_MEMORY_CLAUDE_WORKER_POLL_INTERVAL_SECONDS",
@@ -385,6 +418,7 @@ def load_agy_cli_worker_config(env: Mapping[str, str] | None = None) -> AgyCliWo
         mcp_command=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_MCP_COMMAND"), default="chimera-memory"),
         model=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_MODEL"), max_chars=120),
         print_timeout=_clean(source.get("CHIMERA_MEMORY_AGY_WORKER_PRINT_TIMEOUT"), default="5m", max_chars=40),
+        session_mode=_session_mode(source, "agy"),
         poll_interval_seconds=_env_int(
             source,
             "CHIMERA_MEMORY_AGY_WORKER_POLL_INTERVAL_SECONDS",
@@ -477,7 +511,7 @@ def _worker_prompt(*, worker_id: str, provider: str, poll_interval_seconds: int,
             persona_clause,
             f"poll_interval_seconds: {poll_interval_seconds}",
             "",
-            "Run one bounded worker pass:",
+            "Run one worker job pass inside the current worker session:",
             f"1. Call memory_worker_heartbeat as idle with provider `{provider}`.",
             f"2. Call memory_worker_budget with provider `{provider}`.",
             "3. If budget is denied, heartbeat idle and stop.",
@@ -724,16 +758,121 @@ def ensure_agy_worker_files(config: AgyCliWorkerConfig) -> dict[str, str]:
     }
 
 
-def codex_worker_command(config: CodexCliWorkerConfig) -> list[str]:
-    command = [
-        config.codex_bin,
-        "exec",
-        "--json",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--cd",
-        str(config.worker_root),
-    ]
+def _daily_session_path(config: CodexCliWorkerConfig | ClaudeCliWorkerConfig | AgyCliWorkerConfig, runtime: str) -> Path:
+    return config.worker_root / "sessions" / f"{runtime}-daily-session.json"
+
+
+def _read_daily_session(path: Path, *, runtime: str, worker_id: str, provider: str, day: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    if payload.get("runtime") != runtime:
+        return {}
+    if payload.get("worker_id") != worker_id:
+        return {}
+    if payload.get("provider") != provider:
+        return {}
+    if payload.get("session_day") != day:
+        return {}
+    return payload
+
+
+def _daily_session_state(
+    config: CodexCliWorkerConfig | ClaudeCliWorkerConfig | AgyCliWorkerConfig,
+    *,
+    runtime: str,
+) -> dict[str, Any]:
+    if config.session_mode != "daily":
+        return {
+            "session_mode": "bounded",
+            "session_id": "",
+            "session_day": "",
+            "resumed": False,
+            "metadata_path": None,
+        }
+    path = _daily_session_path(config, runtime)
+    day = _utc_day()
+    payload = _read_daily_session(
+        path,
+        runtime=runtime,
+        worker_id=config.worker_id,
+        provider=config.provider,
+        day=day,
+    )
+    session_id = str(payload.get("session_id") or "")
+    if runtime == "claude" and not session_id:
+        session_id = str(uuid.uuid4())
+    resumed = bool(session_id and int(payload.get("turns") or 0) > 0)
+    if runtime == "agy":
+        resumed = bool(int(payload.get("turns") or 0) > 0)
+    return {
+        "session_mode": "daily",
+        "session_id": session_id,
+        "session_day": day,
+        "resumed": resumed,
+        "metadata_path": path,
+        "turns": int(payload.get("turns") or 0),
+        "created_at": str(payload.get("created_at") or _utc_now_iso()),
+    }
+
+
+def _write_daily_session_state(
+    path: Path,
+    *,
+    runtime: str,
+    worker_id: str,
+    provider: str,
+    session_day: str,
+    session_id: str,
+    turns: int,
+    created_at: str,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "chimera-memory.cli-worker-session.v1",
+                "runtime": runtime,
+                "worker_id": worker_id,
+                "provider": provider,
+                "session_day": session_day,
+                "session_id": session_id,
+                "created_at": created_at,
+                "last_used_at": _utc_now_iso(),
+                "turns": max(0, int(turns or 0)),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def codex_worker_command(config: CodexCliWorkerConfig, session: Mapping[str, Any] | None = None) -> list[str]:
+    session = session or {}
+    resumed = bool(session.get("resumed") and session.get("session_id"))
+    if resumed:
+        command = [
+            config.codex_bin,
+            "exec",
+            "resume",
+            "--json",
+            "--skip-git-repo-check",
+        ]
+    else:
+        command = [
+            config.codex_bin,
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--cd",
+            str(config.worker_root),
+        ]
+        if config.session_mode != "daily":
+            command.append("--ephemeral")
     if config.bypass_approvals_and_sandbox:
         command.append("--dangerously-bypass-approvals-and-sandbox")
     else:
@@ -742,18 +881,20 @@ def codex_worker_command(config: CodexCliWorkerConfig) -> list[str]:
         command.extend(["--model", config.model])
     if config.effort:
         command.extend(["-c", f"model_reasoning_effort={json.dumps(config.effort)}"])
+    if resumed:
+        command.append(str(session["session_id"]))
     command.append("-")
     return command
 
 
-def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
+def claude_worker_command(config: ClaudeCliWorkerConfig, session: Mapping[str, Any] | None = None) -> list[str]:
+    session = session or {}
     command = [
         config.claude_bin,
         "--print",
         "--output-format",
         "stream-json",
         "--verbose",
-        "--no-session-persistence",
         "--disable-slash-commands",
         "--setting-sources",
         "local",
@@ -774,6 +915,13 @@ def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
         "--add-dir",
         str(config.worker_root),
     ]
+    if config.session_mode == "daily" and session.get("session_id"):
+        if session.get("resumed"):
+            command.extend(["--resume", str(session["session_id"])])
+        else:
+            command.extend(["--session-id", str(session["session_id"])])
+    else:
+        command.append("--no-session-persistence")
     if config.model:
         command.extend(["--model", config.model])
     if config.effort:
@@ -781,7 +929,8 @@ def claude_worker_command(config: ClaudeCliWorkerConfig) -> list[str]:
     return command
 
 
-def agy_worker_command(config: AgyCliWorkerConfig) -> list[str]:
+def agy_worker_command(config: AgyCliWorkerConfig, session: Mapping[str, Any] | None = None) -> list[str]:
+    session = session or {}
     command = [
         config.agy_bin,
         "--print",
@@ -793,6 +942,8 @@ def agy_worker_command(config: AgyCliWorkerConfig) -> list[str]:
         "--add-dir",
         str(config.worker_root),
     ]
+    if config.session_mode == "daily" and session.get("resumed"):
+        command.append("--continue")
     return command
 
 
@@ -815,10 +966,13 @@ def start_codex_cli_worker_once(
 ) -> CodexCliWorkerHandle:
     """Start one headless Codex worker pass and feed it the worker prompt."""
     files = ensure_codex_worker_files(config)
+    session = _daily_session_state(config, runtime="codex")
     logs_dir = Path(files["logs"])
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     stdout_log = logs_dir / f"{config.worker_id}-{stamp}.stdout.jsonl"
     stderr_log = logs_dir / f"{config.worker_id}-{stamp}.stderr.log"
+    started_at = time.monotonic()
+    started_at_iso = _utc_now_iso()
     env = os.environ.copy()
     env["CODEX_HOME"] = str(config.codex_home)
     env["CHIMERA_MEMORY_CODEX_WORKER_ID"] = config.worker_id
@@ -827,7 +981,7 @@ def start_codex_cli_worker_once(
     err = stderr_log.open("w", encoding="utf-8")
     try:
         process = popen_factory(
-            codex_worker_command(config),
+            codex_worker_command(config, session=session),
             cwd=str(config.worker_root),
             env=env,
             stdin=subprocess.PIPE,
@@ -842,7 +996,22 @@ def start_codex_cli_worker_once(
     if process.stdin is not None:
         process.stdin.write(codex_worker_prompt(config))
         process.stdin.close()
-    return CodexCliWorkerHandle(process=process, stdout_log=stdout_log, stderr_log=stderr_log, files=files)
+    return CodexCliWorkerHandle(
+        process=process,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        files=files,
+        runtime="codex",
+        worker_id=config.worker_id,
+        provider=config.provider,
+        session_mode=str(session.get("session_mode") or config.session_mode),
+        session_id=str(session.get("session_id") or ""),
+        session_day=str(session.get("session_day") or ""),
+        session_metadata_path=session.get("metadata_path"),
+        resumed_session=bool(session.get("resumed")),
+        started_at_monotonic=started_at,
+        started_at_iso=started_at_iso,
+    )
 
 
 def start_claude_cli_worker_once(
@@ -852,10 +1021,13 @@ def start_claude_cli_worker_once(
 ) -> CodexCliWorkerHandle:
     """Start one headless Claude Code worker pass and feed it the worker prompt."""
     files = ensure_claude_worker_files(config)
+    session = _daily_session_state(config, runtime="claude")
     logs_dir = Path(files["logs"])
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     stdout_log = logs_dir / f"{config.worker_id}-{stamp}.stdout.jsonl"
     stderr_log = logs_dir / f"{config.worker_id}-{stamp}.stderr.log"
+    started_at = time.monotonic()
+    started_at_iso = _utc_now_iso()
     env = os.environ.copy()
     env["CLAUDE_CONFIG_DIR"] = str(config.claude_config_dir or config.worker_root / ".claude")
     env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
@@ -867,7 +1039,7 @@ def start_claude_cli_worker_once(
     err = stderr_log.open("w", encoding="utf-8")
     try:
         process = popen_factory(
-            claude_worker_command(config),
+            claude_worker_command(config, session=session),
             cwd=str(config.worker_root),
             env=env,
             stdin=subprocess.PIPE,
@@ -882,7 +1054,22 @@ def start_claude_cli_worker_once(
     if process.stdin is not None:
         process.stdin.write(claude_worker_prompt(config))
         process.stdin.close()
-    return CodexCliWorkerHandle(process=process, stdout_log=stdout_log, stderr_log=stderr_log, files=files)
+    return CodexCliWorkerHandle(
+        process=process,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        files=files,
+        runtime="claude",
+        worker_id=config.worker_id,
+        provider=config.provider,
+        session_mode=str(session.get("session_mode") or config.session_mode),
+        session_id=str(session.get("session_id") or ""),
+        session_day=str(session.get("session_day") or ""),
+        session_metadata_path=session.get("metadata_path"),
+        resumed_session=bool(session.get("resumed")),
+        started_at_monotonic=started_at,
+        started_at_iso=started_at_iso,
+    )
 
 
 def start_agy_cli_worker_once(
@@ -892,10 +1079,13 @@ def start_agy_cli_worker_once(
 ) -> CodexCliWorkerHandle:
     """Start one headless Antigravity CLI worker pass and feed it the worker prompt."""
     files = ensure_agy_worker_files(config)
+    session = _daily_session_state(config, runtime="agy")
     logs_dir = Path(files["logs"])
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     stdout_log = logs_dir / f"{config.worker_id}-{stamp}.stdout.jsonl"
     stderr_log = logs_dir / f"{config.worker_id}-{stamp}.stderr.log"
+    started_at = time.monotonic()
+    started_at_iso = _utc_now_iso()
     env = os.environ.copy()
     env["HOME"] = str(config.agy_home)
     env["USERPROFILE"] = str(config.agy_home)
@@ -906,7 +1096,7 @@ def start_agy_cli_worker_once(
     err = stderr_log.open("w", encoding="utf-8")
     try:
         process = popen_factory(
-            agy_worker_command(config),
+            agy_worker_command(config, session=session),
             cwd=str(config.worker_root),
             env=env,
             stdin=subprocess.PIPE,
@@ -921,7 +1111,271 @@ def start_agy_cli_worker_once(
     if process.stdin is not None:
         process.stdin.write(agy_worker_prompt(config))
         process.stdin.close()
-    return CodexCliWorkerHandle(process=process, stdout_log=stdout_log, stderr_log=stderr_log, files=files)
+    return CodexCliWorkerHandle(
+        process=process,
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        files=files,
+        runtime="agy",
+        worker_id=config.worker_id,
+        provider=config.provider,
+        session_mode=str(session.get("session_mode") or config.session_mode),
+        session_id=str(session.get("session_id") or ""),
+        session_day=str(session.get("session_day") or ""),
+        session_metadata_path=session.get("metadata_path"),
+        resumed_session=bool(session.get("resumed")),
+        started_at_monotonic=started_at,
+        started_at_iso=started_at_iso,
+    )
+
+
+def _extract_cli_stdout_metrics(path: Path) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "model": "",
+        "session_id": "",
+    }
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for key, target in (
+                ("input_tokens", "input_tokens"),
+                ("output_tokens", "output_tokens"),
+                ("cache_creation_input_tokens", "cache_creation_input_tokens"),
+                ("cache_read_input_tokens", "cache_read_input_tokens"),
+            ):
+                raw = value.get(key)
+                if isinstance(raw, int):
+                    metrics[target] = max(int(metrics[target]), raw)
+            if not metrics["session_id"]:
+                session_id = str(value.get("session_id") or value.get("sessionId") or "").strip()
+                if session_id:
+                    metrics["session_id"] = session_id[:120]
+            model = str(value.get("model") or "").strip()
+            if model:
+                metrics["model"] = model[:120]
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                if not line.strip() or not any(marker in line for marker in ("usage", "session", "model")):
+                    continue
+                try:
+                    visit(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        pass
+    return metrics
+
+
+def _worker_job_counts(conn: sqlite3.Connection, *, worker_id: str, since_iso: str) -> dict[str, int]:
+    counts = {"claimed": 0, "succeeded": 0, "failed": 0}
+    try:
+        rows = conn.execute(
+            """
+            SELECT status, COUNT(*)
+            FROM memory_enhancement_jobs
+            WHERE locked_by_worker = ? AND julianday(updated_at) >= julianday(?)
+            GROUP BY status
+            """,
+            (worker_id, since_iso),
+        ).fetchall()
+    except sqlite3.Error:
+        return counts
+    for status, count in rows:
+        counts["claimed"] += int(count or 0)
+        if status == "succeeded":
+            counts["succeeded"] += int(count or 0)
+        elif status == "failed":
+            counts["failed"] += int(count or 0)
+    return counts
+
+
+def _record_cli_worker_pass(
+    config: CodexCliWorkerConfig | ClaudeCliWorkerConfig | AgyCliWorkerConfig,
+    handle: CodexCliWorkerHandle,
+    *,
+    runtime: str,
+    returncode: int | None,
+) -> None:
+    metrics = _extract_cli_stdout_metrics(handle.stdout_log)
+    latency_ms = max(0, int((time.monotonic() - handle.started_at_monotonic) * 1000)) if handle.started_at_monotonic else 0
+    status = "succeeded" if returncode in (0, None) else "failed"
+    session_id = handle.session_id or str(metrics.get("session_id") or "")
+    try:
+        with sqlite3.connect(config.db_path) as conn:
+            jobs = _worker_job_counts(conn, worker_id=config.worker_id, since_iso=handle.started_at_iso)
+            conn.execute(
+                """
+                INSERT INTO memory_cli_worker_pass_events (
+                    worker_id, provider, runtime, session_mode, session_id, session_day,
+                    resumed, status, returncode, stdout_log, stderr_log,
+                    jobs_claimed, jobs_succeeded, jobs_failed,
+                    tokens_in, tokens_out, cache_creation_input_tokens,
+                    cache_read_input_tokens, latency_ms, model, metadata
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    config.worker_id,
+                    config.provider,
+                    runtime,
+                    handle.session_mode,
+                    session_id,
+                    handle.session_day,
+                    1 if handle.resumed_session else 0,
+                    status,
+                    int(returncode or 0),
+                    str(handle.stdout_log),
+                    str(handle.stderr_log),
+                    jobs["claimed"],
+                    jobs["succeeded"],
+                    jobs["failed"],
+                    int(metrics.get("input_tokens") or 0),
+                    int(metrics.get("output_tokens") or 0),
+                    int(metrics.get("cache_creation_input_tokens") or 0),
+                    int(metrics.get("cache_read_input_tokens") or 0),
+                    latency_ms,
+                    str(metrics.get("model") or "")[:120],
+                    json.dumps({"stdout_bytes": handle.stdout_log.stat().st_size if handle.stdout_log.exists() else 0}),
+                ),
+            )
+            conn.commit()
+    except sqlite3.Error:
+        logging.getLogger("chimera_memory.cli-worker").exception(
+            "failed to record cli worker pass worker_id=%s runtime=%s",
+            config.worker_id,
+            runtime,
+        )
+
+    if status == "succeeded" and handle.session_mode == "daily" and handle.session_metadata_path:
+        turns = int((_read_daily_session(
+            handle.session_metadata_path,
+            runtime=runtime,
+            worker_id=config.worker_id,
+            provider=config.provider,
+            day=handle.session_day,
+        ) or {}).get("turns") or 0) + 1
+        created_at = str((_read_daily_session(
+            handle.session_metadata_path,
+            runtime=runtime,
+            worker_id=config.worker_id,
+            provider=config.provider,
+            day=handle.session_day,
+        ) or {}).get("created_at") or _utc_now_iso())
+        _write_daily_session_state(
+            handle.session_metadata_path,
+            runtime=runtime,
+            worker_id=config.worker_id,
+            provider=config.provider,
+            session_day=handle.session_day,
+            session_id=session_id,
+            turns=turns,
+            created_at=created_at,
+        )
+
+
+def cli_worker_stats(conn: sqlite3.Connection, *, hours: int = 24, limit: int = 12) -> dict[str, Any]:
+    """Return token and performance telemetry for CLI worker passes."""
+    hours = max(1, min(24 * 30, int(hours or 24)))
+    limit = max(1, min(100, int(limit or 12)))
+    cutoff_expr = f"strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-{hours} hours')"
+    summary_rows = conn.execute(
+        f"""
+        SELECT runtime, provider, worker_id,
+               COUNT(*) AS passes,
+               SUM(CASE WHEN resumed THEN 1 ELSE 0 END) AS resumed_passes,
+               SUM(jobs_claimed) AS jobs_claimed,
+               SUM(jobs_succeeded) AS jobs_succeeded,
+               SUM(jobs_failed) AS jobs_failed,
+               SUM(tokens_in) AS tokens_in,
+               SUM(tokens_out) AS tokens_out,
+               SUM(cache_creation_input_tokens) AS cache_creation_input_tokens,
+               SUM(cache_read_input_tokens) AS cache_read_input_tokens,
+               AVG(latency_ms) AS avg_latency_ms,
+               MAX(latency_ms) AS max_latency_ms
+        FROM memory_cli_worker_pass_events
+        WHERE created_at >= {cutoff_expr}
+        GROUP BY runtime, provider, worker_id
+        ORDER BY passes DESC
+        """
+    ).fetchall()
+    recent_rows = conn.execute(
+        f"""
+        SELECT created_at, runtime, provider, worker_id, session_mode, session_id,
+               resumed, status, returncode, jobs_claimed, jobs_succeeded, jobs_failed,
+               tokens_in, tokens_out, cache_creation_input_tokens,
+               cache_read_input_tokens, latency_ms, model
+        FROM memory_cli_worker_pass_events
+        WHERE created_at >= {cutoff_expr}
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    pending_rows = conn.execute(
+        """
+        SELECT requested_provider, COUNT(*)
+        FROM memory_enhancement_jobs
+        WHERE status = 'pending'
+        GROUP BY requested_provider
+        ORDER BY COUNT(*) DESC
+        """
+    ).fetchall()
+    return {
+        "window_hours": hours,
+        "summary": [
+            {
+                "runtime": row[0],
+                "provider": row[1],
+                "worker_id": row[2],
+                "passes": int(row[3] or 0),
+                "resumed_passes": int(row[4] or 0),
+                "jobs_claimed": int(row[5] or 0),
+                "jobs_succeeded": int(row[6] or 0),
+                "jobs_failed": int(row[7] or 0),
+                "tokens_in": int(row[8] or 0),
+                "tokens_out": int(row[9] or 0),
+                "cache_creation_input_tokens": int(row[10] or 0),
+                "cache_read_input_tokens": int(row[11] or 0),
+                "avg_latency_ms": int(row[12] or 0),
+                "max_latency_ms": int(row[13] or 0),
+            }
+            for row in summary_rows
+        ],
+        "pending_jobs": [{"provider": row[0], "count": int(row[1] or 0)} for row in pending_rows],
+        "recent": [
+            {
+                "created_at": row[0],
+                "runtime": row[1],
+                "provider": row[2],
+                "worker_id": row[3],
+                "session_mode": row[4],
+                "session_id": row[5],
+                "resumed": bool(row[6]),
+                "status": row[7],
+                "returncode": int(row[8] or 0),
+                "jobs_claimed": int(row[9] or 0),
+                "jobs_succeeded": int(row[10] or 0),
+                "jobs_failed": int(row[11] or 0),
+                "tokens_in": int(row[12] or 0),
+                "tokens_out": int(row[13] or 0),
+                "cache_creation_input_tokens": int(row[14] or 0),
+                "cache_read_input_tokens": int(row[15] or 0),
+                "latency_ms": int(row[16] or 0),
+                "model": row[17],
+            }
+            for row in recent_rows
+        ],
+    }
 
 
 def start_codex_cli_worker_supervisor(
@@ -956,6 +1410,7 @@ def start_codex_cli_worker_supervisor(
                 handle.stop()
                 break
             returncode = handle.process.poll()
+            _record_cli_worker_pass(config, handle, runtime="codex", returncode=returncode)
             if returncode not in (0, None):
                 state["last_error"] = f"process exited {returncode}"
                 log.warning(
@@ -1008,6 +1463,7 @@ def start_claude_cli_worker_supervisor(
                 handle.stop()
                 break
             returncode = handle.process.poll()
+            _record_cli_worker_pass(config, handle, runtime="claude", returncode=returncode)
             if returncode not in (0, None):
                 state["last_error"] = f"process exited {returncode}"
                 log.warning(
@@ -1060,6 +1516,7 @@ def start_agy_cli_worker_supervisor(
                 handle.stop()
                 break
             returncode = handle.process.poll()
+            _record_cli_worker_pass(config, handle, runtime="agy", returncode=returncode)
             if returncode not in (0, None):
                 state["last_error"] = f"process exited {returncode}"
                 log.warning(

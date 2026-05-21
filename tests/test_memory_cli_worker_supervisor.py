@@ -14,6 +14,7 @@ from chimera_memory.memory_cli_worker_supervisor import (
     claude_worker_command,
     claude_worker_mcp_config,
     claude_worker_prompt,
+    cli_worker_stats,
     codex_worker_command,
     codex_worker_config_toml,
     codex_worker_mcp_config,
@@ -63,6 +64,11 @@ class _FakeProcess:
         return 0
 
 
+class _FinishedProcess(_FakeProcess):
+    def poll(self):
+        return 0
+
+
 def _config(tmp_path: Path) -> CodexCliWorkerConfig:
     return CodexCliWorkerConfig(
         worker_id="codex-worker-test",
@@ -77,6 +83,26 @@ def _config(tmp_path: Path) -> CodexCliWorkerConfig:
     )
 
 
+def _bounded_config(tmp_path: Path) -> CodexCliWorkerConfig:
+    config = _config(tmp_path)
+    return CodexCliWorkerConfig(
+        worker_id=config.worker_id,
+        provider=config.provider,
+        db_path=config.db_path,
+        worker_root=config.worker_root,
+        codex_home=config.codex_home,
+        codex_bin=config.codex_bin,
+        mcp_command=config.mcp_command,
+        model=config.model,
+        effort=config.effort,
+        session_mode="bounded",
+        bypass_approvals_and_sandbox=config.bypass_approvals_and_sandbox,
+        poll_interval_seconds=config.poll_interval_seconds,
+        restart_interval_seconds=config.restart_interval_seconds,
+        persona=config.persona,
+    )
+
+
 def _config_without_codex_bypass(tmp_path: Path) -> CodexCliWorkerConfig:
     config = _config(tmp_path)
     return CodexCliWorkerConfig(
@@ -88,6 +114,8 @@ def _config_without_codex_bypass(tmp_path: Path) -> CodexCliWorkerConfig:
         codex_bin=config.codex_bin,
         mcp_command=config.mcp_command,
         model=config.model,
+        effort=config.effort,
+        session_mode=config.session_mode,
         bypass_approvals_and_sandbox=False,
         poll_interval_seconds=config.poll_interval_seconds,
         restart_interval_seconds=config.restart_interval_seconds,
@@ -139,7 +167,19 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
     assert config.codex_home == config.worker_root / ".codex"
     assert config.codex_auth_path == tmp_path / "auth.json"
     assert config.effort == "medium"
+    assert config.session_mode == "daily"
     assert config.bypass_approvals_and_sandbox is True
+
+
+def test_load_codex_cli_worker_config_can_use_bounded_session_mode(tmp_path: Path) -> None:
+    env = {
+        "CHIMERA_MEMORY_STATE_ROOT": str(tmp_path / "state"),
+        "CHIMERA_MEMORY_CLI_WORKER_SESSION_MODE": "bounded",
+    }
+
+    config = load_codex_cli_worker_config(env)
+
+    assert config.session_mode == "bounded"
 
 
 def test_load_codex_cli_worker_config_uses_explicit_effort(tmp_path: Path) -> None:
@@ -196,6 +236,7 @@ def test_load_claude_cli_worker_config_uses_worker_root(tmp_path: Path) -> None:
     assert config.claude_config_dir == config.worker_root / ".claude"
     assert config.claude_credentials_path == tmp_path / "home" / ".claude" / ".credentials.json"
     assert config.effort == "medium"
+    assert config.session_mode == "daily"
 
 
 def test_load_claude_cli_worker_config_accepts_isolation_paths(tmp_path: Path) -> None:
@@ -429,12 +470,30 @@ def test_codex_worker_command_uses_bypass_for_exec_mcp_approval_compat(tmp_path:
 
     assert command[:2] == ["codex-test", "exec"]
     assert "--json" in command
-    assert "--ephemeral" in command
+    assert "--ephemeral" not in command
     assert "--skip-git-repo-check" in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "--sandbox" not in command
     assert "-c" in command
     assert 'model_reasoning_effort="medium"' in command
+    assert command[-1] == "-"
+
+
+def test_codex_worker_command_can_use_bounded_ephemeral_pass(tmp_path: Path) -> None:
+    command = codex_worker_command(_bounded_config(tmp_path))
+
+    assert "--ephemeral" in command
+
+
+def test_codex_worker_command_resumes_daily_session(tmp_path: Path) -> None:
+    command = codex_worker_command(
+        _config(tmp_path),
+        session={"session_mode": "daily", "session_id": "session-123", "resumed": True},
+    )
+
+    assert command[:3] == ["codex-test", "exec", "resume"]
+    assert "--ephemeral" not in command
+    assert "session-123" in command
     assert command[-1] == "-"
 
 
@@ -480,6 +539,28 @@ def test_claude_worker_command_is_headless_and_strict_mcp(tmp_path: Path) -> Non
     assert "--dangerously-skip-permissions" not in command
 
 
+def test_claude_worker_command_can_use_daily_session(tmp_path: Path) -> None:
+    config = _claude_config(tmp_path)
+
+    first = claude_worker_command(config, session={"session_mode": "daily", "session_id": "session-123"})
+    resumed = claude_worker_command(
+        config,
+        session={"session_mode": "daily", "session_id": "session-123", "resumed": True},
+    )
+
+    assert "--no-session-persistence" not in first
+    assert "--session-id" in first
+    assert first[first.index("--session-id") + 1] == "session-123"
+    assert "--resume" in resumed
+    assert resumed[resumed.index("--resume") + 1] == "session-123"
+
+
+def test_agy_worker_command_continues_daily_session(tmp_path: Path) -> None:
+    command = agy_worker_command(_agy_config(tmp_path), session={"session_mode": "daily", "resumed": True})
+
+    assert "--continue" in command
+
+
 def test_agy_worker_command_is_headless_sandboxed_and_worker_scoped(tmp_path: Path) -> None:
     config = _agy_config(tmp_path)
 
@@ -506,9 +587,11 @@ def test_start_codex_cli_worker_once_feeds_prompt_and_sets_codex_home(tmp_path: 
 
     handle = start_codex_cli_worker_once(config, popen_factory=fake_popen)
 
-    assert captured["args"] == codex_worker_command(config)
+    assert captured["args"] == codex_worker_command(config, session={})
     assert captured["kwargs"]["cwd"] == str(config.worker_root)
     assert captured["kwargs"]["env"]["CODEX_HOME"] == str(config.codex_home)
+    assert handle.session_mode == "daily"
+    assert handle.session_metadata_path == config.worker_root / "sessions" / "codex-daily-session.json"
     assert "memory_worker_claim_next" in process.stdin.text
     assert "provider: openai" in process.stdin.text
     assert process.stdin.closed is True
@@ -530,12 +613,17 @@ def test_start_claude_cli_worker_once_feeds_prompt_and_mcp_config(tmp_path: Path
 
     handle = start_claude_cli_worker_once(config, popen_factory=fake_popen)
 
-    assert captured["args"] == claude_worker_command(config)
+    assert captured["args"][0] == "claude-test"
+    assert "--session-id" in captured["args"]
+    assert "--no-session-persistence" not in captured["args"]
     assert captured["kwargs"]["cwd"] == str(config.worker_root)
     assert captured["kwargs"]["env"]["CLAUDE_CONFIG_DIR"] == str(config.worker_root / ".claude")
     assert captured["kwargs"]["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
     assert captured["kwargs"]["env"]["CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS"] == "1"
     assert "CHIMERA_MEMORY_CLAUDE_WORKER_ID" in captured["kwargs"]["env"]
+    assert handle.session_mode == "daily"
+    assert handle.session_metadata_path == config.worker_root / "sessions" / "claude-daily-session.json"
+    assert handle.session_id
     assert "memory_worker_claim_next" in process.stdin.text
     assert "provider: anthropic" in process.stdin.text
     assert process.stdin.closed is True
@@ -621,6 +709,86 @@ def test_claude_worker_supervisor_skips_launch_when_queue_empty(tmp_path: Path) 
         handle["thread"].join(timeout=2)
 
 
+def test_claude_worker_supervisor_records_pass_telemetry(tmp_path: Path) -> None:
+    db_path = tmp_path / "transcript.db"
+    with sqlite3.connect(db_path) as conn:
+        init_memory_tables(conn)
+        conn.execute(
+            """
+            INSERT INTO memory_enhancement_jobs (job_id, status, persona, path, requested_provider)
+            VALUES ('job-1', 'pending', 'sarah', 'memory/test.md', 'anthropic')
+            """
+        )
+        conn.commit()
+    config = ClaudeCliWorkerConfig(
+        worker_id="claude-worker-test",
+        provider="anthropic",
+        db_path=str(db_path),
+        worker_root=tmp_path / "claude-worker-root",
+        claude_bin="claude-test",
+        mcp_command="chimera-memory-test",
+        restart_interval_seconds=0.05,
+        persona="sarah",
+    )
+
+    def fake_popen(args, **kwargs):
+        process = _FinishedProcess()
+        stdout_path = Path(kwargs["stdout"].name)
+        stdout_path.write_text(
+            json.dumps(
+                {
+                    "message": {
+                        "model": "claude-test-model",
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 20,
+                            "cache_creation_input_tokens": 30,
+                            "cache_read_input_tokens": 40,
+                        },
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                UPDATE memory_enhancement_jobs
+                   SET status = 'succeeded',
+                       locked_by_worker = 'claude-worker-test',
+                       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE job_id = 'job-1'
+                """
+            )
+            conn.commit()
+        return process
+
+    handle = start_claude_cli_worker_supervisor(config, popen_factory=fake_popen)
+    try:
+        deadline = time.time() + 2
+        row = None
+        while time.time() < deadline and row is None:
+            time.sleep(0.02)
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT runtime, provider, session_mode, resumed, jobs_claimed,
+                           tokens_in, tokens_out, cache_creation_input_tokens,
+                           cache_read_input_tokens, model
+                    FROM memory_cli_worker_pass_events
+                    """
+                ).fetchone()
+        assert row == ("claude", "anthropic", "daily", 0, 1, 10, 20, 30, 40, "claude-test-model")
+        with sqlite3.connect(db_path) as conn:
+            stats = cli_worker_stats(conn)
+        assert stats["summary"][0]["passes"] == 1
+        assert stats["summary"][0]["cache_read_input_tokens"] == 40
+    finally:
+        handle["stop_event"].set()
+        handle["thread"].join(timeout=2)
+
+
 def test_start_agy_cli_worker_once_feeds_prompt_and_sets_isolated_home(tmp_path: Path) -> None:
     config = _agy_config(tmp_path)
     captured = {}
@@ -649,7 +817,7 @@ def test_start_agy_cli_worker_once_feeds_prompt_and_sets_isolated_home(tmp_path:
 def test_codex_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     prompt = codex_worker_prompt(_config(tmp_path))
 
-    assert "Run one bounded worker pass" in prompt
+    assert "Run one worker job pass" in prompt
     assert "memory_worker_claim_next" in prompt
     assert "actual_provider=`openai`" in prompt
     assert "Do not submit success with an empty summary" in prompt
@@ -659,7 +827,7 @@ def test_codex_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     prompt = claude_worker_prompt(_claude_config(tmp_path))
 
-    assert "Run one bounded worker pass" in prompt
+    assert "Run one worker job pass" in prompt
     assert "memory_worker_claim_next" in prompt
     assert "actual_provider=`anthropic`" in prompt
     assert "Do not submit success with an empty summary" in prompt
@@ -669,7 +837,7 @@ def test_claude_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 def test_agy_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
     prompt = agy_worker_prompt(_agy_config(tmp_path))
 
-    assert "Run one bounded worker pass" in prompt
+    assert "Run one worker job pass" in prompt
     assert "memory_worker_claim_next" in prompt
     assert "actual_provider=`google`" in prompt
     assert "Do not submit success with an empty summary" in prompt

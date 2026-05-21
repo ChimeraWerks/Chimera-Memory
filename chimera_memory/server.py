@@ -2917,6 +2917,21 @@ def create_server():
             return memory_gaps(persona=persona)
         if normalized_mode in {"provider", "provider_plan", "enhancement_provider_plan"}:
             return memory_enhancement_provider_plan()
+        if normalized_mode in {"cli_worker", "worker_stats", "sidecar", "sidecar_stats"}:
+            from .memory_cli_worker_supervisor import cli_worker_stats
+
+            try:
+                hours = int((query or "").strip() or "24")
+            except ValueError:
+                hours = 24
+            return json.dumps(
+                cli_worker_stats(
+                    _get_memory_conn(),
+                    hours=hours,
+                    limit=limit,
+                ),
+                indent=2,
+            )
         if normalized_mode in {"health", "cm_health"}:
             from .memory_health import collect_cm_health, format_cm_health
 
@@ -2944,7 +2959,7 @@ def create_server():
             return memory_whereami()
         return (
             "Unsupported diagnose mode. Use tools, stats, zones, traces, trace_analyze, "
-            "audit, harness, gaps, provider_plan, health, consolidation, guard, or whereami."
+            "audit, harness, gaps, provider_plan, cli_worker, health, consolidation, guard, or whereami."
         )
 
     return server
