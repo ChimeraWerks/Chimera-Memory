@@ -168,7 +168,15 @@ def create_server():
         log.error("mcp package not installed. Install with: pip install chimera-memory[mcp]")
         sys.exit(1)
 
-    server = FastMCP("chimera-memory")
+    class ChimeraMemoryMCP(FastMCP):
+        async def list_tools(self):
+            tools = await super().list_tools()
+            ready_callback = getattr(self, "_chimera_memory_ready_callback", None)
+            if callable(ready_callback):
+                ready_callback()
+            return tools
+
+    server = ChimeraMemoryMCP("chimera-memory")
 
     # Load config (env vars > config file > defaults)
     from .config import load_config, ensure_config_exists
@@ -3055,6 +3063,23 @@ def _env_int(key: str, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, parsed))
 
 
+def _env_float(key: str, *, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(os.environ.get(key, "").strip())
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _startup_bootstrap_delay_seconds() -> float:
+    return _env_float(
+        "CHIMERA_MEMORY_STARTUP_BOOTSTRAP_DELAY_SECONDS",
+        default=0.25,
+        minimum=0.0,
+        maximum=60.0,
+    )
+
+
 def _start_transcript_indexer() -> object | None:
     """Backfill any JSONL files written while the server was down, then start a
     live watcher that ingests new entries incrementally.
@@ -3463,14 +3488,30 @@ def _bootstrap_startup_services() -> object | None:
     return indexer
 
 
-def _start_background_bootstrap() -> dict[str, object | None]:
+def _start_background_bootstrap(
+    *, reason: str = "startup", delay_seconds: float = 0.0
+) -> dict[str, object | None]:
     """Run startup maintenance in the background so MCP handshakes stay fast."""
-    state: dict[str, object | None] = {"indexer": None, "thread": None}
+    state: dict[str, object | None] = {
+        "indexer": None,
+        "thread": None,
+        "reason": reason,
+        "delay_seconds": delay_seconds,
+    }
     log = logging.getLogger("chimera_memory.startup")
 
     def _run() -> None:
         try:
-            log.info("startup bootstrap running in background")
+            if delay_seconds > 0:
+                import time
+
+                log.info(
+                    "startup bootstrap deferred reason=%s delay=%.2fs",
+                    reason,
+                    delay_seconds,
+                )
+                time.sleep(delay_seconds)
+            log.info("startup bootstrap running in background reason=%s", reason)
             state["indexer"] = _bootstrap_startup_services()
             log.info("startup bootstrap finished")
         except Exception:
@@ -3493,7 +3534,7 @@ def main():
     logging.getLogger("chimera_memory").info(
         "chimera-memory server starting (pid=%s, log=%s)", os.getpid(), log_path
     )
-    startup_mode = os.environ.get("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "background").strip().lower()
+    startup_mode = os.environ.get("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "post_ready").strip().lower()
     if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
         startup_mode = "disabled"
     startup_state: dict[str, object | None] = {"indexer": None, "thread": None}
@@ -3503,8 +3544,25 @@ def main():
             logging.getLogger("chimera_memory.startup").info("startup bootstrap disabled")
         elif startup_mode in {"sync", "foreground", "blocking"}:
             startup_state["indexer"] = _bootstrap_startup_services()
+        elif startup_mode in {"post_ready", "post-ready", "ready", "mcp_ready", "mcp-ready", "tools_list", "tools-list"}:
+            ready_lock = threading.Lock()
+
+            def _start_after_ready() -> None:
+                nonlocal startup_state
+                with ready_lock:
+                    if startup_state.get("thread") is not None:
+                        return
+                    startup_state = _start_background_bootstrap(
+                        reason="mcp-ready",
+                        delay_seconds=_startup_bootstrap_delay_seconds(),
+                    )
+
+            setattr(server, "_chimera_memory_ready_callback", _start_after_ready)
+            logging.getLogger("chimera_memory.startup").info(
+                "startup bootstrap waiting for first tools/list"
+            )
         else:
-            startup_state = _start_background_bootstrap()
+            startup_state = _start_background_bootstrap(reason="startup")
         server.run(transport="stdio")
     except KeyboardInterrupt:
         logging.getLogger("chimera_memory").info("shutdown via KeyboardInterrupt")

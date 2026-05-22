@@ -1,11 +1,60 @@
-from pathlib import Path
+import asyncio
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 from chimera_memory import server
 
 
-def test_main_starts_bootstrap_in_background_by_default(monkeypatch):
+def test_create_server_ready_callback_runs_after_list_tools(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr("chimera_memory.config.ensure_config_exists", lambda: None)
+    monkeypatch.setattr("chimera_memory.config.load_config", lambda: {})
+
+    mcp = server.create_server()
+    setattr(mcp, "_chimera_memory_ready_callback", lambda: calls.append("ready"))
+
+    asyncio.run(mcp.list_tools())
+
+    assert calls == ["ready"]
+
+
+def test_main_defers_bootstrap_until_tools_list_by_default(monkeypatch):
+    calls = []
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.target = target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("thread.start", self.name, self.daemon))
+
+    class FakeServer:
+        def run(self, *, transport):
+            calls.append(("run", transport))
+            getattr(self, "_chimera_memory_ready_callback")()
+
+    monkeypatch.delenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP_DELAY_SECONDS", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+    monkeypatch.setattr(server, "_configure_diagnostic_logging", lambda: Path("server.log"))
+    monkeypatch.setattr(server, "create_server", lambda: calls.append("create") or FakeServer())
+    monkeypatch.setattr(server, "_bootstrap_startup_services", lambda: calls.append("bootstrap"))
+    monkeypatch.setattr(server.threading, "Thread", FakeThread)
+
+    server.main()
+
+    assert calls == [
+        "create",
+        ("run", "stdio"),
+        ("thread.start", "chimera-memory-startup-bootstrap", True),
+    ]
+
+
+def test_main_can_start_bootstrap_in_background_immediately(monkeypatch):
     calls = []
 
     class FakeThread:
@@ -21,7 +70,7 @@ def test_main_starts_bootstrap_in_background_by_default(monkeypatch):
         def run(self, *, transport):
             calls.append(("run", transport))
 
-    monkeypatch.delenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", raising=False)
+    monkeypatch.setenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "background")
     monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
     monkeypatch.setattr(server, "_configure_diagnostic_logging", lambda: Path("server.log"))
     monkeypatch.setattr(server, "create_server", lambda: calls.append("create") or FakeServer())

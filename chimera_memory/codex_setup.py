@@ -426,10 +426,14 @@ def _build_codex_install_env(
         "CHIMERA_MEMORY_OAUTH_STORE": oauth_store,
         "CHIMERA_MEMORY_IMPORT_HISTORY": "true" if import_history else "false",
         "CHIMERA_MEMORY_MCP_SURFACE": (mcp_surface.strip() or "persona"),
+        "CHIMERA_MEMORY_STARTUP_BOOTSTRAP": "post_ready",
+        "CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER": "true",
+        "CHIMERA_MEMORY_HEALTH_WORKER": "true",
     }
     if provider and provider != "dry_run":
         env["CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_AFFINITY"] = provider
     if enable_provider_worker:
+        env["CHIMERA_MEMORY_ENHANCEMENT_WORKER"] = "true"
         worker_transport = _provider_worker_transport(provider, enable_provider_worker)
         env["CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"] = worker_transport["mode"]
         runtime = worker_transport["runtime"]
@@ -442,6 +446,8 @@ def _build_codex_install_env(
             env["CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER"] = provider
         elif runtime == "agy":
             env["CHIMERA_MEMORY_AGY_WORKER_PROVIDER"] = provider
+    else:
+        env["CHIMERA_MEMORY_ENHANCEMENT_WORKER"] = "false"
     if persona_id:
         env["CHIMERA_PERSONA_ID"] = persona_id
         derived_name = _persona_name_from_id(persona_id)

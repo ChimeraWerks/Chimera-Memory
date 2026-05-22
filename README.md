@@ -469,9 +469,12 @@ Semantic search uses `bge-small-en-v1.5` via [fastembed](https://github.com/qdra
 
 Embeddings are only generated for conversation content (user messages, assistant messages, Discord messages). Tool results and system entries are skipped — they'd just add noise.
 
-`chimera-memory serve` starts a bounded local transcript-embedding worker by default. It polls for unembedded conversation rows and processes a capped batch so new transcripts do not leave `semantic_search` stuck in keyword-only fallback. Tune with:
+`chimera-memory serve` starts maintenance after the first MCP `tools/list` response by default, so MCP readiness is not gated on transcript catch-up, embedding model load, or health checks. Set `CHIMERA_MEMORY_STARTUP_BOOTSTRAP=background` for the older immediate background launch, `sync` for blocking startup, or `false` to disable startup maintenance.
+
+`chimera-memory serve` starts a bounded local transcript-embedding worker by default once startup maintenance begins. It polls for unembedded conversation rows and processes a capped batch so new transcripts do not leave `semantic_search` stuck in keyword-only fallback. Tune with:
 
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER=false` to disable the worker.
+- `CHIMERA_MEMORY_STARTUP_BOOTSTRAP_DELAY_SECONDS=0.25` for the small post-readiness delay before maintenance starts.
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBED_INTERVAL_SECONDS=60` for the polling interval.
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_SIZE=100` for fastembed batch size.
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_LIMIT=1000` for the maximum rows per worker tick.
