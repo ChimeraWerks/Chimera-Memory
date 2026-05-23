@@ -879,6 +879,83 @@ def test_claude_worker_supervisor_records_pass_telemetry(tmp_path: Path) -> None
         handle["thread"].join(timeout=2)
 
 
+def test_cli_worker_stats_flags_auto_enqueue_with_worker_disabled() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    conn.execute(
+        """
+        INSERT INTO memory_enhancement_jobs (job_id, status, persona, requested_provider)
+        VALUES ('job-pending', 'pending', 'asa', 'openai')
+        """
+    )
+    conn.commit()
+
+    stats = cli_worker_stats(
+        conn,
+        env={
+            "CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE": "true",
+            "CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS": "asa",
+            "CHIMERA_MEMORY_ENHANCEMENT_WORKER": "false",
+            "CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE": "cli_worker",
+            "CHIMERA_MEMORY_CLI_WORKER_RUNTIME": "codex",
+            "CHIMERA_MEMORY_CODEX_WORKER_PROVIDER": "openai",
+        },
+    )
+
+    assert stats["configuration"]["auto_enqueue"] is True
+    assert stats["configuration"]["worker_enabled"] is False
+    assert stats["pending_jobs"] == [{"provider": "openai", "count": 1}]
+    assert stats["diagnostics"][0]["code"] == "auto_enqueue_worker_disabled"
+
+
+def test_cli_worker_stats_uses_worker_audit_as_recent_activity() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    conn.execute(
+        """
+        INSERT INTO memory_enhancement_jobs (job_id, status, persona, requested_provider)
+        VALUES ('job-pending', 'pending', 'asa', 'openai')
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_audit_events (
+            event_id, event_type, actor, persona, target_kind, target_id, payload
+        ) VALUES (
+            'event-claim', 'memory_worker_job_claimed', 'system', 'asa',
+            'enhancement_job', 'job-1', '{"worker_id": "codex-memory-worker-1"}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_audit_events (
+            event_id, event_type, actor, persona, target_kind, target_id, payload
+        ) VALUES (
+            'event-submit', 'memory_worker_result_submitted', 'system', 'asa',
+            'enhancement_job', 'job-1',
+            '{"worker_id": "codex-memory-worker-1", "status": "succeeded"}'
+        )
+        """
+    )
+    conn.commit()
+
+    stats = cli_worker_stats(
+        conn,
+        env={
+            "CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE": "true",
+            "CHIMERA_MEMORY_ENHANCEMENT_WORKER": "true",
+            "CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE": "cli_worker",
+            "CHIMERA_MEMORY_CLI_WORKER_RUNTIME": "codex",
+            "CHIMERA_MEMORY_CODEX_WORKER_PROVIDER": "openai",
+        },
+    )
+
+    assert stats["diagnostics"] == []
+    assert stats["recent_worker_activity"]["claims"] == 1
+    assert stats["recent_worker_activity"]["submissions"] == 1
+
+
 def test_start_agy_cli_worker_once_feeds_prompt_and_sets_isolated_home(tmp_path: Path) -> None:
     config = _agy_config(tmp_path)
     captured = {}

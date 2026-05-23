@@ -1375,10 +1375,17 @@ def _record_cli_worker_pass(
         )
 
 
-def cli_worker_stats(conn: sqlite3.Connection, *, hours: int = 24, limit: int = 12) -> dict[str, Any]:
+def cli_worker_stats(
+    conn: sqlite3.Connection,
+    *,
+    hours: int = 24,
+    limit: int = 12,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Return token and performance telemetry for CLI worker passes."""
     hours = max(1, min(24 * 30, int(hours or 24)))
     limit = max(1, min(100, int(limit or 12)))
+    source = env or os.environ
     cutoff_expr = f"strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-{hours} hours')"
     summary_rows = conn.execute(
         f"""
@@ -1422,8 +1429,98 @@ def cli_worker_stats(conn: sqlite3.Connection, *, hours: int = 24, limit: int = 
         ORDER BY COUNT(*) DESC
         """
     ).fetchall()
+    pending_jobs = [{"provider": row[0], "count": int(row[1] or 0)} for row in pending_rows]
+    pending_total = sum(item["count"] for item in pending_jobs)
+    worker_enabled = _env_bool(source, "CHIMERA_MEMORY_ENHANCEMENT_WORKER", default=True)
+    auto_enqueue = _env_bool(source, "CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE", default=False)
+    worker_mode = _clean(
+        source.get("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE"),
+        default="dry_run",
+        max_chars=80,
+    ).lower().replace("-", "_")
+    runtime = _clean(source.get("CHIMERA_MEMORY_CLI_WORKER_RUNTIME"), max_chars=80)
+    worker_id = _clean(
+        source.get(f"CHIMERA_MEMORY_{runtime.upper()}_WORKER_ID") if runtime else "",
+        default=f"{runtime}-memory-worker-1" if runtime else "",
+        max_chars=120,
+    )
+    recent_activity_rows = []
+    if worker_id:
+        try:
+            recent_activity_rows = conn.execute(
+                f"""
+                SELECT event_type, MAX(created_at), COUNT(*)
+                FROM memory_audit_events
+                WHERE event_type IN ('memory_worker_job_claimed', 'memory_worker_result_submitted')
+                  AND json_extract(payload, '$.worker_id') = ?
+                  AND created_at >= {cutoff_expr}
+                GROUP BY event_type
+                """,
+                (worker_id,),
+            ).fetchall()
+        except sqlite3.Error:
+            recent_activity_rows = []
+    recent_activity = {
+        "worker_id": worker_id,
+        "claims": 0,
+        "submissions": 0,
+        "last_claimed_at": "",
+        "last_submitted_at": "",
+    }
+    for event_type, timestamp, count in recent_activity_rows:
+        if event_type == "memory_worker_job_claimed":
+            recent_activity["claims"] = int(count or 0)
+            recent_activity["last_claimed_at"] = str(timestamp or "")
+        elif event_type == "memory_worker_result_submitted":
+            recent_activity["submissions"] = int(count or 0)
+            recent_activity["last_submitted_at"] = str(timestamp or "")
+    diagnostics: list[dict[str, Any]] = []
+    if pending_total and auto_enqueue and not worker_enabled:
+        diagnostics.append(
+            {
+                "severity": "broken",
+                "code": "auto_enqueue_worker_disabled",
+                "message": "Enhancement jobs are being queued while the enhancement worker is disabled.",
+                "pending_jobs": pending_total,
+            }
+        )
+    if (
+        pending_total
+        and worker_enabled
+        and worker_mode == "cli_worker"
+        and not summary_rows
+        and not (recent_activity["claims"] or recent_activity["submissions"])
+    ):
+        diagnostics.append(
+            {
+                "severity": "degraded",
+                "code": "pending_jobs_no_recent_cli_worker_passes",
+                "message": "Pending enhancement jobs exist but no CLI worker pass was recorded in the selected window.",
+                "pending_jobs": pending_total,
+                "window_hours": hours,
+            }
+        )
     return {
         "window_hours": hours,
+        "configuration": {
+            "worker_enabled": worker_enabled,
+            "worker_mode": worker_mode,
+            "auto_enqueue": auto_enqueue,
+            "auto_enqueue_personas": _clean(
+                source.get("CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE_PERSONAS"),
+                max_chars=160,
+            ),
+            "runtime": runtime,
+            "worker_id": worker_id,
+            "provider": _clean(
+                source.get("CHIMERA_MEMORY_CODEX_WORKER_PROVIDER")
+                or source.get("CHIMERA_MEMORY_CLAUDE_WORKER_PROVIDER")
+                or source.get("CHIMERA_MEMORY_AGY_WORKER_PROVIDER"),
+                max_chars=80,
+            ),
+        },
+        "diagnostics": diagnostics,
+        "recent_worker_activity": recent_activity,
         "summary": [
             {
                 "runtime": row[0],
@@ -1443,7 +1540,7 @@ def cli_worker_stats(conn: sqlite3.Connection, *, hours: int = 24, limit: int = 
             }
             for row in summary_rows
         ],
-        "pending_jobs": [{"provider": row[0], "count": int(row[1] or 0)} for row in pending_rows],
+        "pending_jobs": pending_jobs,
         "recent": [
             {
                 "created_at": row[0],

@@ -6,11 +6,12 @@ from types import SimpleNamespace
 from chimera_memory import server
 
 
-def test_create_server_ready_callback_runs_after_list_tools(monkeypatch):
+def test_create_server_ready_callback_runs_after_list_tools(monkeypatch, caplog):
     calls = []
 
     monkeypatch.setattr("chimera_memory.config.ensure_config_exists", lambda: None)
     monkeypatch.setattr("chimera_memory.config.load_config", lambda: {})
+    caplog.set_level(logging.INFO, logger="chimera_memory.mcp.request")
 
     mcp = server.create_server()
     setattr(mcp, "_chimera_memory_ready_callback", lambda: calls.append("ready"))
@@ -18,6 +19,8 @@ def test_create_server_ready_callback_runs_after_list_tools(monkeypatch):
     asyncio.run(mcp.list_tools())
 
     assert calls == ["ready"]
+    assert "mcp request start method=tools/list" in caplog.text
+    assert "mcp request finish method=tools/list" in caplog.text
 
 
 def test_main_defers_bootstrap_until_tools_list_by_default(monkeypatch):
@@ -135,8 +138,12 @@ def test_main_sync_bootstrap_keeps_indexer_reference_until_shutdown(monkeypatch)
 
 def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     calls = []
+    lease = SimpleNamespace(path=Path("lease.lock"), release=lambda: None)
 
     monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+    monkeypatch.setenv("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", "true")
+    monkeypatch.setattr(server, "_startup_maintenance_lease", None)
+    monkeypatch.setattr(server, "_try_acquire_startup_maintenance_lease", lambda: lease)
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
     monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
@@ -164,6 +171,28 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     ]
 
 
+def test_bootstrap_skips_redundant_prewarm_when_embedding_worker_owns_model(monkeypatch):
+    calls = []
+    lease = SimpleNamespace(path=Path("lease.lock"), release=lambda: None)
+
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER", raising=False)
+    monkeypatch.setattr(server, "_startup_maintenance_lease", None)
+    monkeypatch.setattr(server, "_try_acquire_startup_maintenance_lease", lambda: lease)
+    monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
+    monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
+    monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
+    monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
+    monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append("health") or object())
+    monkeypatch.setattr(server, "_prewarm_embeddings", lambda: calls.append("prewarm"))
+
+    server._bootstrap_startup_services()
+
+    assert "embedder" in calls
+    assert "prewarm" not in calls
+
+
 def test_bootstrap_skips_live_workers_for_worker_surface(monkeypatch):
     calls = []
 
@@ -177,6 +206,39 @@ def test_bootstrap_skips_live_workers_for_worker_surface(monkeypatch):
 
     assert server._bootstrap_startup_services() is None
     assert calls == []
+
+
+def test_bootstrap_skips_live_workers_when_maintenance_lease_is_held(monkeypatch):
+    calls = []
+
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+    monkeypatch.setattr(server, "_startup_maintenance_lease", None)
+    monkeypatch.setattr(server, "_try_acquire_startup_maintenance_lease", lambda: None)
+    monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
+    monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
+    monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
+    monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
+    monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append("health") or object())
+    monkeypatch.setattr(server, "_prewarm_embeddings", lambda: calls.append("prewarm"))
+
+    assert server._bootstrap_startup_services() is None
+    assert calls == []
+
+
+def test_startup_maintenance_lease_is_exclusive(monkeypatch, tmp_path):
+    lock_path = tmp_path / "startup.lock"
+    monkeypatch.setattr(server, "_startup_maintenance_lock_path", lambda: lock_path)
+
+    first = server._try_acquire_startup_maintenance_lease()
+    assert first is not None
+    try:
+        assert server._try_acquire_startup_maintenance_lease() is None
+    finally:
+        first.release()
+
+    second = server._try_acquire_startup_maintenance_lease()
+    assert second is not None
+    second.release()
 
 
 def test_enhancement_worker_disabled_by_env(monkeypatch):

@@ -1,10 +1,12 @@
 """MCP server for chimera-memory. Exposes discord_recall and transcript_stats tools."""
 
+import hashlib
 import json
 import logging
 import os
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -12,6 +14,7 @@ _embedding_worker_handle: dict[str, object] | None = None
 _health_worker_handle: dict[str, object] | None = None
 _enhancement_worker_handle: dict[str, object] | None = None
 _memory_file_watcher_handle: object | None = None
+_startup_maintenance_lease: "_StartupMaintenanceLease | None" = None
 
 
 def get_default_jsonl_dir() -> Path:
@@ -43,6 +46,98 @@ def get_default_db_path() -> Path:
     db_dir = Path.home() / ".chimera-memory"
     db_dir.mkdir(parents=True, exist_ok=True)
     return db_dir / "transcript.db"
+
+
+@dataclass
+class _StartupMaintenanceLease:
+    """Held open while this server owns persona-scoped startup maintenance."""
+
+    path: Path
+    handle: object
+
+    def release(self) -> None:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            try:
+                self.handle.close()
+            except OSError:
+                pass
+
+
+def _startup_maintenance_lock_path() -> Path:
+    """A stable lock path for one live maintenance owner per persona DB."""
+    db_path = os.environ.get("TRANSCRIPT_DB_PATH", "").strip() or str(get_default_db_path())
+    persona = (
+        os.environ.get("CHIMERA_PERSONA_ID", "").strip()
+        or os.environ.get("TRANSCRIPT_PERSONA", "").strip()
+        or os.environ.get("CHIMERA_PERSONA_NAME", "").strip()
+        or "default"
+    )
+    key = f"{Path(db_path).expanduser()}|{persona}"
+    digest = hashlib.sha256(key.encode("utf-8", errors="replace")).hexdigest()[:16]
+    lock_dir = Path.home() / ".chimera-memory" / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return lock_dir / f"startup-maintenance-{digest}.lock"
+
+
+def _try_acquire_startup_maintenance_lease() -> _StartupMaintenanceLease | None:
+    """Acquire the startup maintenance lease without blocking.
+
+    Multiple MCP server processes are normal under Codex app-server and remote
+    attach flows. Only one of them should run transcript watchers, backfill,
+    embedding workers, health writes, or memory-file watchers against the same
+    persona DB.
+    """
+    path = _startup_maintenance_lock_path()
+    handle = path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        handle.seek(0)
+        handle.truncate()
+        handle.write(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "persona": os.environ.get("CHIMERA_PERSONA_ID")
+                    or os.environ.get("TRANSCRIPT_PERSONA")
+                    or os.environ.get("CHIMERA_PERSONA_NAME")
+                    or "",
+                    "db_path": os.environ.get("TRANSCRIPT_DB_PATH", ""),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        handle.flush()
+        return _StartupMaintenanceLease(path=path, handle=handle)
+    except OSError:
+        try:
+            handle.close()
+        except OSError:
+            pass
+        return None
 
 
 def _resolved_path(value: str | Path | None) -> str | None:
@@ -169,12 +264,83 @@ def create_server():
         sys.exit(1)
 
     class ChimeraMemoryMCP(FastMCP):
+        async def _timed_request(self, method: str, detail: str, operation):
+            import time
+
+            request_log = logging.getLogger("chimera_memory.mcp.request")
+            suffix = f" {detail}" if detail else ""
+            start = time.perf_counter()
+            request_log.info("mcp request start method=%s%s", method, suffix)
+            try:
+                result = await operation()
+            except Exception:
+                request_log.exception(
+                    "mcp request failed method=%s duration=%.3fs%s",
+                    method,
+                    time.perf_counter() - start,
+                    suffix,
+                )
+                raise
+            request_log.info(
+                "mcp request finish method=%s duration=%.3fs%s",
+                method,
+                time.perf_counter() - start,
+                suffix,
+            )
+            return result
+
         async def list_tools(self):
-            tools = await super().list_tools()
+            tools = await self._timed_request(
+                "tools/list",
+                "",
+                lambda: super(ChimeraMemoryMCP, self).list_tools(),
+            )
             ready_callback = getattr(self, "_chimera_memory_ready_callback", None)
             if callable(ready_callback):
                 ready_callback()
             return tools
+
+        async def call_tool(self, name, arguments):
+            return await self._timed_request(
+                "tools/call",
+                f"name={name}",
+                lambda: super(ChimeraMemoryMCP, self).call_tool(name, arguments),
+            )
+
+        async def list_resources(self):
+            return await self._timed_request(
+                "resources/list",
+                "",
+                lambda: super(ChimeraMemoryMCP, self).list_resources(),
+            )
+
+        async def read_resource(self, uri):
+            return await self._timed_request(
+                "resources/read",
+                "",
+                lambda: super(ChimeraMemoryMCP, self).read_resource(uri),
+            )
+
+        async def list_resource_templates(self):
+            return await self._timed_request(
+                "resources/templates/list",
+                "",
+                lambda: super(ChimeraMemoryMCP, self).list_resource_templates(),
+            )
+
+        async def list_prompts(self):
+            return await self._timed_request(
+                "prompts/list",
+                "",
+                lambda: super(ChimeraMemoryMCP, self).list_prompts(),
+            )
+
+        async def get_prompt(self, name, arguments=None):
+            return await self._timed_request(
+                "prompts/get",
+                f"name={name}",
+                lambda: super(ChimeraMemoryMCP, self).get_prompt(name, arguments),
+            )
 
     server = ChimeraMemoryMCP("chimera-memory")
 
@@ -2925,7 +3091,7 @@ def create_server():
             return memory_gaps(persona=persona)
         if normalized_mode in {"provider", "provider_plan", "enhancement_provider_plan"}:
             return memory_enhancement_provider_plan()
-        if normalized_mode in {"cli_worker", "worker_stats", "sidecar", "sidecar_stats"}:
+        if normalized_mode in {"cli_worker", "worker_stats", "sidecar", "sidecar_stats", "enhancement", "enhancement_worker"}:
             from .memory_cli_worker_supervisor import cli_worker_stats
 
             try:
@@ -2937,6 +3103,7 @@ def create_server():
                     _get_memory_conn(),
                     hours=hours,
                     limit=limit,
+                    env=os.environ,
                 ),
                 indent=2,
             )
@@ -2967,7 +3134,7 @@ def create_server():
             return memory_whereami()
         return (
             "Unsupported diagnose mode. Use tools, stats, zones, traces, trace_analyze, "
-            "audit, harness, gaps, provider_plan, cli_worker, health, consolidation, guard, or whereami."
+            "audit, harness, gaps, provider_plan, cli_worker, enhancement, health, consolidation, guard, or whereami."
         )
 
     return server
@@ -3069,6 +3236,15 @@ def _env_float(key: str, *, default: float, minimum: float, maximum: float) -> f
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _prewarm_embeddings_enabled() -> bool:
+    configured = os.environ.get("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", "").strip()
+    if configured:
+        return _env_bool("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", default=True)
+    if _env_bool("CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER", default=True):
+        return False
+    return True
 
 
 def _startup_bootstrap_delay_seconds() -> float:
@@ -3472,6 +3648,18 @@ def _bootstrap_startup_services() -> object | None:
         return None
 
     global _embedding_worker_handle, _health_worker_handle, _enhancement_worker_handle, _memory_file_watcher_handle
+    global _startup_maintenance_lease
+    lease = _try_acquire_startup_maintenance_lease()
+    if lease is None:
+        logging.getLogger("chimera_memory.startup").info(
+            "startup maintenance already owned by another process; skipping live workers"
+        )
+        return None
+    _startup_maintenance_lease = lease
+    logging.getLogger("chimera_memory.startup").info(
+        "startup maintenance lease acquired: %s", lease.path
+    )
+
     indexer = _start_transcript_indexer()
     _memory_file_watcher_handle = _start_memory_file_indexer()
     _embedding_worker_handle = _start_transcript_embedding_worker()
@@ -3484,7 +3672,12 @@ def _bootstrap_startup_services() -> object | None:
             "memory_enhancement_worker": _enhancement_worker_handle is not None,
         }
     )
-    _prewarm_embeddings()
+    if _prewarm_embeddings_enabled():
+        _prewarm_embeddings()
+    else:
+        logging.getLogger("chimera_memory.prewarm").info(
+            "embedding prewarm skipped; transcript embedding worker owns model loading"
+        )
     return indexer
 
 
@@ -3529,6 +3722,7 @@ def _start_background_bootstrap(
 
 def main():
     """Entry point for running the MCP server."""
+    global _startup_maintenance_lease
     logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
     log_path = _configure_diagnostic_logging()
     logging.getLogger("chimera_memory").info(
@@ -3580,6 +3774,9 @@ def main():
         _stop_memory_enhancement_worker(_enhancement_worker_handle)
         _stop_transcript_embedding_worker(_embedding_worker_handle)
         _stop_memory_file_watcher(_memory_file_watcher_handle)
+        if _startup_maintenance_lease is not None:
+            _startup_maintenance_lease.release()
+            _startup_maintenance_lease = None
         logging.getLogger("chimera_memory").info("server exiting (pid=%s)", os.getpid())
 
 
