@@ -475,12 +475,13 @@ def _wiki_user_prompt(
             f"{_scrub_text(item.get('body'))}\n"
             "</memory_file>"
         )
+    memory_excerpt_block = "\n\n".join(snippets)
     return (
         "Produce the entity wiki page.\n\n"
         "TRUSTED STRUCTURE:\n"
         f"{json.dumps(structure, sort_keys=True, separators=(',', ':'))}\n\n"
         "UNTRUSTED MEMORY EXCERPTS:\n"
-        f"{'\n\n'.join(snippets)}\n\n"
+        f"{memory_excerpt_block}\n\n"
         'Return JSON exactly shaped like {"markdown":"# Entity Name\\n..."}'
     )
 
