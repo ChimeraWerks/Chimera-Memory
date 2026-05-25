@@ -101,7 +101,7 @@ Current v1 MCP status:
 Project writes can target more than one repo without restarting CM per project by setting `CHIMERA_MEMORY_PROJECT_ROOTS`:
 
 ```text
-CHIMERA_MEMORY_PROJECT_ROOTS=ChimeraMemory=C:/Github/ChimeraMemory/.chimera-memory;PersonifyAgents=C:/Github/PersonifyAgents/.chimera-memory;ProjectChimera=C:/Github/ProjectChimera/.chimera-memory
+CHIMERA_MEMORY_PROJECT_ROOTS=ChimeraMemory=<chimera-memory-root>/.chimera-memory;PersonifyAgents=<personify-agents-root>/.chimera-memory;ProjectChimera=<project-chimera-root>/.chimera-memory
 ```
 
 The legacy single-project `CHIMERA_MEMORY_PROJECT_ROOT` remains supported. When both are present, the project-id map is used for matching `project_id` values.

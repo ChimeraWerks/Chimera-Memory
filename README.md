@@ -34,8 +34,8 @@ Chimera Memory addresses each.
 
 ```bash
 # Clone and install (editable mode = live source updates)
-git clone https://github.com/ChimeraWerks/ChimeraMemory.git
-cd ChimeraMemory
+git clone https://github.com/ChimeraWerks/Chimera-Memory.git
+cd Chimera-Memory
 pip install -e .
 
 # Index your existing sessions
@@ -175,7 +175,7 @@ personifyagents install apply \
   --runtime hermes \
   --feature chimera_memory.hermes_provider \
   --hermes-home /path/to/hermes-home \
-  --chimera-memory-repo /path/to/ChimeraMemory \
+  --chimera-memory-repo <repo-root> \
   --mode symlink \
   --yes
 

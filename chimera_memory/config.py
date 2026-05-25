@@ -18,7 +18,7 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # Uncomment and change any line to customize.
 #
 # Location: ~/.chimera-memory/config.yaml
-# Docs: https://github.com/ChimeraWerks/ChimeraMemory
+# Docs: https://github.com/ChimeraWerks/Chimera-Memory
 
 # ─── Storage ─────────────────────────
 
