@@ -1,157 +1,138 @@
-# ChimeraMemory Repository Contract
+# ChimeraMemory Agent Instructions
 
-This file is repo-level guidance for coding agents working in ChimeraMemory. Keep `AGENTS.md` and `CLAUDE.md` synchronized when this guidance changes.
+`AGENTS.md` is the canonical front door for coding agents in this repo.
+`CLAUDE.md` imports it so Claude Code stays synchronized. Deeper guidance lives
+under `docs/agents/` and is routed from this file.
 
-## What This Repo Is
+## Purpose
 
-ChimeraMemory indexes Claude Code, Codex, and Hermes session transcripts into queryable SQLite. It is a lightweight standalone library plus an MCP server for agent integration.
+ChimeraMemory indexes Claude Code, Codex, and Hermes session transcripts into
+queryable local SQLite. It is both a lightweight standalone Python library and
+an MCP server for agent integration. The default architecture is local-first:
+SQLite, markdown plus YAML frontmatter, fastembed/BGE embeddings, MCP stdio, and
+persona-scoped memory boundaries.
 
 Two consumers matter:
 
-- **Standalone CM:** any project that installs `chimera-memory` directly.
-- **PersonifyAgents vendor copy:** PA mirrors this repo under `../PersonifyAgents/vendor/chimera-memory/` so PA can install CM into target Python environments.
+- Standalone CM: any project that installs `chimera-memory` directly.
+- PersonifyAgents vendor copy: PA mirrors this repo under
+  `../PersonifyAgents/vendor/chimera-memory/`.
 
-## Core Architecture Rules
+## Start Here
 
-- CM stays local-first: SQLite, markdown plus YAML frontmatter, local fastembed/BGE embeddings, MCP stdio by default.
-- Do not add Supabase, Postgres, pgvector, or cloud-LLM requirements to the default path.
-- Do not replace CM's retrieval core without empirical receipts. The current core is FTS5 plus vector search with Reciprocal Rank Fusion and re-ranking.
-- Persona scoping is a privacy boundary. Do not add code paths that ignore `TRANSCRIPT_PERSONA` or cross-persona folder rules.
-- Default-additive, replace-only-with-receipts: add sidecars, traces, governance fields, review queues, and optional adapters. Replacements require measured proof.
-- Agent-generated memory metadata starts as evidence, not instruction. Generated write paths must use generated/pending/evidence-only defaults until human review confirms them.
+1. Read `README.md` for the human-facing overview, CLI, MCP tools, and config.
+2. Read `docs/agents/repo-map.md` to understand the source, docs, and tests.
+3. Read `docs/agents/commands.md` before installing, serving, testing, or using CLI helpers.
+4. Read `docs/agents/boundaries.md` before changing architecture or module ownership.
+5. Read `docs/agents/validation.md` before finalizing work.
+6. Read `docs/agents/security.md` before touching paths, auth, transcripts, network calls, process spawning, migrations, or browser-facing output.
+7. Read `docs/agents/README.md` when you need the full agent-doc index.
 
-## Current OB1 Lift Status
+## Operating Contract
 
-The OB1-inspired lift is implemented through Phase 5e dashboard and auto-capture plus a first Phase 6 entity-graph slice:
+- Inspect relevant code, tests, docs, config, and command surfaces before editing.
+- Prefer narrow finished changes over broad partial changes.
+- Keep new behavior additive unless Charles explicitly greenlights a replacement.
+- Preserve persona scoping. `TRANSCRIPT_PERSONA` and cross-persona folder rules are privacy boundaries.
+- Keep generated memory metadata reviewable. Generated write paths default to generated, pending review, evidence-only.
+- Do not use `chimera_memory/memory.py` as a dumping ground. It is the facade and compatibility surface.
+- Avoid unrelated cleanup, drive-by refactors, and dependency churn.
+- If adding an env var or public config key, document it in `README.md` or the relevant docs file.
+- If adding a public function re-exported through `memory.py` or package `__init__`, update the facade/re-export and tests.
+- User-facing errors should name what happened and what to do next without leaking raw paths, commands, secrets, or stderr to browser/client surfaces.
+- Runtime-critical operational comments must include why, scar, source, and test. If you cannot name the scar, do not add the comment.
+- Never commit runtime DBs, session transcripts, tokens, `.env`, secrets, local auth files, or generated caches.
 
-- Phase 0: SQLite hygiene, content fingerprinting, idempotency, partial indexes, Codex commands, comparison docs.
-- Phase 1: memory-enhancement sidecar spec.
-- Phase 2: recall trace, recall item, and audit-event tables/tools.
-- Phase 3: provenance, confidence, lifecycle, review, sensitivity, and use-policy fields.
-- Phase 4: review queue tools.
-- Phase 5a-c: sidecar contract, enhancement job queue, deterministic dry-run worker.
-- Phase 5d groundwork: provider priority, credential-reference boundary, optional models.dev-backed cloud model defaults for OpenAI, Anthropic, Gemini/Google, OpenRouter, and LM Studio, budget caps, safe invocation envelope, bounded failure categories, and injected-client runner boundary.
-- Phase 5e usability: PWA memory dashboard, session-close auto-capture protocol, and live-retrieval dry-run checks.
-- Phase 6 partial: local entity graph schema, frontmatter/enhancement-derived entity indexing, shared-file connection queries, typed entity-edge query/upsert helpers, typed memory-file reasoning edges, temporal sweep helpers, deterministic pyramid summaries, ChatGPT, Obsidian, Gmail, Perplexity, Grok, X/Twitter, Instagram, Google Activity, and Atom/Blogger import scaffolding, and portable profile export.
-- Refactor: `memory.py` split into focused schema, governance, observability, review, enhancement queue, and frontmatter modules.
+## Architecture Rules
+
+- CM stays local-first by default. Do not add Supabase, Postgres, pgvector, cloud LLMs, or hosted services to the baseline path.
+- Do not replace the retrieval core without empirical receipts. The current core is FTS5 plus vector search with Reciprocal Rank Fusion and re-ranking.
+- Declarative registries are preferred over scattered conditionals.
+- Label data provenance explicitly: fallback, live, help_probe, cached, generated, or user_supplied.
+- Browser-safe projections must hide raw local paths, commands, secrets, and stderr.
+- Schema migrations must be additive and idempotent.
+- Optional provider/model work belongs behind explicit sidecar, runner, credential-reference, and budget-governor boundaries.
+
+## Playbook Routing
+
+Read these only when the task matches:
+
+- For multi-file, architecture-sensitive, or refactor work, read `docs/agents/playbooks/implementation-style.md`.
+- For CLI, MCP, config, import/export, dashboard, or other user-visible behavior, read `docs/agents/playbooks/user-facing-completeness.md`.
+- For bug fixes, validation strategy, review, or final risk assessment, read `docs/agents/playbooks/verification-and-review.md`.
+- For auth, OAuth, secrets, filesystem paths, shell commands, subprocesses, network calls, migrations, transcripts, or user data, read `docs/agents/playbooks/security-and-boundaries.md`.
+
+## Current Lift Status
+
+The OB1-inspired lift is implemented through Phase 5e dashboard and
+auto-capture plus a first Phase 6 entity-graph slice.
+
+Implemented highlights:
+
+- SQLite hygiene, content fingerprinting, idempotency, partial indexes, Codex commands, and comparison docs.
+- Memory-enhancement sidecar spec, queue, deterministic dry-run worker, provider policy, budget caps, credential-reference boundary, safe invocation envelope, and injected-client runner boundary.
+- Recall traces, recall items, audit events, review queue, governance metadata, sensitivity tiers, and use-policy fields.
+- PWA memory dashboard, session-close auto-capture protocol, live-retrieval dry-run checks, local entity graph, typed file/entity edges, deterministic pyramid summaries, import scaffolding for major sources, and portable profile export.
+- `memory.py` has been split into focused schema, governance, observability, review, enhancement queue, frontmatter, import, entity, and provider modules.
 
 Pending larger work:
 
-- Phase 5d remaining: real OAuth/model adapter for memory enhancement.
-- Phase 6 remaining: classifier integration for edge creation and additional import pipelines.
+- Real OAuth/model adapter for memory enhancement.
+- Classifier integration for edge creation and additional import pipelines.
 
-See `docs/OB1_COMPARISON.md`, `docs/MEMORY_ENHANCEMENT_SIDECAR.md`,
-`docs/MEMORY_ENHANCEMENT_CLI_WORKER.md`, and `docs/MODULE_LAYOUT.md`.
+Use these references for deeper context:
 
-## Module Ownership
-
-Do not use `memory.py` as a dumping ground. It is now the facade/orchestration layer.
-
-- `chimera_memory/memory.py`: public facade, file discovery, indexing, search/recall orchestration, stats, consolidation, watcher integration.
-- `chimera_memory/memory_schema.py`: SQLite DDL, additive migrations, prerequisite checks, `init_memory_tables`.
-- `chimera_memory/memory_governance.py`: provenance/lifecycle/review/sensitivity constants, frontmatter governance parsing, trust posture helpers.
-- `chimera_memory/memory_observability.py`: recall traces, recall items, audit events, query helpers, JSON payload helpers.
-- `chimera_memory/memory_live_retrieval.py`: proactive topic-shift recall planning, dry-run suggestion retrieval, and miss/suggestion audit logging.
-- `chimera_memory/memory_review.py`: human review queue actions and review audit logging.
-- `chimera_memory/memory_auto_capture.py`: session-close capture planning, governed markdown rendering, persona-root resolution, and safe file writing.
-- `chimera_memory/memory_entities.py`: local entity graph, entity/file links from frontmatter and enhancement output, shared-file connection queries, typed entity-edge queries/upserts.
-- `chimera_memory/memory_file_edges.py`: typed reasoning edges between memory files (`supports`, `contradicts`, `supersedes`, etc.).
-- `chimera_memory/memory_pyramid.py`: deterministic multi-resolution summaries for long curated or imported memory files.
-- `chimera_memory/memory_import_chatgpt.py`: ChatGPT export parsing, governed markdown planning, and safe file writing.
-- `chimera_memory/memory_import_obsidian.py`: Obsidian vault parsing, governed markdown planning, and safe file writing.
-- `chimera_memory/memory_import_gmail.py`: Gmail / Google Takeout mbox parsing, governed markdown planning, and safe restricted file writing.
-- `chimera_memory/memory_import_perplexity.py`: Perplexity markdown/text/JSON parsing, governed markdown planning, and safe file writing.
-- `chimera_memory/memory_import_grok.py`: Grok markdown/text/JSON/JSONL parsing, governed markdown planning, and safe file writing.
-- `chimera_memory/memory_import_twitter.py`: X/Twitter tweet archive parsing, governed markdown planning, and safe file writing.
-- `chimera_memory/memory_import_instagram.py`: Instagram export parsing, governed markdown planning, and safe restricted file writing.
-- `chimera_memory/memory_import_google_activity.py`: Google Activity / Takeout parsing, governed markdown planning, and safe restricted file writing.
-- `chimera_memory/memory_import_atom_blogger.py`: Atom / Blogger XML parsing, governed markdown planning, and safe file writing.
-- `chimera_memory/memory_profile_export.py`: portable USER.md / SOUL.md / HEARTBEAT.md / JSON context export from reviewed memory.
-- `chimera_memory/memory_enhancement.py`: model-free sidecar request/response contract and untrusted-content wrapper.
-- `chimera_memory/memory_enhancement_provider.py`: provider priority, credential references, budget policy, safe invocation envelope, bounded failure categories.
-- `chimera_memory/memory_model_catalog.py`: bundled/offline-first models.dev catalog parser/cache for recommended OpenAI, Anthropic, Gemini/Google, OpenRouter, and LM Studio memory-enhancement models.
-- `chimera_memory/memory_provider_governor.py`: shared provider usage ledger and budget allow/deny checks for enhancement transports.
-- `chimera_memory/memory_enhancement_runner.py`: provider-aware batch runner using an injected client protocol. No token storage or provider-specific network code.
-- `chimera_memory/memory_enhancement_queue.py`: SQLite queue for enhancement jobs, enqueue/claim/complete helpers.
-- `chimera_memory/memory_frontmatter.py`: markdown frontmatter parsing shared by indexing and enhancement enqueue.
-- `chimera_memory/enhancement_worker.py`: deterministic dry-run worker. No OAuth/model calls here yet.
-
-Dependency direction matters:
-
-- Schema imports nothing from the other memory modules.
-- Governance imports no queue/review/observability modules.
-- Observability imports no review or queue modules.
-- Live retrieval may depend on observability and sanitizer helpers, but must not inject results into prompts by itself.
-- Review may depend on governance concepts and observability audit emission.
-- Auto-capture may depend on sanitizer helpers, but must not import the `memory.py` facade.
-- Entity graph may depend on observability audit emission.
-- Memory-file edge helpers may depend on observability audit emission.
-- Pyramid summary helpers may depend on frontmatter parsing, sanitizer helpers, and observability audit emission.
-- ChatGPT import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
-- Obsidian import helpers may depend on frontmatter parsing, sanitizer helpers, and persona-root resolution, but must not import the `memory.py` facade.
-- Gmail import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
-- Perplexity import helpers may depend on frontmatter parsing, sanitizer helpers, and persona-root resolution, but must not import the `memory.py` facade.
-- Grok import helpers may depend on frontmatter parsing, sanitizer helpers, and persona-root resolution, but must not import the `memory.py` facade.
-- X/Twitter import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
-- Instagram import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
-- Google Activity import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
-- Atom/Blogger import helpers may depend on sanitizer helpers and persona-root resolution, but must not import the `memory.py` facade.
-- Profile export helpers may depend on frontmatter parsing, sanitizer helpers, and observability audit emission, but must not import the `memory.py` facade.
-- Enhancement provider policy may depend on the sidecar contract only.
-- Provider governor may depend on provider budget policy and observability JSON helpers.
-- Enhancement runner may depend on provider policy and enhancement queue helpers.
-- Enhancement queue may depend on frontmatter, observability, entity graph helpers, and the sidecar contract.
-- Avoid imports from `memory.py` inside focused modules. Importing the facade from a focused module risks a circular import.
+- `docs/OB1_COMPARISON.md`
+- `docs/MEMORY_ENHANCEMENT_SIDECAR.md`
+- `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md`
+- `docs/MODULE_LAYOUT.md`
 
 ## Dual-Source Rule
 
-This repo is the source of truth. Edits land here first, then mirror into PersonifyAgents.
-
-Workflow when changing CM:
+This repo is the source of truth. When runtime CM code changes, land and verify
+the change here first, then mirror into PersonifyAgents if `../PersonifyAgents`
+exists:
 
 1. Edit, test, commit, and push in this repo.
-2. From `../PersonifyAgents`: run `python scripts/sync-chimera-memory.py`.
+2. From `../PersonifyAgents`, run `python scripts/sync-chimera-memory.py`.
 3. Stage `vendor/chimera-memory/` and commit in PA as `vendor: sync CM <sha>`.
 4. Run PA vendor tests plus PA runtime/PWA tests.
-5. Push PA and verify CI. Live PA receipts matter when the vendor change affects runtime behavior.
+5. Push PA and verify CI when the vendor change affects runtime behavior.
 
-PA CI checks the recorded vendor hash. If you forget to sync PA, PA will fail later.
+Docs-only agent setup changes do not need the PA vendor sync unless Charles asks
+for the agent docs to be mirrored.
 
-## Editing Rules
+## Validation
 
-- Keep new behavior additive unless Charles explicitly greenlights a replacement.
-- Prefer focused modules over growing `memory.py`.
-- Keep schema migrations additive and idempotent.
-- Keep generated memory metadata reviewable. Do not silently promote generated metadata to instruction-grade.
-- Never commit runtime DBs, session transcripts, tokens, `.env`, secrets, or local auth files.
-- Runtime DBs live under `~/.chimera-memory/`, not this repo.
-- If adding an env var or public config key, document it in `README.md` or the relevant docs file.
-- If adding a public function that is re-exported through `memory.py` or package `__init__`, update the facade/re-export and tests.
+Run the smallest relevant checks and report pass, fail, or not-run honestly.
 
-## Validation Checklist
+Baseline commands:
 
-Before calling work complete:
+```powershell
+python -m pytest
+```
 
-- `python -m py_compile` for touched modules when refactoring imports.
-- Focused pytest for the touched area.
-- Full `python -m pytest`.
-- Legacy standalone scripts when touching indexing/search/parser/memory core:
-  - `python tests/test_persona_scope.py`
-  - `python tests/test_memory_watcher.py`
-  - `python tests/test_indexer.py`
-  - `python tests/test_search.py`
-  - `python tests/test_parser.py`
-- `git diff` shows only intended changes.
-- If `../PersonifyAgents` exists, sync PA vendor copy and verify PA tests/CI.
+When refactoring imports or touching runtime modules:
 
-## Useful References
+```powershell
+python -m py_compile chimera_memory/<module>.py
+python -m pytest tests/test_<area>.py
+```
 
-- `README.md`: tool reference, config docs, architecture overview.
-- `docs/OB1_COMPARISON.md`: OB1 feature comparison and lift plan.
-- `docs/MEMORY_ENHANCEMENT_SIDECAR.md`: sidecar contract and threat model.
-- `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md`: proposed persistent CLI worker transport for subscription-backed enhancement.
-- `docs/MODULE_LAYOUT.md`: module ownership and import boundaries.
-- `pyproject.toml`: dependencies.
-- `chimera_memory/identity.py`: persona identity and env-driven scoping.
-- `chimera_memory/paths.py`: per-persona DB path helpers.
-- `chimera_memory/db_split.py`: migration tool for splitting shared DBs into per-persona DBs.
+When touching indexing/search/parser/memory core, also run:
+
+```powershell
+python tests/test_persona_scope.py
+python tests/test_memory_watcher.py
+python tests/test_indexer.py
+python tests/test_search.py
+python tests/test_parser.py
+```
+
+Docs-only agent setup should at minimum verify links, routing, and orphan-free
+playbooks. See `docs/agents/validation.md`.
+
+## Final Response
+
+Include what changed, key files, validation run, assumptions, risks or skipped
+checks, and useful next steps. Never bury failed validation.
