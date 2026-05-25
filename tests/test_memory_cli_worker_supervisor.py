@@ -360,7 +360,8 @@ def test_codex_worker_config_toml_uses_current_mcp_shape(tmp_path: Path) -> None
     assert 'args = ["serve"]' in rendered
     assert '[mcp_servers."chimera-memory-worker".env]' in rendered
     assert 'CHIMERA_MEMORY_MCP_SURFACE = "worker"' in rendered
-    assert f'TRANSCRIPT_DB_PATH = "{str(tmp_path / "transcript.db").replace("\\", "\\\\")}"' in rendered
+    escaped_db_path = str(tmp_path / "transcript.db").replace("\\", "\\\\")
+    assert f'TRANSCRIPT_DB_PATH = "{escaped_db_path}"' in rendered
 
 
 def test_claude_worker_mcp_config_uses_worker_surface_and_disables_nested_workers(tmp_path: Path) -> None:
