@@ -111,6 +111,25 @@ def test_persona_mcp_surface_filters_admin_tools(monkeypatch, tmp_path: Path) ->
     assert len(tools) <= 11
 
 
+def test_codex_desktop_surface_exposes_project_memory_search_tools(monkeypatch, tmp_path: Path) -> None:
+    _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "codex")
+
+    tools = _tool_names(create_server())
+
+    assert {
+        "memory_context_pack",
+        "memory_recall",
+        "memory_remember",
+        "memory_diagnose",
+        "memory_search",
+        "memory_query",
+        "memory_whereami",
+    } <= tools
+    assert "memory_import_chatgpt_export" not in tools
+    assert "transcript_backfill" not in tools
+
+
 def test_worker_mcp_surface_exposes_only_worker_tools(monkeypatch, tmp_path: Path) -> None:
     _isolate_config(monkeypatch, tmp_path)
     monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "worker")
@@ -127,6 +146,8 @@ def test_worker_mcp_surface_exposes_only_worker_tools(monkeypatch, tmp_path: Pat
 
 def test_mcp_surface_policy_normalizes_unknown_to_full() -> None:
     assert normalize_mcp_surface("persona") == "persona"
+    assert normalize_mcp_surface("codex-desktop") == "codex"
+    assert normalize_mcp_surface("project") == "codex"
     assert normalize_mcp_surface("memory-only") == "persona_memory"
     assert normalize_mcp_surface("memory-worker") == "worker"
     assert normalize_mcp_surface("wat") == "full"

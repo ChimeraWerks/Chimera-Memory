@@ -10,7 +10,7 @@ ChimeraMemory indexes Claude Code, Codex, and Hermes session transcripts into
 queryable local SQLite. It is both a lightweight standalone Python library and
 an MCP server for agent integration. The default architecture is local-first:
 SQLite, markdown plus YAML frontmatter, fastembed/BGE embeddings, MCP stdio, and
-persona-scoped memory boundaries.
+global, project, and persona-scoped memory boundaries.
 
 Two consumers matter:
 
@@ -20,13 +20,14 @@ Two consumers matter:
 
 ## Start Here
 
-1. Read `README.md` for the human-facing overview, CLI, MCP tools, and config.
-2. Read `docs/agents/repo-map.md` to understand the source, docs, and tests.
-3. Read `docs/agents/commands.md` before installing, serving, testing, or using CLI helpers.
-4. Read `docs/agents/boundaries.md` before changing architecture or module ownership.
-5. Read `docs/agents/validation.md` before finalizing work.
-6. Read `docs/agents/security.md` before touching paths, auth, transcripts, network calls, process spawning, migrations, or browser-facing output.
-7. Read `docs/agents/README.md` when you need the full agent-doc index.
+1. Read `docs/agents/token-efficient-usage.md` for the shortest safe path through CM docs, tools, and validation.
+2. Read `README.md` only when you need the human-facing overview, CLI, MCP tools, or config reference.
+3. Read `docs/agents/repo-map.md` to understand the source, docs, and tests.
+4. Read `docs/agents/commands.md` before installing, serving, testing, or using CLI helpers.
+5. Read `docs/agents/boundaries.md` before changing architecture or module ownership.
+6. Read `docs/agents/validation.md` before finalizing work.
+7. Read `docs/agents/security.md` before touching paths, auth, transcripts, network calls, process spawning, migrations, or browser-facing output.
+8. Read `docs/agents/README.md` when you need the full agent-doc index.
 
 ## Operating Contract
 
@@ -86,6 +87,7 @@ Use these references for deeper context:
 - `docs/MEMORY_ENHANCEMENT_SIDECAR.md`
 - `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md`
 - `docs/MODULE_LAYOUT.md`
+- `docs/CODEX_DESKTOP_SCOPE_AND_CODE_AUDIT.md`
 
 ## Dual-Source Rule
 

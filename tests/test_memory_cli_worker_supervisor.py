@@ -166,6 +166,7 @@ def test_load_codex_cli_worker_config_uses_isolated_worker_home(tmp_path: Path) 
     assert config.worker_root == tmp_path / "state" / "workers" / "codex-memory-worker"
     assert config.codex_home == config.worker_root / ".codex"
     assert config.codex_auth_path == tmp_path / "auth.json"
+    assert config.model == "gpt-5.3-codex-spark"
     assert config.effort == "medium"
     assert config.session_mode == "daily"
     assert config.bypass_approvals_and_sandbox is True
@@ -511,6 +512,8 @@ def test_codex_worker_command_uses_bypass_for_exec_mcp_approval_compat(tmp_path:
     assert "--skip-git-repo-check" in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert "--sandbox" not in command
+    assert "--model" in command
+    assert "gpt-test" in command
     assert "-c" in command
     assert 'model_reasoning_effort="medium"' in command
     assert command[-1] == "-"

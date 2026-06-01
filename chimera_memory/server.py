@@ -233,6 +233,25 @@ def resolve_memory_whereami() -> dict:
     for field, (value, env_key) in field_specs.items():
         resolved[field], provenance[field] = _identity_field(value, env_key)
 
+    from .memory_scope import current_project_id, project_memory_root
+
+    project_id_env = os.environ.get("CHIMERA_MEMORY_PROJECT_ID", "").strip()
+    project_root_env = os.environ.get("CHIMERA_MEMORY_PROJECT_ROOT", "").strip()
+    selected_project_id = current_project_id()
+    selected_project_root = project_memory_root(selected_project_id) if selected_project_id else project_memory_root()
+    resolved["project_id"] = selected_project_id
+    provenance["project_id"] = (
+        _env_provenance("CHIMERA_MEMORY_PROJECT_ID")
+        if project_id_env
+        else {"source": "derived" if selected_project_id else "missing", "from": "CHIMERA_MEMORY_PROJECT_ROOT"}
+    )
+    resolved["project_root"] = _resolved_path(str(selected_project_root)) if selected_project_root is not None else None
+    provenance["project_root"] = (
+        _env_provenance("CHIMERA_MEMORY_PROJECT_ROOT")
+        if project_root_env
+        else {"source": "missing"}
+    )
+
     persona_db_root = os.environ.get("CHIMERA_MEMORY_PERSONA_DB_ROOT", "").strip()
     if persona_db_root:
         resolved["persona_db_root"] = _resolved_path(persona_db_root)
@@ -255,7 +274,7 @@ def resolve_memory_whereami() -> dict:
     }
 
 
-def create_server():
+def create_server(host: str = "127.0.0.1", port: int = 8000):
     """Create and configure the MCP server with tools."""
     try:
         from mcp.server.fastmcp import FastMCP
@@ -342,7 +361,7 @@ def create_server():
                 lambda: super(ChimeraMemoryMCP, self).get_prompt(name, arguments),
             )
 
-    server = ChimeraMemoryMCP("chimera-memory")
+    server = ChimeraMemoryMCP("chimera-memory", host=host, port=port)
 
     # Load config (env vars > config file > defaults)
     from .config import load_config, ensure_config_exists
@@ -636,15 +655,20 @@ def create_server():
         Tool results and system entries are skipped.
 
         Uses bge-small-en-v1.5 (23MB ONNX model, runs locally, no API calls).
-        CPU usage is capped to 75% of available cores.
+        CM uses an ONNX GPU provider when available; CPU fallback leaves a
+        configurable CPU reserve for the rest of the machine.
 
         This may take several minutes on first run (e.g. 5,000 entries ~ 4 minutes).
         """
-        from .embeddings import embed_transcript_entries, init_embedding_table
-        import os
+        from .embeddings import (
+            embed_transcript_entries,
+            embedding_progress_path,
+            embedding_runtime_status,
+            init_embedding_table,
+        )
 
         db = _get_db()
-        cores_used = max(1, int((os.cpu_count() or 4) * 0.75))
+        runtime = embedding_runtime_status()
 
         with db.connection() as conn:
             init_embedding_table(conn)
@@ -662,10 +686,13 @@ def create_server():
 
         with db.connection() as conn:
             init_embedding_table(conn)
-            count = embed_transcript_entries(db, conn)
+            count = embed_transcript_entries(db, conn, progress_label="MCP embed_transcripts")
 
         return (
-            f"Embedded {count} entries using {cores_used}/{os.cpu_count()} threads.\n"
+            f"Embedded {count} entries using provider={runtime['provider']} "
+            f"threads={runtime['threads']}/{runtime['cpu_count']} "
+            f"cpu_reserve={runtime['cpu_reserve_percent']}%.\n"
+            f"Progress status file: {embedding_progress_path()}\n"
             f"Semantic search is now available.\n"
             f"Use semantic_search(query) to find content by meaning, not just keywords."
         )
@@ -865,7 +892,8 @@ def create_server():
         the NEXT slow-path disconnect shows which step hung.
         """
         if "memory_indexed" not in _state:
-            import logging as _logging, time as _time
+            import logging as _logging
+            import time as _time
             _log = _logging.getLogger("chimera_memory.indexing")
             _log.info("_ensure_memory_indexed: starting")
             t_total = _time.time()
@@ -1026,14 +1054,16 @@ def create_server():
     def memory_remember(
         payload_yaml: str,
         persona: str | None = None,
+        project_id: str = "",
         relative_path: str = "",
         write: bool = False,
         enqueue: bool = True,
     ) -> str:
-        """Persona-facing authored memory write. Preview by default; set write=true to persist."""
+        """Authored memory write. Preview by default; set write=true to persist."""
         _ensure_memory_indexed()
         import yaml
         from .memory import memory_authored_writeback as _authored_writeback
+        from .memory_scope import MEMORY_SCOPE_PROJECT, current_project_id, project_memory_root, safe_project_id
 
         try:
             payload = yaml.safe_load(payload_yaml)
@@ -1043,17 +1073,29 @@ def create_server():
             return "Remember failed: payload must be a mapping"
 
         selected_persona = (persona or os.environ.get("TRANSCRIPT_PERSONA") or "").strip()
+        selected_project_id = ""
+        selected_project_root = None
+        memory_scope = "persona"
+        authored_identity = selected_persona
         if not selected_persona:
-            return "Remember failed: persona is required"
+            selected_project_id = safe_project_id(project_id) or current_project_id() or ""
+            selected_project_root = project_memory_root(selected_project_id) if selected_project_id else project_memory_root()
+            if not selected_project_id or selected_project_root is None:
+                return "Remember failed: persona or project memory root is required"
+            authored_identity = f"project:{selected_project_id}"
+            memory_scope = MEMORY_SCOPE_PROJECT
         personas_dir = Path(os.environ.get("CHIMERA_PERSONAS_DIR", "C:/Github/ChimeraPersonas/personas"))
         result = _authored_writeback(
             _get_memory_conn(),
             personas_dir,
-            persona=selected_persona,
+            persona=authored_identity,
             payload=payload,
             relative_path=relative_path,
             write=write,
             enqueue=enqueue,
+            memory_scope=memory_scope,
+            project_id=selected_project_id,
+            project_root=selected_project_root,
             actor="mcp",
         )
         if not result.get("ok"):
@@ -1071,7 +1113,7 @@ def create_server():
 
         job = ((result.get("enrichment_job") or {}).get("job") or {})
         return (
-            f"Remembered {result['relative_path']} ({selected_persona}). "
+            f"Remembered {result['relative_path']} ({authored_identity}). "
             f"enrichment_job={job.get('job_id') or 'not queued'}"
         )
 
@@ -1419,6 +1461,7 @@ def create_server():
     def memory_authored_writeback(
         payload_yaml: str,
         persona: str | None = None,
+        project_id: str = "",
         relative_path: str = "",
         write: bool = False,
         enqueue: bool = True,
@@ -1427,6 +1470,7 @@ def create_server():
         _ensure_memory_indexed()
         import yaml
         from .memory import memory_authored_writeback as _authored_writeback
+        from .memory_scope import MEMORY_SCOPE_PROJECT, current_project_id, project_memory_root, safe_project_id
 
         try:
             payload = yaml.safe_load(payload_yaml)
@@ -1436,15 +1480,29 @@ def create_server():
             return "Authored writeback failed: payload must be a mapping"
 
         selected_persona = (persona or os.environ.get("TRANSCRIPT_PERSONA") or "").strip()
+        selected_project_id = ""
+        selected_project_root = None
+        memory_scope = "persona"
+        authored_identity = selected_persona
+        if not selected_persona:
+            selected_project_id = safe_project_id(project_id) or current_project_id() or ""
+            selected_project_root = project_memory_root(selected_project_id) if selected_project_id else project_memory_root()
+            if not selected_project_id or selected_project_root is None:
+                return "Authored writeback failed: persona or project memory root is required"
+            authored_identity = f"project:{selected_project_id}"
+            memory_scope = MEMORY_SCOPE_PROJECT
         personas_dir = Path(os.environ.get("CHIMERA_PERSONAS_DIR", "C:/Github/ChimeraPersonas/personas"))
         result = _authored_writeback(
             _get_memory_conn(),
             personas_dir,
-            persona=selected_persona,
+            persona=authored_identity,
             payload=payload,
             relative_path=relative_path,
             write=write,
             enqueue=enqueue,
+            memory_scope=memory_scope,
+            project_id=selected_project_id,
+            project_root=selected_project_root,
             actor="mcp",
         )
         if not result.get("ok"):
@@ -1462,7 +1520,7 @@ def create_server():
 
         job = ((result.get("enrichment_job") or {}).get("job") or {})
         return (
-            f"Wrote authored memory to {result['relative_path']} ({selected_persona}). "
+            f"Wrote authored memory to {result['relative_path']} ({authored_identity}). "
             f"enrichment_job={job.get('job_id') or 'not queued'}"
         )
 
@@ -3296,7 +3354,7 @@ def _start_transcript_indexer() -> object | None:
             log.info("Repaired %d session rollup rows", repaired)
 
         log.info("Starting live file watcher ...")
-        observer = indexer.start_watching()
+        indexer.start_watching()
         log.info("Transcript watcher active (watchdog + 30s poll safety net)")
         return indexer
     except Exception:
@@ -3328,7 +3386,7 @@ def _start_transcript_embedding_worker() -> dict[str, object] | None:
     )
     batch_size = _env_int(
         "CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_SIZE",
-        default=100,
+        default=64,
         minimum=1,
         maximum=1000,
     )
@@ -3354,6 +3412,7 @@ def _start_transcript_embedding_worker() -> dict[str, object] | None:
                 conn,
                 batch_size=batch_size,
                 limit=min(batch_limit, pending),
+                progress_label="server transcript embedding worker",
             )
         if count:
             log.info("embedded %d transcript rows; pending_before=%d", count, pending)
@@ -3402,10 +3461,10 @@ def _start_memory_file_indexer() -> object | None:
         from .memory import full_reindex, start_memory_watcher
 
         db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
-        personas_dir = Path(os.environ.get("CHIMERA_PERSONAS_DIR", "C:/Github/ChimeraPersonas/personas"))
+        personas_dir = _memory_personas_dir()
         db = TranscriptDB(db_path)
         with db.connection() as conn:
-            updated = full_reindex(conn, personas_dir, embed=True)
+            updated = full_reindex(conn, personas_dir, embed=False)
         log.info("memory full_reindex complete updated=%s personas_dir=%s", updated, personas_dir)
         observer = start_memory_watcher(db, personas_dir)
         if observer is not None:
@@ -3414,6 +3473,41 @@ def _start_memory_file_indexer() -> object | None:
     except Exception:
         log.exception("memory file indexer bootstrap FAILED; memory auto-enqueue may be stale")
         return None
+
+
+def _memory_personas_dir() -> Path:
+    explicit = os.environ.get("CHIMERA_PERSONAS_DIR", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    try:
+        from .identity import load_identity_from_env
+
+        identity = load_identity_from_env()
+        if identity.personas_dir is not None:
+            return identity.personas_dir
+    except Exception:
+        pass
+    return Path.home() / ".chimera-memory" / "personas"
+
+
+def _memory_file_watcher_expected() -> bool:
+    if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
+        return False
+    if not _env_bool("CHIMERA_MEMORY_FILE_WATCHER", default=True):
+        return False
+    try:
+        from .memory_scope import global_memory_root, project_memory_roots
+
+        personas_dir = _memory_personas_dir()
+        roots = [
+            personas_dir,
+            personas_dir.parent / "shared",
+            global_memory_root(),
+            *(root for _project_id, root in project_memory_roots()),
+        ]
+        return any(root.exists() for root in roots)
+    except Exception:
+        return True
 
 
 def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dict[str, object] | None:
@@ -3661,15 +3755,19 @@ def _bootstrap_startup_services() -> object | None:
     )
 
     indexer = _start_transcript_indexer()
-    _memory_file_watcher_handle = _start_memory_file_indexer()
-    _embedding_worker_handle = _start_transcript_embedding_worker()
+    memory_file_watcher_expected = _memory_file_watcher_expected()
+    _memory_file_watcher_handle = _start_memory_file_indexer() if memory_file_watcher_expected else None
     _enhancement_worker_handle = _start_memory_enhancement_worker()
+    _embedding_worker_handle = _start_transcript_embedding_worker()
     _health_worker_handle = _start_cm_health_worker(
         {
             "transcript_indexer": indexer is not None,
-            "memory_file_watcher": _memory_file_watcher_handle is not None,
-            "transcript_embedding_worker": _embedding_worker_handle is not None,
-            "memory_enhancement_worker": _enhancement_worker_handle is not None,
+            "memory_file_watcher": _memory_file_watcher_handle is not None
+            or not memory_file_watcher_expected,
+            "transcript_embedding_worker": _embedding_worker_handle is not None
+            or not _env_bool("CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER", default=True),
+            "memory_enhancement_worker": _enhancement_worker_handle is not None
+            or not _env_bool("CHIMERA_MEMORY_ENHANCEMENT_WORKER", default=True),
         }
     )
     if _prewarm_embeddings_enabled():
@@ -3720,20 +3818,33 @@ def _start_background_bootstrap(
     return state
 
 
-def main():
+def main(
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    mount_path: str | None = None,
+):
     """Entry point for running the MCP server."""
     global _startup_maintenance_lease
     logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
     log_path = _configure_diagnostic_logging()
     logging.getLogger("chimera_memory").info(
-        "chimera-memory server starting (pid=%s, log=%s)", os.getpid(), log_path
+        "chimera-memory server starting (pid=%s, transport=%s, host=%s, port=%s, log=%s)",
+        os.getpid(),
+        transport,
+        host,
+        port,
+        log_path,
     )
     startup_mode = os.environ.get("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "post_ready").strip().lower()
     if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
         startup_mode = "disabled"
     startup_state: dict[str, object | None] = {"indexer": None, "thread": None}
     try:
-        server = create_server()
+        if host == "127.0.0.1" and port == 8000:
+            server = create_server()
+        else:
+            server = create_server(host=host, port=port)
         if startup_mode in {"0", "false", "off", "disabled", "none"}:
             logging.getLogger("chimera_memory.startup").info("startup bootstrap disabled")
         elif startup_mode in {"sync", "foreground", "blocking"}:
@@ -3757,7 +3868,10 @@ def main():
             )
         else:
             startup_state = _start_background_bootstrap(reason="startup")
-        server.run(transport="stdio")
+        if transport == "stdio" or mount_path is None:
+            server.run(transport=transport)
+        else:
+            server.run(transport=transport, mount_path=mount_path)
     except KeyboardInterrupt:
         logging.getLogger("chimera_memory").info("shutdown via KeyboardInterrupt")
     except Exception:

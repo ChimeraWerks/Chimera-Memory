@@ -188,6 +188,40 @@ def test_memory_authored_writeback_writes_indexes_and_queues(tmp_path: Path) -> 
     assert memory_entity_query(conn, query="Charles", entity_type="person")[0]["file_count"] == 1
 
 
+def test_memory_authored_writeback_writes_project_memory(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    personas_dir = _personas_dir(tmp_path)
+    project_root = tmp_path / "repo" / ".chimera-memory"
+
+    result = memory_authored_writeback(
+        conn,
+        personas_dir,
+        persona="project:ChimeraMemory",
+        payload=_payload(),
+        write=True,
+        enqueue=False,
+        memory_scope="project",
+        project_id="ChimeraMemory",
+        project_root=project_root,
+    )
+
+    assert result["ok"] is True
+    assert result["written"] is True
+    target = Path(result["path"])
+    assert target.exists()
+    frontmatter = yaml.safe_load(target.read_text(encoding="utf-8").split("---", 2)[1])
+    assert frontmatter["memory_scope"] == "project"
+    assert frontmatter["project_id"] == "ChimeraMemory"
+
+    row = conn.execute(
+        "SELECT persona, memory_scope, project_id FROM memory_files WHERE id = ?",
+        (result["file_id"],),
+    ).fetchone()
+    assert row == ("project:ChimeraMemory", "project", "ChimeraMemory")
+    assert result["enrichment_job"]["enqueued"] is False
+
+
 def test_memory_authored_writeback_blocks_unsafe_payload(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)

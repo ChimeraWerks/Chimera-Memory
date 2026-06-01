@@ -43,6 +43,17 @@ chimera-memory backfill
 
 # Run as MCP server
 chimera-memory serve
+# Or run one shared local HTTP MCP server and point Codex at its URL:
+chimera-memory serve --transport streamable-http --host 127.0.0.1 --port 8765
+```
+
+On Windows, prefer the repo-local venv so CM does not depend on stale global
+console shims:
+
+```powershell
+.\scripts\bootstrap-cm-venv.ps1
+.\.venv\Scripts\python.exe -m chimera_memory.cli stats
+.\scripts\start-cm-http.ps1 -Port 8766 -Bootstrap
 ```
 
 On Windows, the one-file Codex setup path is:
@@ -51,9 +62,9 @@ On Windows, the one-file Codex setup path is:
 .\install-codex.ps1
 ```
 
-It installs CM editable, writes the Codex MCP config, asks whether to import
-past Codex sessions, optionally reuses a provider login, runs doctor, and tells
-you to restart Codex.
+It creates or refreshes `.venv`, installs CM editable there, writes the Codex
+MCP config, asks whether to import past Codex sessions, optionally reuses a
+provider login, runs doctor, and tells you to restart Codex.
 
 `pip install -e .` creates the `chimera-memory` CLI on PATH and adds the Python package via `.pth` so any edit to source flows through immediately on next process spawn. No re-install needed for code changes; only dependency changes (new `pyproject.toml` requires) need a re-run.
 
@@ -73,36 +84,44 @@ Spawned as an MCP server. Wire it into your `.mcp.json`:
       "args": ["serve"],
       "env": {
         "TRANSCRIPT_JSONL_DIR": "~/.claude/projects/YOUR-PROJECT/",
-        "OMP_NUM_THREADS": "12"
+        "CHIMERA_MEMORY_EMBEDDING_PROVIDER": "auto",
+        "CHIMERA_MEMORY_EMBEDDING_CPU_RESERVE_PERCENT": "20"
       }
     }
   }
 }
 ```
 
-`OMP_NUM_THREADS` caps the embedding model's CPU usage. Set it to roughly 75% of your cores BEFORE the server starts — ONNX won't respect the setting if applied later.
+CM auto-selects an ONNX GPU execution provider when the local ONNX Runtime exposes one, then falls back to CPU. Windows DirectML appears as `DmlExecutionProvider`; NVIDIA CUDA appears as `CUDAExecutionProvider`. FastEmbed CUDA installs can also be forced with `CHIMERA_MEMORY_FASTEMBED_CUDA=true`; pin devices with `CHIMERA_MEMORY_FASTEMBED_DEVICE_IDS=0` after constraining visibility with `CUDA_VISIBLE_DEVICES` when a specific NVIDIA card must be used. CPU fallback reserves 20% of logical cores by default, enforces ONNX thread env vars before model load, and adds a small duty-cycle pause between batches so first-run embedding does not monopolize the machine. Tune with `CHIMERA_MEMORY_EMBEDDING_PROVIDER=auto|gpu|cpu`, `CHIMERA_MEMORY_EMBEDDING_CPU_RESERVE_PERCENT=20`, or `CHIMERA_MEMORY_EMBEDDING_MAX_THREADS=<N>`.
 
 Restart Claude Code and the tools appear as `mcp__chimera-memory__*`.
 
-### Codex CLI
+### Codex Desktop and CLI
 
-Same shape, different file. Codex reads `~/.codex/mcp_servers.json`:
+Codex Desktop reads MCP servers from `~/.codex/config.toml`:
 
-```json
-{
-  "mcpServers": {
-    "chimera-memory": {
-      "command": "chimera-memory",
-      "args": ["serve"],
-      "env": {
-        "TRANSCRIPT_JSONL_DIR": "~/.codex/sessions/",
-        "TRANSCRIPT_PERSONA": "your-persona",
-        "CHIMERA_CLIENT": "codex"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers."chimera-memory"]
+command = "python"
+args = ["-m", "chimera_memory.cli", "serve"]
+startup_timeout_sec = 30
+
+[mcp_servers."chimera-memory".env]
+TRANSCRIPT_JSONL_DIR = "~/.codex/sessions/"
+CHIMERA_CLIENT = "codex"
+CHIMERA_MEMORY_PROJECT_ID = "your-repo"
+CHIMERA_MEMORY_PROJECT_ROOT = "C:\\path\\to\\your-repo\\.chimera-memory"
+CHIMERA_MEMORY_MCP_SURFACE = "codex"
 ```
+
+Codex can run repo-scoped with no persona. In that mode CM searches global plus
+current-project memory, writes authored memories under the configured project
+root, intentionally leaves persona identity env unset, and defaults to the
+`codex` MCP surface so exact memory search/query tools remain available.
+If the `chimera-memory` shim on PATH is unavailable or stale, use
+`--command "python -m chimera_memory.cli"` with `codex template` or
+`codex install`; the generated config will split that into a Codex-safe command
+plus args.
 
 Check the wiring without exposing raw environment values:
 
@@ -119,7 +138,7 @@ latest CM health snapshot when a transcript database is available.
 Write or update the Codex MCP config directly:
 
 ```bash
-chimera-memory codex install --persona-id developer/asa --persona-root C:/path/to/personas/developer/asa
+chimera-memory codex install --project-id Chimera-Memory --project-root C:/Github/Chimera-Memory/.chimera-memory
 ```
 
 The installer preserves other MCP servers, writes a backup before changing an
@@ -128,7 +147,7 @@ that choice as `CHIMERA_MEMORY_IMPORT_HISTORY`.
 It can also set a provider preference and explicitly reuse an existing login:
 
 ```bash
-chimera-memory codex install --persona-id developer/asa --provider openai --reuse-provider-login
+chimera-memory codex install --project-id Chimera-Memory --provider openai --reuse-provider-login
 ```
 
 Provider reuse is never implicit. When requested, the installer imports into
@@ -138,10 +157,10 @@ Generate a safe config template without reading or modifying your live Codex
 config:
 
 ```bash
-chimera-memory codex template --persona your-persona
+chimera-memory codex template --project-id Chimera-Memory --project-root C:/Github/Chimera-Memory/.chimera-memory
 ```
 
-Add identity fields when you want persona-scoped indexing:
+Add persona identity fields only when you want persona-scoped Codex indexing:
 
 ```bash
 chimera-memory codex template \
@@ -153,8 +172,12 @@ chimera-memory codex template \
   --shared-root C:/Github/ChimeraAgency/shared
 ```
 
-The template command prints JSON only. It does not write `mcp_servers.json` and
-does not include secrets or OAuth tokens.
+Persona profiles can also include `--project-id` and `--project-root` when the
+same Codex session should recall persona, current-project, and global memory.
+
+The template command prints JSON only. The install and doctor commands target
+`~/.codex/config.toml` by default and still accept a legacy `mcp_servers.json`
+path via `--config`. They do not include secrets or OAuth tokens.
 
 ### Hermes Agent
 
@@ -471,15 +494,43 @@ Embeddings are only generated for conversation content (user messages, assistant
 
 `chimera-memory serve` starts maintenance after the first MCP `tools/list` response by default, so MCP readiness is not gated on transcript catch-up, embedding model load, or health checks. Set `CHIMERA_MEMORY_STARTUP_BOOTSTRAP=background` for the older immediate background launch, `sync` for blocking startup, or `false` to disable startup maintenance.
 
+Codex command-based MCP starts one stdio server per active thread/session. To avoid many CM Python processes while multitasking, run a single local HTTP MCP server:
+
+```powershell
+chimera-memory serve --transport streamable-http --host 127.0.0.1 --port 8765
+```
+
+For a Windows per-user service-style launch from this repo's `.venv`, use:
+
+```powershell
+.\scripts\start-cm-http.ps1 -Port 8766 -Bootstrap
+.\scripts\install-cm-http-autostart.ps1 -Port 8766 -RunNow
+```
+
+Then configure Codex to use the shared URL instead of a `command`/`args` server:
+
+```toml
+[mcp_servers."chimera-memory"]
+url = "http://127.0.0.1:8765/mcp"
+startup_timeout_sec = 30
+```
+
+That leaves one CM server process for indexing, embeddings, health, and enhancement workers. Codex may still keep per-thread client-side helper processes, but they will not each spawn a full CM runtime.
+
 `chimera-memory serve` starts a bounded local transcript-embedding worker by default once startup maintenance begins. It polls for unembedded conversation rows and processes a capped batch so new transcripts do not leave `semantic_search` stuck in keyword-only fallback. Tune with:
 
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER=false` to disable the worker.
 - `CHIMERA_MEMORY_STARTUP_BOOTSTRAP_DELAY_SECONDS=0.25` for the small post-readiness delay before maintenance starts.
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBED_INTERVAL_SECONDS=60` for the polling interval.
-- `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_SIZE=100` for fastembed batch size.
+- `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_SIZE=64` for fastembed batch size.
 - `CHIMERA_MEMORY_TRANSCRIPT_EMBED_BATCH_LIMIT=1000` for the maximum rows per worker tick.
+- `CHIMERA_MEMORY_EMBEDDING_PROVIDER=auto|gpu|cpu` to prefer GPU ONNX providers when installed.
+- `CHIMERA_MEMORY_FASTEMBED_CUDA=true|false|auto` to force FastEmbed's CUDA path when `fastembed-gpu` is installed.
+- `CHIMERA_MEMORY_FASTEMBED_DEVICE_IDS=0` to pin the visible CUDA device used by FastEmbed.
+- `CHIMERA_MEMORY_EMBEDDING_CPU_RESERVE_PERCENT=20` to leave CPU headroom on fallback.
+- `CHIMERA_MEMORY_EMBEDDING_PROGRESS_PATH=...` to move the live progress JSON file.
 
-Use `embed_transcripts` or `chimera-memory` internals for one-time historical catch-up if a DB has a large backlog from before the worker existed.
+Each embedding run logs a realtime progress bar and writes live status to `~/.chimera-memory/embedding-progress.json`. Use `embed_transcripts` or `chimera-memory embed` for one-time historical catch-up if a DB has a large backlog from before the worker existed.
 
 ### Health Snapshots
 
@@ -502,6 +553,7 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_CLI_WORKER_RUNTIME=codex|claude|agy` selects the CLI runtime for `cli_worker`.
 - `CHIMERA_MEMORY_CLI_WORKER_EFFORT=medium` sets the default reasoning effort for CLI workers that expose effort controls.
 - `CHIMERA_MEMORY_CLI_WORKER_SESSION_MAX_TURNS=1` caps resumed CLI worker context before starting fresh again.
+- `CHIMERA_MEMORY_CODEX_WORKER_MODEL=gpt-5.3-codex-spark` is the Codex worker default.
 - `CHIMERA_MEMORY_CODEX_WORKER_EFFORT=low|medium|high|xhigh` overrides Codex worker effort.
 - `CHIMERA_MEMORY_CLAUDE_WORKER_EFFORT=low|medium|high|xhigh|max` overrides Claude worker effort.
 - `CHIMERA_MEMORY_CLAUDE_WORKER_MODEL=...` defaults to the memory-enhancement Haiku tier; Opus is rejected unless `CHIMERA_MEMORY_CLAUDE_WORKER_ALLOW_OPUS=true`.
@@ -603,12 +655,17 @@ SQLite handles databases up to 281 TB. At projected 12-month scale (~700K entrie
 
 ```bash
 chimera-memory serve              # Run MCP server (stdio)
+chimera-memory serve --transport streamable-http --port 8765
 chimera-memory backfill           # Index all historical sessions
 chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client claude|codex
+chimera-memory embed              # Generate transcript embeddings with a live progress bar
+chimera-memory embed --limit 500 --batch-size 64
 chimera-memory stats              # Show database statistics
 chimera-memory split-db           # Split a shared transcript DB into per-persona DBs
 chimera-memory codex doctor       # Diagnose Codex MCP setup without printing env values
 chimera-memory codex install      # Write/update Codex MCP setup with backup and import choice
+chimera-memory codex install --project-id <ID> --project-root <DIR>
+chimera-memory codex template --project-id <ID> --project-root <DIR>
 chimera-memory enhance provider-plan --json
 chimera-memory enhance oauth-import --provider openai --source codex_cli
 chimera-memory enhance oauth-list --json
@@ -650,10 +707,14 @@ Priority: **environment variables > config file > defaults**.
 | JSONL directory | `TRANSCRIPT_JSONL_DIR` | Auto-detected from CWD |
 | Memory root | `MEMORY_ROOT` | Auto-detected |
 | Persona name | `TRANSCRIPT_PERSONA` | — |
+| Project memory id | `CHIMERA_MEMORY_PROJECT_ID` | Derived from project root |
+| Project memory root | `CHIMERA_MEMORY_PROJECT_ROOT` | — |
 | Client/parser | `CHIMERA_CLIENT` | Auto-detected / parser default |
 | Retention (days) | `TRANSCRIPT_RETENTION_DAYS` | 90 |
 | Max DB size (MB) | `TRANSCRIPT_MAX_DB_SIZE_MB` | 1024 |
-| OMP thread cap | `OMP_NUM_THREADS` | System default |
+| Embedding provider | `CHIMERA_MEMORY_EMBEDDING_PROVIDER` | `auto` |
+| Embedding CPU reserve | `CHIMERA_MEMORY_EMBEDDING_CPU_RESERVE_PERCENT` | `20` |
+| Embedding max threads | `CHIMERA_MEMORY_EMBEDDING_MAX_THREADS` | CPU count minus reserve |
 
 ## Database Schema
 

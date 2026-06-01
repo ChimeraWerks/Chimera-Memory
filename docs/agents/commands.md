@@ -10,10 +10,23 @@ Install editable package with dev test dependencies:
 python -m pip install -e ".[dev]"
 ```
 
+Preferred Windows local setup keeps dependencies inside the repo venv:
+
+```powershell
+.\scripts\bootstrap-cm-venv.ps1 -Dev
+.\.venv\Scripts\python.exe -m chimera_memory.cli stats
+```
+
 Optional MCP extra:
 
 ```powershell
 python -m pip install -e ".[mcp,dev]"
+```
+
+Optional FastEmbed CUDA extra:
+
+```powershell
+python -m pip install -e ".[gpu,dev]"
 ```
 
 The repo includes `uv.lock`, but no Makefile, justfile, taskfile, or package
@@ -25,9 +38,14 @@ The console script is `chimera-memory = chimera_memory.cli:main`.
 
 ```powershell
 chimera-memory serve
+chimera-memory serve --transport streamable-http --host 127.0.0.1 --port 8765
+.\scripts\start-cm-http.ps1 -Port 8766 -Bootstrap
+.\scripts\install-cm-http-autostart.ps1 -Port 8766 -RunNow
 chimera-memory backfill
 chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client claude
 chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client codex
+chimera-memory embed
+chimera-memory embed --limit 500 --batch-size 64
 chimera-memory stats
 chimera-memory split-db
 ```
@@ -53,8 +71,9 @@ Windows helper:
 .\install-codex.ps1 -PersonaId <ROLE/NAME> -PersonaRoot <PATH> -Yes
 ```
 
-The helper installs the package editable, writes or updates Codex MCP config,
-then runs `chimera-memory codex doctor`.
+The helper creates or refreshes `.venv`, installs CM editable there, writes or
+updates Codex MCP config, then runs `chimera-memory codex doctor` through the
+venv Python.
 
 ## Enhancement Helpers
 
@@ -122,6 +141,12 @@ Common env/config keys:
 - `CHIMERA_PERSONAS_DIR`
 - `CHIMERA_SHARED_ROOT`
 - `CHIMERA_MEMORY_PERSONA_DB_ROOT`
+- `CHIMERA_MEMORY_EMBEDDING_PROVIDER`
+- `CHIMERA_MEMORY_FASTEMBED_CUDA`
+- `CHIMERA_MEMORY_FASTEMBED_DEVICE_IDS`
+- `CHIMERA_MEMORY_EMBEDDING_CPU_RESERVE_PERCENT`
+- `CHIMERA_MEMORY_EMBEDDING_MAX_THREADS`
+- `CHIMERA_MEMORY_EMBEDDING_PROGRESS_PATH`
 - `CHIMERA_MEMORY_ENHANCEMENT_USE_MODELS_DEV_CATALOG`
 
 Config is generated under `~/.chimera-memory/config.yaml`. Runtime DBs and auth

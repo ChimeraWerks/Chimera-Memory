@@ -246,6 +246,8 @@ Codex supervisor status:
   default
 - resolves the Codex executable with `shutil.which("codex")` or the Windows
   npm shim unless `CHIMERA_MEMORY_CODEX_BIN` is set
+- passes `gpt-5.3-codex-spark` by default; override with
+  `CHIMERA_MEMORY_CODEX_WORKER_MODEL`
 - sets reasoning effort with `CHIMERA_MEMORY_CODEX_WORKER_EFFORT` or the
   shared `CHIMERA_MEMORY_CLI_WORKER_EFFORT`; default is `medium`
 - copies the existing Codex auth file into the isolated worker `CODEX_HOME`

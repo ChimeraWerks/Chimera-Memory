@@ -4,6 +4,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 from chimera_memory.codex_setup import (
@@ -146,6 +147,100 @@ def test_codex_doctor_accepts_derived_identity_fields(tmp_path: Path) -> None:
     assert "Persona identity resolves via explicit and derived fields." in text
 
 
+def test_codex_doctor_accepts_repo_scoped_project_profile(tmp_path: Path) -> None:
+    jsonl_dir = tmp_path / "sessions"
+    project_root = tmp_path / "repo" / ".chimera-memory"
+    jsonl_dir.mkdir()
+    project_root.mkdir(parents=True)
+    config_path = tmp_path / "mcp_servers.json"
+    payload = {
+        "mcpServers": {
+            "chimera-memory": {
+                "command": sys.executable,
+                "args": ["serve"],
+                "env": {
+                    "TRANSCRIPT_JSONL_DIR": str(jsonl_dir),
+                    "TRANSCRIPT_DB_PATH": str(tmp_path / "missing-transcript.db"),
+                    "CHIMERA_CLIENT": "codex",
+                    "CHIMERA_MEMORY_PROJECT_ID": "Chimera-Memory",
+                    "CHIMERA_MEMORY_PROJECT_ROOT": str(project_root),
+                },
+            },
+        },
+    }
+    _write_config(config_path, payload)
+
+    report = inspect_codex_mcp_config(config_path)
+    text = format_codex_doctor_report(report)
+
+    assert report["status"] == "ok"
+    assert "No persona configured; Codex uses repo-scoped project memory." in text
+    assert "Persona identity is intentionally unset for repo-scoped Codex memory." in text
+    assert "Project memory identity resolves for repo-scoped Codex memory." in text
+
+
+def test_codex_doctor_accepts_url_only_http_transport(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    monkeypatch.setattr(
+        "chimera_memory.codex_setup._default_transcript_db_path",
+        lambda: str(tmp_path / "missing-transcript.db"),
+    )
+    _write_config(
+        config_path,
+        {
+            "mcpServers": {
+                "chimera-memory": {
+                    "url": "https://cm.example.test/mcp",
+                    "startup_timeout_sec": 30,
+                },
+            },
+        },
+    )
+
+    report = inspect_codex_mcp_config(config_path)
+    text = format_codex_doctor_report(report)
+
+    assert report["status"] == "ok"
+    assert report["transport"] == "http"
+    assert "Transport: http" in text
+    assert any(check["name"] == "url" and check["status"] == "ok" for check in report["checks"])
+    assert not any(check["name"] in {"command", "args"} for check in report["checks"])
+
+
+def test_codex_doctor_reports_dead_local_http_transport(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    monkeypatch.setattr(
+        "chimera_memory.codex_setup._default_transcript_db_path",
+        lambda: str(tmp_path / "missing-transcript.db"),
+    )
+
+    def fail_connect(*args, **kwargs):
+        raise OSError("closed")
+
+    monkeypatch.setattr("chimera_memory.codex_setup.socket.create_connection", fail_connect)
+    _write_config(
+        config_path,
+        {
+            "mcpServers": {
+                "chimera-memory": {
+                    "url": "http://127.0.0.1:8766/mcp",
+                    "startup_timeout_sec": 30,
+                },
+            },
+        },
+    )
+
+    report = inspect_codex_mcp_config(config_path)
+
+    assert report["status"] == "error"
+    assert report["transport"] == "http"
+    assert any(
+        check["name"] == "url_reachable" and "No local MCP server" in check["message"]
+        for check in report["checks"]
+    )
+    assert not any(check["name"] in {"command", "args"} for check in report["checks"])
+
+
 def test_codex_doctor_summarizes_latest_health_snapshot(tmp_path: Path) -> None:
     jsonl_dir = tmp_path / "sessions"
     jsonl_dir.mkdir()
@@ -225,11 +320,14 @@ def test_codex_install_writes_minimal_config_and_preserves_other_servers(tmp_pat
     )
     text = format_codex_install_report(receipt)
     written = json.loads(config_path.read_text(encoding="utf-8"))
+    server = written["mcpServers"]["chimera-memory"]
     env = written["mcpServers"]["chimera-memory"]["env"]
 
     assert receipt["action"] == "update"
     assert Path(receipt["backup_path"]).is_file()
     assert "other-server" in written["mcpServers"]
+    assert server["command"] == sys.executable
+    assert server["args"] == ["-m", "chimera_memory.cli", "serve"]
     assert env["CHIMERA_PERSONA_ID"] == "developer/asa"
     assert env["CHIMERA_PERSONA_ROOT"] == str(persona_root)
     assert env["CHIMERA_MEMORY_IMPORT_HISTORY"] == "false"
@@ -245,6 +343,108 @@ def test_codex_install_writes_minimal_config_and_preserves_other_servers(tmp_pat
 
     doctor = inspect_codex_mcp_config(config_path)
     assert doctor["status"] == "ok"
+
+
+def test_codex_install_writes_repo_scoped_project_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    project_root = tmp_path / "repo" / ".chimera-memory"
+    jsonl_dir.mkdir()
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        project_id="Chimera Memory!",
+        project_root=str(project_root),
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        import_history=False,
+    )
+    written = json.loads(config_path.read_text(encoding="utf-8"))
+    env = written["mcpServers"]["chimera-memory"]["env"]
+    env["TRANSCRIPT_DB_PATH"] = str(tmp_path / "missing-transcript.db")
+    _write_config(config_path, written)
+
+    assert receipt["memory_profile"] == "project"
+    assert receipt["project_id"] == "Chimera-Memory"
+    assert env["CHIMERA_MEMORY_PROJECT_ID"] == "Chimera-Memory"
+    assert env["CHIMERA_MEMORY_PROJECT_ROOT"] == str(project_root)
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "codex"
+    assert "TRANSCRIPT_PERSONA" not in env
+    assert "CHIMERA_PERSONA_ID" not in env
+
+    doctor = inspect_codex_mcp_config(config_path)
+    assert doctor["status"] == "ok"
+
+
+def test_codex_install_writes_desktop_config_toml(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "config.toml"
+    jsonl_dir = tmp_path / "sessions"
+    project_root = tmp_path / "repo" / ".chimera-memory"
+    jsonl_dir.mkdir()
+    config_path.write_text(
+        "\n".join(
+            [
+                '[mcp_servers.node_repl]',
+                'command = "node_repl.exe"',
+                "args = []",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        project_id="Chimera Memory!",
+        project_root=str(project_root),
+        jsonl_dir=str(jsonl_dir),
+        command="python -m chimera_memory.cli",
+        import_history=False,
+    )
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    server = data["mcp_servers"]["chimera-memory"]
+    env = server["env"]
+
+    assert receipt["memory_profile"] == "project"
+    assert receipt["mcp_surface"] == "codex"
+    assert data["mcp_servers"]["node_repl"]["command"] == "node_repl.exe"
+    assert server["command"] == "python"
+    assert server["args"] == ["-m", "chimera_memory.cli", "serve"]
+    assert env["CHIMERA_MEMORY_PROJECT_ID"] == "Chimera-Memory"
+    assert env["CHIMERA_MEMORY_PROJECT_ROOT"] == str(project_root)
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "codex"
+
+    monkeypatch.setattr(
+        "chimera_memory.codex_setup._default_transcript_db_path",
+        lambda: str(tmp_path / "missing-transcript.db"),
+    )
+    doctor = inspect_codex_mcp_config(config_path)
+    assert doctor["status"] == "ok"
+
+
+def test_codex_install_can_add_project_env_to_persona_profile(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    jsonl_dir = tmp_path / "sessions"
+    project_root = tmp_path / "repo" / ".chimera-memory"
+    jsonl_dir.mkdir()
+
+    receipt = install_codex_mcp_config(
+        config_path=config_path,
+        persona_id="developer/asa",
+        project_id="ChimeraMemory",
+        project_root=str(project_root),
+        jsonl_dir=str(jsonl_dir),
+        command=sys.executable,
+        import_history=False,
+    )
+    env = json.loads(config_path.read_text(encoding="utf-8"))["mcpServers"]["chimera-memory"]["env"]
+
+    assert receipt["memory_profile"] == "persona"
+    assert receipt["project_id"] == "ChimeraMemory"
+    assert env["CHIMERA_PERSONA_ID"] == "developer/asa"
+    assert env["CHIMERA_MEMORY_PROJECT_ID"] == "ChimeraMemory"
+    assert env["CHIMERA_MEMORY_PROJECT_ROOT"] == str(project_root)
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "persona"
 
 
 def test_codex_install_dry_run_does_not_write(tmp_path: Path) -> None:
@@ -329,6 +529,7 @@ def test_codex_install_prefers_codex_cli_worker_for_openai_provider(tmp_path: Pa
     assert env["CHIMERA_MEMORY_CLI_WORKER_RUNTIME"] == "codex"
     assert env["CHIMERA_MEMORY_CLI_WORKER_EFFORT"] == "medium"
     assert env["CHIMERA_MEMORY_CODEX_WORKER_PROVIDER"] == "openai"
+    assert env["CHIMERA_MEMORY_CODEX_WORKER_MODEL"] == "gpt-5.3-codex-spark"
     assert "Provider worker runtime: codex" in text
 
 
@@ -402,17 +603,47 @@ def test_codex_template_builds_safe_config_without_secrets() -> None:
     assert env["TRANSCRIPT_PERSONA"] == "asa"
     assert env["CHIMERA_CLIENT"] == "codex"
     assert env["CHIMERA_PERSONA_ID"] == "developer/asa"
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "persona"
     assert "SECRET" not in text
     assert "TOKEN" not in text
 
 
-def test_codex_template_requires_persona() -> None:
-    try:
-        build_codex_mcp_config(persona="")
-    except ValueError as exc:
-        assert "persona is required" in str(exc)
-    else:
-        raise AssertionError("empty persona should fail")
+def test_codex_template_without_persona_builds_project_profile() -> None:
+    config = build_codex_mcp_config(
+        project_id="Chimera Memory!",
+        project_root="C:/Github/Chimera-Memory/.chimera-memory",
+    )
+    env = config["mcpServers"]["chimera-memory"]["env"]
+
+    assert env["CHIMERA_MEMORY_PROJECT_ID"] == "Chimera-Memory"
+    assert env["CHIMERA_MEMORY_PROJECT_ROOT"] == "C:/Github/Chimera-Memory/.chimera-memory"
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "codex"
+    assert "TRANSCRIPT_PERSONA" not in env
+
+
+def test_codex_template_splits_python_module_command() -> None:
+    command = f'"{sys.executable}" -m chimera_memory.cli'
+
+    config = build_codex_mcp_config(project_id="ChimeraMemory", command=command)
+    server = config["mcpServers"]["chimera-memory"]
+
+    assert server["command"] == sys.executable
+    assert server["args"] == ["-m", "chimera_memory.cli", "serve"]
+
+
+def test_codex_template_with_persona_can_include_project_env() -> None:
+    config = build_codex_mcp_config(
+        persona_id="developer/asa",
+        project_id="ChimeraMemory",
+        project_root="C:/Github/Chimera-Memory/.chimera-memory",
+    )
+    env = config["mcpServers"]["chimera-memory"]["env"]
+
+    assert env["TRANSCRIPT_PERSONA"] == "asa"
+    assert env["CHIMERA_PERSONA_ID"] == "developer/asa"
+    assert env["CHIMERA_MEMORY_PROJECT_ID"] == "ChimeraMemory"
+    assert env["CHIMERA_MEMORY_PROJECT_ROOT"] == "C:/Github/Chimera-Memory/.chimera-memory"
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "persona"
 
 
 def test_codex_template_cli_prints_json_without_shadowing_subcommand() -> None:
@@ -437,6 +668,35 @@ def test_codex_template_cli_prints_json_without_shadowing_subcommand() -> None:
 
     assert server["command"] == sys.executable
     assert server["env"]["CHIMERA_CLIENT"] == "codex"
+
+
+def test_codex_template_cli_prints_project_json_without_persona(tmp_path: Path) -> None:
+    project_root = tmp_path / "repo" / ".chimera-memory"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "chimera_memory.cli",
+            "codex",
+            "template",
+            "--project-id",
+            "Chimera Memory!",
+            "--project-root",
+            str(project_root),
+            "--command",
+            sys.executable,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout)
+    env = payload["mcpServers"]["chimera-memory"]["env"]
+
+    assert env["CHIMERA_MEMORY_PROJECT_ID"] == "Chimera-Memory"
+    assert env["CHIMERA_MEMORY_PROJECT_ROOT"] == str(project_root)
+    assert env["CHIMERA_MEMORY_MCP_SURFACE"] == "codex"
+    assert "TRANSCRIPT_PERSONA" not in env
 
 
 def test_codex_install_cli_dry_run_json(tmp_path: Path) -> None:
@@ -467,6 +727,42 @@ def test_codex_install_cli_dry_run_json(tmp_path: Path) -> None:
     assert receipt["dry_run"] is True
     assert receipt["import_history"] is False
     assert "CHIMERA_MEMORY_IMPORT_HISTORY" in receipt["env_keys"]
+    assert not config_path.exists()
+
+
+def test_codex_install_cli_project_dry_run_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "mcp_servers.json"
+    project_root = tmp_path / "repo" / ".chimera-memory"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "chimera_memory.cli",
+            "codex",
+            "install",
+            "--config",
+            str(config_path),
+            "--project-id",
+            "Chimera Memory!",
+            "--project-root",
+            str(project_root),
+            "--command",
+            sys.executable,
+            "--no-import-history",
+            "--dry-run",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    receipt = json.loads(proc.stdout)
+
+    assert receipt["memory_profile"] == "project"
+    assert receipt["project_id"] == "Chimera-Memory"
+    assert receipt["mcp_surface"] == "codex"
+    assert "CHIMERA_MEMORY_PROJECT_ID" in receipt["env_keys"]
+    assert "TRANSCRIPT_PERSONA" not in receipt["env_keys"]
     assert not config_path.exists()
 
 

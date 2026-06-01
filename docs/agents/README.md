@@ -4,7 +4,8 @@ Start with root `AGENTS.md`. Read these files only when relevant to the task.
 
 ## Core Docs
 
-- `README.md` - this index and routing table
+- `token-efficient-usage.md` - shortest safe path through CM docs, MCP tools, and validation
+- `README.md` - public overview, setup, MCP tools, CLI, and config reference
 - `repo-map.md` - repository layout, major files, and where work belongs
 - `commands.md` - install, CLI, server, test, and validation commands
 - `boundaries.md` - architecture boundaries, focused module ownership, and import direction
@@ -29,6 +30,7 @@ Start with root `AGENTS.md`. Read these files only when relevant to the task.
 - `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md` - persistent CLI worker transport design
 - `docs/MIGRATION_PIPELINE.md` - legacy memory migration workflow
 - `docs/FEDERATED_MEMORY_SCOPE.md` - federated memory scope policy
+- `docs/CODEX_DESKTOP_SCOPE_AND_CODE_AUDIT.md` - Codex Desktop no-persona scope and refactor audit
 - `docs/ACTIVE_HARNESS_LEASE.md` - active harness lease behavior
 
 Do not read every document by default. Use this index and `AGENTS.md` routing to keep context focused.

@@ -90,16 +90,61 @@ from .memory_auto_capture import build_auto_capture_plan, write_auto_capture_fil
 from .memory_authored_writeback import (
     build_authored_memory_write_plan,
     write_authored_memory_file,
+    write_authored_memory_project_file,
 )
 from .memory_review import REVIEW_ACTIONS, memory_review_action as _db_memory_review_action, memory_review_pending
 from .memory_scope import (
     MEMORY_SCOPE_AUTO,
+    MEMORY_SCOPE_PROJECT,
     global_memory_root,
     infer_memory_scope,
     project_memory_roots,
     scope_filter_sql,
 )
 from .memory_schema import init_memory_tables
+
+_FACADE_COMPAT_EXPORTS = (
+    ENHANCEMENT_JOB_STATUSES,
+    memory_enhancement_claim_next,
+    memory_enhancement_complete,
+    memory_enhancement_enqueue,
+    memory_worker_budget,
+    memory_worker_claim_next,
+    memory_worker_has_pending_job,
+    memory_worker_heartbeat,
+    memory_worker_submit_result,
+    ENTITY_TYPES,
+    MENTION_ROLES,
+    apply_enhancement_entities,
+    memory_entity_connections,
+    memory_entity_edge_query,
+    memory_entity_index,
+    memory_entity_query,
+    memory_file_entity_links,
+    normalize_entity_name,
+    upsert_memory_entity,
+    upsert_memory_entity_edge,
+    MEMORY_FILE_EDGE_RELATION_TYPES,
+    memory_file_edge_query,
+    memory_file_edge_temporal_sweep,
+    memory_file_edge_upsert,
+    memory_entity_wiki_batch,
+    memory_entity_wiki_generate,
+    INSTRUCTION_GRADE_PROVENANCE,
+    LIFECYCLE_STATUSES,
+    PROVENANCE_STATUSES,
+    REVIEW_STATUSES,
+    SENSITIVITY_TIERS,
+    memory_live_retrieval_check,
+    memory_legacy_migration_plan,
+    memory_profile_export,
+    memory_pyramid_summary_query,
+    _json_object,
+    memory_audit_query,
+    memory_recall_trace_query,
+    REVIEW_ACTIONS,
+    memory_review_pending,
+)
 
 log = logging.getLogger(__name__)
 
@@ -363,31 +408,31 @@ def discover_files(personas_dir: Path) -> list[tuple[str, str, Path]]:
     are indexed from the persona tree. Global/shared and current-project memory
     may also be indexed because those scopes are intentionally non-private.
 
-    When TRANSCRIPT_PERSONA is unset, walks all personas (legacy / multi-persona
-    aggregation use case). The MCP-server-per-persona deployment should always
-    set the env var.
+    When TRANSCRIPT_PERSONA is unset and project roots are configured, skips the
+    persona tree and indexes only global/shared/project memory. Otherwise it
+    keeps the legacy multi-persona aggregation behavior.
 
     Returns [(persona, relative_path, full_path)].
     """
-    import os
     results = []
-    if not personas_dir.exists():
-        return results
 
     scope_persona = os.environ.get("TRANSCRIPT_PERSONA", "").strip()
+    project_roots = project_memory_roots()
+    skip_persona_tree = not scope_persona and bool(project_roots)
 
-    for persona_dir in personas_dir.iterdir():
-        if not persona_dir.is_dir() or persona_dir.name.startswith("."):
-            continue
-        for sub in persona_dir.iterdir():
-            if not sub.is_dir() or sub.name.startswith("."):
+    if personas_dir.exists() and not skip_persona_tree:
+        for persona_dir in personas_dir.iterdir():
+            if not persona_dir.is_dir() or persona_dir.name.startswith("."):
                 continue
-            if scope_persona and sub.name != scope_persona:
-                continue
-            for index_root_name in sorted(MEMORY_DIRS - {"shared"}):
-                index_root = sub / index_root_name
-                if index_root.exists() and index_root.is_dir():
-                    _walk_for_files(index_root, sub.name, sub, results)
+            for sub in persona_dir.iterdir():
+                if not sub.is_dir() or sub.name.startswith("."):
+                    continue
+                if scope_persona and sub.name != scope_persona:
+                    continue
+                for index_root_name in sorted(MEMORY_DIRS - {"shared"}):
+                    index_root = sub / index_root_name
+                    if index_root.exists() and index_root.is_dir():
+                        _walk_for_files(index_root, sub.name, sub, results)
 
     # Existing ChimeraAgency shared/ is treated as the v1 global layer.
     shared_dir = personas_dir.parent / "shared"
@@ -398,7 +443,7 @@ def discover_files(personas_dir: Path) -> list[tuple[str, str, Path]]:
     if global_dir.exists() and global_dir.resolve() != shared_dir.resolve():
         _walk_for_files(global_dir, "global", global_dir, results)
 
-    for project_id, project_dir in project_memory_roots():
+    for project_id, project_dir in project_roots:
         if project_dir.exists():
             _walk_project_memory_files(project_dir, f"project:{project_id}", results)
 
@@ -875,19 +920,26 @@ def memory_query(
         scope=scope,
     )
     if scope_sql:
-        conditions.append(scope_sql); params.extend(scope_params)
+        conditions.append(scope_sql)
+        params.extend(scope_params)
     if fm_type:
-        conditions.append("f.fm_type = ?"); params.append(fm_type)
+        conditions.append("f.fm_type = ?")
+        params.append(fm_type)
     if min_importance is not None:
-        conditions.append("f.fm_importance >= ?"); params.append(min_importance)
+        conditions.append("f.fm_importance >= ?")
+        params.append(min_importance)
     if max_importance is not None:
-        conditions.append("f.fm_importance <= ?"); params.append(max_importance)
+        conditions.append("f.fm_importance <= ?")
+        params.append(max_importance)
     if status:
-        conditions.append("f.fm_status = ?"); params.append(status)
+        conditions.append("f.fm_status = ?")
+        params.append(status)
     if tag:
-        conditions.append("f.fm_tags LIKE ?"); params.append(f"%{tag}%")
+        conditions.append("f.fm_tags LIKE ?")
+        params.append(f"%{tag}%")
     if about:
-        conditions.append("f.fm_about LIKE ?"); params.append(f"%{about}%")
+        conditions.append("f.fm_about LIKE ?")
+        params.append(f"%{about}%")
     if not include_synthesis:
         conditions.append("COALESCE(f.fm_exclude_from_default_search, 0) = 0")
     _add_source_ref_conditions(conditions, params, source_kind=source_kind, source_uri=source_uri)
@@ -1585,6 +1637,9 @@ def memory_authored_writeback(
     enqueue: bool = True,
     requested_provider: str = "",
     requested_model: str = "",
+    memory_scope: str = "persona",
+    project_id: str = "",
+    project_root: Path | None = None,
     actor: str = "agent",
 ) -> dict:
     """Plan or write a structured authored memory and queue narrow enrichment."""
@@ -1592,6 +1647,8 @@ def memory_authored_writeback(
         payload=payload,
         persona=persona,
         relative_path=relative_path,
+        memory_scope=memory_scope,
+        project_id=project_id,
     )
     if not plan.get("ok"):
         return plan
@@ -1603,6 +1660,8 @@ def memory_authored_writeback(
         "guard_findings": plan.get("guard_findings", []),
         "write": bool(write),
         "enqueue": bool(enqueue),
+        "memory_scope": plan.get("memory_scope"),
+        "project_id": plan.get("project_id"),
     }
     if not write:
         record_memory_audit_event(
@@ -1618,7 +1677,12 @@ def memory_authored_writeback(
         preview["body_preview"] = plan["body"][:1200]
         return {"ok": True, "written": False, "plan": preview}
 
-    write_result = write_authored_memory_file(personas_dir, plan)
+    if plan.get("memory_scope") == MEMORY_SCOPE_PROJECT:
+        if project_root is None:
+            return {"ok": False, "error": "project root required"}
+        write_result = write_authored_memory_project_file(project_root, plan)
+    else:
+        write_result = write_authored_memory_file(personas_dir, plan)
     if not write_result.get("ok"):
         return write_result
 

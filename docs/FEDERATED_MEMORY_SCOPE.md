@@ -14,6 +14,17 @@ Default recall scope is:
 current persona + current project + global
 ```
 
+Codex Desktop can also run without a persona. In that mode the default recall
+scope is:
+
+```text
+current project + global
+```
+
+No-persona Codex profiles must set `CHIMERA_MEMORY_PROJECT_ID` and
+`CHIMERA_MEMORY_PROJECT_ROOT`. They intentionally leave `TRANSCRIPT_PERSONA`
+unset and must not walk private persona trees.
+
 Cross-persona private recall is not a v1 feature. If a persona memory should become shared, it must be promoted upward as a snapshot.
 
 ## Storage Mapping
@@ -47,6 +58,12 @@ Explicit scope modes:
 - `scope=project`: current project only
 - `scope=global`: global only
 - `scope=all`: operator/admin mode, not normal persona recall
+
+For no-persona Codex Desktop, `scope=auto` includes only global plus the current
+project. Persona-private memory is excluded unless a persona is explicitly set.
+Use `CHIMERA_MEMORY_MCP_SURFACE=codex` for the Codex Desktop project surface:
+it keeps the normal memory belt plus transcript recall and exact
+`memory_search`/`memory_query`.
 
 ## Promotion Policy
 
@@ -96,7 +113,7 @@ Current v1 MCP status:
 - Implemented: `memory_context_pack`, `memory_recall`, `memory_remember`, `memory_promote_snapshot`, `memory_review`, `memory_diagnose`.
 - `memory_promote_snapshot` previews by default. Writes require `write=true` and an explicit `approved_by` value, reject duplicate targets, copy the source body/frontmatter, and stamp `promoted_from` provenance with a source content hash.
 - Compatibility: default MCP surface is still `full`, so legacy/admin tools remain registered unless a server opts into filtering.
-- Runtime filtering: set `CHIMERA_MEMORY_MCP_SURFACE=persona` to expose the persona memory belt plus transcript recall tools. Set `CHIMERA_MEMORY_MCP_SURFACE=persona_memory` for only the memory belt. Unknown values fall back to `full`.
+- Runtime filtering: set `CHIMERA_MEMORY_MCP_SURFACE=persona` to expose the persona memory belt plus transcript recall tools. Set `CHIMERA_MEMORY_MCP_SURFACE=codex` for Codex Desktop project mode with exact memory search/query. Set `CHIMERA_MEMORY_MCP_SURFACE=persona_memory` for only the memory belt. Unknown values fall back to `full`.
 
 Project writes can target more than one repo without restarting CM per project by setting `CHIMERA_MEMORY_PROJECT_ROOTS`:
 

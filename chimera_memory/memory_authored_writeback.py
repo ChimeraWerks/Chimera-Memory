@@ -1,9 +1,8 @@
-"""Persona-facing writer for structured authored memory payloads."""
+"""Writer for structured authored memory payloads."""
 
 from __future__ import annotations
 
 import re
-import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from .memory_enhancement import (
     build_authored_memory_enrichment_request,
     normalize_authored_memory_writeback,
 )
+from .memory_scope import MEMORY_SCOPE_PROJECT, normalize_memory_scope, safe_project_id
 from .sanitizer import scan_for_injection
 
 AUTHORED_MEMORY_WRITE_SCHEMA_VERSION = "chimera-memory.authored-memory-write.v1"
@@ -71,11 +71,17 @@ def build_authored_memory_write_plan(
     payload: Mapping[str, Any],
     persona: str,
     relative_path: str = "",
+    memory_scope: str = "persona",
+    project_id: str = "",
 ) -> dict[str, Any]:
     """Build a write plan for a structured authored memory file."""
     persona = str(persona or "").strip()
     if not persona:
         return {"ok": False, "error": "persona required"}
+    selected_scope = normalize_memory_scope(memory_scope)
+    selected_project_id = safe_project_id(project_id) if selected_scope == MEMORY_SCOPE_PROJECT else None
+    if selected_scope == MEMORY_SCOPE_PROJECT and not selected_project_id:
+        return {"ok": False, "error": "project_id required for project memory"}
     try:
         request = build_authored_memory_enrichment_request(
             memory_payload=payload,
@@ -101,6 +107,8 @@ def build_authored_memory_write_plan(
         idempotency_key=idempotency_key,
         memory_payload=memory_payload,
         normalized=normalized,
+        memory_scope=selected_scope,
+        project_id=selected_project_id or "",
     )
     body = render_authored_memory_markdown(
         title=str(frontmatter.get("about") or memory_id),
@@ -114,6 +122,8 @@ def build_authored_memory_write_plan(
         "ok": True,
         "schema_version": AUTHORED_MEMORY_WRITE_SCHEMA_VERSION,
         "persona": persona,
+        "memory_scope": selected_scope,
+        "project_id": selected_project_id,
         "relative_path": target_relative_path,
         "idempotency_key": idempotency_key,
         "frontmatter": frontmatter,
@@ -181,6 +191,56 @@ def write_authored_memory_file(
     }
 
 
+def write_authored_memory_project_file(
+    project_root: Path,
+    plan: Mapping[str, Any],
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Write a planned structured memory file under a project memory root."""
+    if not plan.get("ok"):
+        return dict(plan)
+    if plan.get("blocking_findings"):
+        return {
+            "ok": False,
+            "error": "authored memory content failed safety scan",
+            "blocking_findings": plan["blocking_findings"],
+        }
+
+    relative_text = str(plan["relative_path"]).replace("\\", "/").lstrip("/")
+    relative_path = Path(relative_text)
+    if relative_path.is_absolute() or any(part == ".." for part in relative_path.parts):
+        return {
+            "ok": False,
+            "error": "authored memory relative path escapes project root",
+            "relative_path": relative_text,
+        }
+    root = project_root.expanduser().resolve()
+    target = (root / relative_path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return {
+            "ok": False,
+            "error": "authored memory relative path escapes project root",
+            "relative_path": relative_text,
+        }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and not overwrite:
+        return {
+            "ok": False,
+            "error": "authored memory file already exists",
+            "relative_path": str(relative_path).replace("\\", "/"),
+        }
+    target.write_text(str(plan["body"]), encoding="utf-8", newline="\n")
+    return {
+        "ok": True,
+        "path": str(target),
+        "relative_path": str(relative_path).replace("\\", "/"),
+        "project_root": str(root),
+    }
+
+
 def render_authored_memory_markdown(
     *,
     title: str,
@@ -229,6 +289,8 @@ def _frontmatter_from_payload(
     idempotency_key: str,
     memory_payload: Mapping[str, Any],
     normalized: Mapping[str, Any],
+    memory_scope: str,
+    project_id: str,
 ) -> dict[str, Any]:
     provenance_status = str(normalized.get("provenance_status") or "generated")
     review_status = str(normalized.get("review_status") or "pending")
@@ -271,6 +333,9 @@ def _frontmatter_from_payload(
             "review_status": "pending",
         },
     }
+    if memory_scope == MEMORY_SCOPE_PROJECT:
+        frontmatter["memory_scope"] = MEMORY_SCOPE_PROJECT
+        frontmatter["project_id"] = project_id
     return {key: value for key, value in frontmatter.items() if value not in ("", None)}
 
 

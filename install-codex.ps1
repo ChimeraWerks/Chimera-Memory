@@ -1,6 +1,8 @@
 param(
     [string]$PersonaId = "",
     [string]$PersonaRoot = "",
+    [string]$ProjectId = "",
+    [string]$ProjectRoot = "",
     [string]$Provider = "",
     [switch]$ReuseProviderLogin,
     [switch]$EnableProviderWorker,
@@ -11,11 +13,14 @@ param(
     [string]$CodexAuthPath = "",
     [string]$HermesHome = "",
     [string]$ClaudeCredentialsPath = "",
+    [string]$Python = "python",
     [switch]$Yes
 )
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+$BootstrapScript = Join-Path $RepoRoot "scripts\bootstrap-cm-venv.ps1"
 
 function Invoke-Step {
     param(
@@ -24,7 +29,7 @@ function Invoke-Step {
     )
     Write-Host ""
     Write-Host "==> $Label"
-    & python @Args
+    & $VenvPython @Args
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -70,11 +75,19 @@ if ($ImportHistory -and $NoImportHistory) {
 
 $reuseProviderLoginValue = [bool]$ReuseProviderLogin
 
-if (-not $PersonaId) {
-    $PersonaId = Read-Defaulted "Persona id, e.g. developer/asa"
-}
-if (-not $PersonaRoot) {
+if ($PersonaId -and -not $PersonaRoot) {
     $PersonaRoot = Read-Defaulted "Persona root path" (Get-Location).Path
+}
+if (-not $PersonaId) {
+    if (-not $ProjectRoot) {
+        $ProjectRoot = Join-Path $RepoRoot ".chimera-memory"
+    }
+    if (-not $ProjectId) {
+        $ProjectId = [regex]::Replace((Split-Path -Leaf $RepoRoot), "[^A-Za-z0-9_.-]+", "-").Trim(".-")
+        if (-not $ProjectId) {
+            $ProjectId = "default"
+        }
+    }
 }
 if (-not $Provider) {
     $Provider = Read-Defaulted "Enhancement provider preference, blank for dry_run" ""
@@ -86,10 +99,13 @@ if ($Provider -and -not $reuseProviderLoginValue) {
 $installArgs = @(
     "-m", "chimera_memory.cli",
     "codex", "install",
-    "--persona-id", $PersonaId,
-    "--persona-root", $PersonaRoot,
-    "--command", "chimera-memory"
+    "--command", "`"$VenvPython`" -m chimera_memory.cli"
 )
+if ($PersonaId) {
+    $installArgs += @("--persona-id", $PersonaId, "--persona-root", $PersonaRoot)
+} else {
+    $installArgs += @("--project-id", $ProjectId, "--project-root", $ProjectRoot)
+}
 
 if ($CodexConfig) {
     $installArgs += @("--config", $CodexConfig)
@@ -125,7 +141,17 @@ if ($Yes) {
     $installArgs += "--yes"
 }
 
-Invoke-Step "Installing ChimeraMemory editable package" @("-m", "pip", "install", "-e", $RepoRoot)
+if (-not (Test-Path $BootstrapScript)) {
+    throw "Missing ChimeraMemory venv bootstrap script: $BootstrapScript"
+}
+
+Write-Host ""
+Write-Host "==> Preparing ChimeraMemory local venv"
+& $BootstrapScript -Python $Python
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
 Invoke-Step "Writing Codex MCP setup" $installArgs
 
 $doctorArgs = @("-m", "chimera_memory.cli", "codex", "doctor")
@@ -135,7 +161,7 @@ if ($CodexConfig) {
 
 Write-Host ""
 Write-Host "==> Running Codex doctor"
-& python @doctorArgs
+& $VenvPython @doctorArgs
 if ($LASTEXITCODE -gt 1) {
     exit $LASTEXITCODE
 }

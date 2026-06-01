@@ -81,6 +81,9 @@ def project_memory_root(project_id: object = "") -> Path | None:
         return None
     if not selected_project_id:
         return root
+    explicit = safe_project_id(os.environ.get("CHIMERA_MEMORY_PROJECT_ID", ""))
+    if explicit == selected_project_id:
+        return root
     inferred = _project_id_from_root(root)
     return root if inferred == selected_project_id else None
 

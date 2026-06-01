@@ -32,6 +32,15 @@ PERSONA_TRANSCRIPT_TOOLS = frozenset(
 
 PERSONA_TOOLS = PERSONA_MEMORY_TOOLS | PERSONA_TRANSCRIPT_TOOLS
 
+CODEX_DESKTOP_TOOLS = PERSONA_TOOLS | frozenset(
+    {
+        "memory_search",
+        "memory_query",
+        "memory_stats",
+        "memory_whereami",
+    }
+)
+
 WORKER_TOOLS = frozenset(
     {
         "memory_worker_claim_next",
@@ -49,6 +58,8 @@ def normalize_mcp_surface(value: object) -> str:
         return "full"
     if surface in {"persona", "personas", "normal"}:
         return "persona"
+    if surface in {"codex", "codex_desktop", "desktop", "project", "project_memory"}:
+        return "codex"
     if surface in {"persona_memory", "memory", "memory_only"}:
         return "persona_memory"
     if surface in {"worker", "memory_worker", "enhancement_worker"}:
@@ -70,6 +81,8 @@ def allowed_tools_for_surface(surface: object) -> frozenset[str] | None:
     normalized = normalize_mcp_surface(surface)
     if normalized == "persona":
         return PERSONA_TOOLS
+    if normalized == "codex":
+        return CODEX_DESKTOP_TOOLS
     if normalized == "persona_memory":
         return PERSONA_MEMORY_TOOLS
     if normalized == "worker":

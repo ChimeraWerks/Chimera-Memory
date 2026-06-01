@@ -137,6 +137,35 @@ def test_full_reindex_discovers_global_and_current_project_layers(tmp_path: Path
     assert memory_search(conn, "sarah", persona="asa", project_id="ProjectChimera") == []
 
 
+def test_project_only_reindex_skips_persona_tree_when_no_persona(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path
+    personas = root / "personas"
+    project_root = root / "ChimeraMemory" / ".chimera-memory"
+
+    _write(personas / "developer" / "asa" / "memory" / "asa.md", "project only marker asa")
+    _write(personas / "researcher" / "sarah" / "memory" / "sarah.md", "project only marker sarah")
+    _write(root / "shared" / "team.md", "project only marker shared")
+    _write(
+        project_root / "memory" / "status.md",
+        "project only marker repo",
+        "type: procedural\nmemory_scope: project\nproject_id: ChimeraMemory\n",
+    )
+
+    monkeypatch.delenv("TRANSCRIPT_PERSONA", raising=False)
+    monkeypatch.setenv("CHIMERA_MEMORY_PROJECT_ROOT", str(project_root))
+    monkeypatch.setenv("CHIMERA_MEMORY_PROJECT_ID", "ChimeraMemory")
+
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    full_reindex(conn, personas, embed=False)
+
+    rows = memory_search(conn, "project only marker", project_id="ChimeraMemory", limit=10)
+    assert _paths(rows) == {
+        ("shared", "team.md", None),
+        ("project:ChimeraMemory", "memory/status.md", "ChimeraMemory"),
+    }
+
+
 def test_project_root_map_resolves_multiple_project_layers(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path
     personas = root / "personas"
@@ -180,3 +209,12 @@ def test_project_root_map_resolves_multiple_project_layers(tmp_path: Path, monke
         ("asa", "memory/asa.md", None),
         ("project:PersonifyAgents", "memory/status.md", "PersonifyAgents"),
     }
+
+
+def test_explicit_project_id_pairs_with_single_project_root(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / "repo-folder" / ".chimera-memory"
+
+    monkeypatch.setenv("CHIMERA_MEMORY_PROJECT_ID", "ChimeraMemory")
+    monkeypatch.setenv("CHIMERA_MEMORY_PROJECT_ROOT", str(project_root))
+
+    assert project_memory_root("ChimeraMemory") == project_root

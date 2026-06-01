@@ -89,6 +89,29 @@ def test_main_can_start_bootstrap_in_background_immediately(monkeypatch):
     ]
 
 
+def test_main_can_run_streamable_http_transport(monkeypatch):
+    calls = []
+
+    class FakeServer:
+        def run(self, *, transport):
+            calls.append(("run", transport))
+
+    monkeypatch.setenv("CHIMERA_MEMORY_STARTUP_BOOTSTRAP", "false")
+    monkeypatch.setattr(server, "_configure_diagnostic_logging", lambda: Path("server.log"))
+    monkeypatch.setattr(
+        server,
+        "create_server",
+        lambda host="127.0.0.1", port=8000: calls.append(("create", host, port)) or FakeServer(),
+    )
+
+    server.main(transport="streamable-http", host="127.0.0.1", port=8765)
+
+    assert calls == [
+        ("create", "127.0.0.1", 8765),
+        ("run", "streamable-http"),
+    ]
+
+
 def test_main_skips_bootstrap_for_worker_surface(monkeypatch):
     calls = []
 
@@ -136,7 +159,7 @@ def test_main_sync_bootstrap_keeps_indexer_reference_until_shutdown(monkeypatch)
     ]
 
 
-def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
+def test_bootstrap_starts_enhancement_before_embedding_and_prewarm(monkeypatch):
     calls = []
     lease = SimpleNamespace(path=Path("lease.lock"), release=lambda: None)
 
@@ -146,6 +169,7 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     monkeypatch.setattr(server, "_try_acquire_startup_maintenance_lease", lambda: lease)
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
     monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
+    monkeypatch.setattr(server, "_memory_file_watcher_expected", lambda: True)
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
     monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
     monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append(("health", worker_states)) or object())
@@ -156,8 +180,8 @@ def test_bootstrap_starts_live_workers_before_prewarm(monkeypatch):
     assert calls == [
         "indexer",
         "memory",
-        "embedder",
         "enhancement",
+        "embedder",
         (
             "health",
             {
@@ -182,6 +206,7 @@ def test_bootstrap_skips_redundant_prewarm_when_embedding_worker_owns_model(monk
     monkeypatch.setattr(server, "_try_acquire_startup_maintenance_lease", lambda: lease)
     monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
     monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
+    monkeypatch.setattr(server, "_memory_file_watcher_expected", lambda: True)
     monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
     monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
     monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append("health") or object())
@@ -206,6 +231,35 @@ def test_bootstrap_skips_live_workers_for_worker_surface(monkeypatch):
 
     assert server._bootstrap_startup_services() is None
     assert calls == []
+
+
+def test_bootstrap_treats_absent_memory_roots_as_expected(monkeypatch):
+    calls = []
+    lease = SimpleNamespace(path=Path("lease.lock"), release=lambda: None)
+
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+    monkeypatch.delenv("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", raising=False)
+    monkeypatch.setattr(server, "_startup_maintenance_lease", None)
+    monkeypatch.setattr(server, "_try_acquire_startup_maintenance_lease", lambda: lease)
+    monkeypatch.setattr(server, "_start_transcript_indexer", lambda: calls.append("indexer") or object())
+    monkeypatch.setattr(server, "_start_memory_file_indexer", lambda: calls.append("memory") or object())
+    monkeypatch.setattr(server, "_memory_file_watcher_expected", lambda: False)
+    monkeypatch.setattr(server, "_start_transcript_embedding_worker", lambda: calls.append("embedder") or object())
+    monkeypatch.setattr(server, "_start_memory_enhancement_worker", lambda: calls.append("enhancement") or object())
+    monkeypatch.setattr(server, "_start_cm_health_worker", lambda worker_states=None: calls.append(("health", worker_states)) or object())
+
+    server._bootstrap_startup_services()
+
+    assert "memory" not in calls
+    assert (
+        "health",
+        {
+            "transcript_indexer": True,
+            "memory_file_watcher": True,
+            "transcript_embedding_worker": True,
+            "memory_enhancement_worker": True,
+        },
+    ) in calls
 
 
 def test_bootstrap_skips_live_workers_when_maintenance_lease_is_held(monkeypatch):
@@ -386,7 +440,7 @@ def test_start_memory_file_indexer_indexes_and_watches(monkeypatch, tmp_path):
     assert server._start_memory_file_indexer() is observer
     assert calls == [
         "connect",
-        ("reindex", tmp_path / "personas", True),
+        ("reindex", tmp_path / "personas", False),
         "close",
         ("watch", str(tmp_path / "transcript.db"), tmp_path / "personas"),
     ]

@@ -78,9 +78,10 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # When enabled, only the active branch is indexed by default.
 # branch_detection: false
 
-# MCP tool surface. full exposes all legacy/admin tools. persona exposes the
-# normal persona belt plus transcript recall tools. persona_memory exposes only
-# the memory belt.
+# MCP tool surface. full exposes all legacy/admin tools. codex exposes the
+# Codex Desktop project belt, including exact memory_search and memory_query.
+# persona exposes the normal persona belt plus transcript recall tools.
+# persona_memory exposes only the memory belt.
 # mcp_surface: full
 """
 

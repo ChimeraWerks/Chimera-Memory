@@ -13,7 +13,16 @@ def main():
     subparsers = parser.add_subparsers(dest="command")
 
     # serve: run MCP server
-    subparsers.add_parser("serve", help="Run the MCP server (stdio transport)")
+    sub_serve = subparsers.add_parser("serve", help="Run the MCP server")
+    sub_serve.add_argument(
+        "--transport",
+        choices=("stdio", "sse", "streamable-http"),
+        default="stdio",
+        help="MCP transport. Use streamable-http for one shared local server.",
+    )
+    sub_serve.add_argument("--host", default="127.0.0.1", help="HTTP transport bind host")
+    sub_serve.add_argument("--port", type=int, default=8000, help="HTTP transport bind port")
+    sub_serve.add_argument("--mount-path", default="", help="Optional SSE mount path")
 
     # backfill: index all historical JSONL files
     sub_bf = subparsers.add_parser("backfill", help="Index all historical JSONL session files")
@@ -25,6 +34,13 @@ def main():
     # stats: show database statistics
     sub_stats = subparsers.add_parser("stats", help="Show transcript database statistics")
     sub_stats.add_argument("--db", help="Path to transcript.db")
+
+    # embed: generate transcript embeddings with visible progress
+    sub_embed = subparsers.add_parser("embed", help="Generate transcript embeddings with progress")
+    sub_embed.add_argument("--db", help="Path to transcript.db")
+    sub_embed.add_argument("--limit", type=int, help="Maximum entries to embed in this run")
+    sub_embed.add_argument("--batch-size", type=int, default=64, help="FastEmbed batch size")
+    sub_embed.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     # split-db: stage shared transcript DB into per-persona DBs
     sub_split = subparsers.add_parser("split-db", help="Split a shared transcript DB into per-persona DBs")
@@ -40,10 +56,10 @@ def main():
     sub_codex = subparsers.add_parser("codex", help="Codex integration helpers")
     codex_subparsers = sub_codex.add_subparsers(dest="codex_command")
     sub_codex_doctor = codex_subparsers.add_parser("doctor", help="Check Codex MCP ChimeraMemory setup")
-    sub_codex_doctor.add_argument("--config", help="Path to Codex mcp_servers.json")
+    sub_codex_doctor.add_argument("--config", help="Path to Codex config.toml or legacy mcp_servers.json")
     sub_codex_doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub_codex_template = codex_subparsers.add_parser("template", help="Print a safe Codex MCP config template")
-    sub_codex_template.add_argument("--persona", required=True, help="Persona tag for indexed Codex transcripts")
+    sub_codex_template.add_argument("--persona", default="", help="Optional persona tag for indexed Codex transcripts")
     sub_codex_template.add_argument("--jsonl-dir", default="~/.codex/sessions/", help="Codex JSONL sessions directory")
     sub_codex_template.add_argument(
         "--command",
@@ -57,11 +73,15 @@ def main():
     sub_codex_template.add_argument("--persona-root", default="", help="Optional persona root directory")
     sub_codex_template.add_argument("--personas-dir", default="", help="Optional personas directory")
     sub_codex_template.add_argument("--shared-root", default="", help="Optional shared memory/root directory")
+    sub_codex_template.add_argument("--project-id", default="", help="Optional repo/project memory id for no-persona Codex")
+    sub_codex_template.add_argument("--project-root", default="", help="Optional repo/project memory root for no-persona Codex")
     sub_codex_install = codex_subparsers.add_parser("install", help="Write or update Codex MCP setup")
-    sub_codex_install.add_argument("--config", help="Path to Codex mcp_servers.json")
+    sub_codex_install.add_argument("--config", help="Path to Codex config.toml or legacy mcp_servers.json")
     sub_codex_install.add_argument("--persona", default="", help="Persona tag for indexed Codex transcripts")
     sub_codex_install.add_argument("--persona-id", default="", help="Stable persona id, e.g. developer/asa")
     sub_codex_install.add_argument("--persona-root", default="", help="Persona root directory")
+    sub_codex_install.add_argument("--project-id", default="", help="Repo/project memory id for no-persona Codex")
+    sub_codex_install.add_argument("--project-root", default="", help="Repo/project memory root for no-persona Codex")
     sub_codex_install.add_argument("--jsonl-dir", default="~/.codex/sessions/", help="Codex JSONL sessions directory")
     sub_codex_install.add_argument(
         "--command",
@@ -70,7 +90,7 @@ def main():
         help="Command Codex should spawn",
     )
     sub_codex_install.add_argument("--server-name", default="chimera-memory", help="MCP server name")
-    sub_codex_install.add_argument("--surface", default="persona", help="MCP tool surface to expose")
+    sub_codex_install.add_argument("--surface", default="", help="MCP tool surface to expose; defaults to codex for project profiles and persona for persona profiles")
     sub_codex_install.add_argument("--provider", default="", help="Optional enhancement provider preference")
     sub_codex_install.add_argument("--reuse-provider-login", action="store_true", help="Import an existing provider login into CM")
     sub_codex_install.add_argument("--oauth-store", default="", help="Optional CM OAuth/auth store path")
@@ -191,11 +211,18 @@ def main():
 
     if args.command == "serve":
         from .server import main as serve_main
-        serve_main()
+        serve_main(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            mount_path=args.mount_path or None,
+        )
     elif args.command == "backfill":
         _run_backfill(args)
     elif args.command == "stats":
         _run_stats(args)
+    elif args.command == "embed":
+        _run_embed(args)
     elif args.command == "split-db":
         _run_split_db(args)
     elif args.command == "codex":
@@ -261,6 +288,80 @@ def _run_stats(args):
             print(f"  {source}: {count:,}")
 
 
+def _run_embed(args):
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
+
+    from .db import TranscriptDB
+    from .embeddings import (
+        count_unembedded_transcript_entries,
+        embed_transcript_entries,
+        embedding_runtime_status,
+        format_progress_bar,
+    )
+    from .server import get_default_db_path
+
+    db_path = args.db or str(get_default_db_path())
+    db = TranscriptDB(db_path)
+    batch_size = max(1, args.batch_size)
+    with db.connection() as conn:
+        pending = count_unembedded_transcript_entries(conn)
+        limit = None if args.limit is None else max(0, args.limit)
+        total_to_embed = pending if limit is None else min(pending, limit)
+        runtime = embedding_runtime_status()
+        if args.json:
+            count = embed_transcript_entries(
+                db,
+                conn,
+                batch_size=batch_size,
+                limit=limit,
+                progress_label="cli transcript embeddings",
+                log_progress=False,
+            )
+            print(
+                json.dumps(
+                    {
+                        "db": db_path,
+                        "pending_before": pending,
+                        "embedded": count,
+                        "pending_after": count_unembedded_transcript_entries(conn),
+                        "runtime": runtime,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return
+
+        print(f"DB: {db_path}")
+        print(
+            "Embedding runtime: "
+            f"provider={runtime['provider']} threads={runtime['threads']}/{runtime['cpu_count']} "
+            f"cpu_reserve={runtime['cpu_reserve_percent']}%"
+        )
+        if total_to_embed <= 0:
+            print("All eligible transcript entries already have embeddings.")
+            return
+
+        print(f"Pending transcript entries: {pending:,}")
+
+        def progress(current, total):
+            print(f"\r  {format_progress_bar(current, total)}", end="", flush=True)
+
+        count = embed_transcript_entries(
+            db,
+            conn,
+            batch_size=batch_size,
+            progress_callback=progress,
+            limit=limit,
+            progress_label="cli transcript embeddings",
+            log_progress=False,
+        )
+        print()
+        print(f"Done. Embedded {count:,} entries; {count_unembedded_transcript_entries(conn):,} pending.")
+
+
 def _run_split_db(args):
     from .db_split import parse_mapping, results_to_json, split_db
     from .server import get_default_db_path
@@ -318,6 +419,8 @@ def _run_codex(args):
             persona_root=args.persona_root,
             personas_dir=args.personas_dir,
             shared_root=args.shared_root,
+            project_id=args.project_id,
+            project_root=args.project_root,
         )
         print(json.dumps(config, indent=2))
         return
@@ -337,6 +440,8 @@ def _run_codex(args):
                 persona=args.persona,
                 persona_id=args.persona_id,
                 persona_root=args.persona_root,
+                project_id=args.project_id,
+                project_root=args.project_root,
                 jsonl_dir=args.jsonl_dir,
                 command=args.server_command,
                 server_name=args.server_name,
