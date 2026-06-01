@@ -9,12 +9,16 @@ import shlex
 import shutil
 import socket
 import sqlite3
-import tomllib
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib
 
 from .memory_cli_worker_supervisor import DEFAULT_CODEX_MEMORY_WORKER_MODEL
 from .paths import persona_transcript_db_path

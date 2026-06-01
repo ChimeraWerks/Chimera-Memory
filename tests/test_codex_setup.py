@@ -4,8 +4,12 @@ import json
 import sqlite3
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib
 
 from chimera_memory.codex_setup import (
     build_codex_mcp_config,
