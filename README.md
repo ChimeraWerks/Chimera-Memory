@@ -111,13 +111,164 @@ TRANSCRIPT_JSONL_DIR = "~/.codex/sessions/"
 CHIMERA_CLIENT = "codex"
 CHIMERA_MEMORY_PROJECT_ID = "your-repo"
 CHIMERA_MEMORY_PROJECT_ROOT = "C:\\path\\to\\your-repo\\.chimera-memory"
+CHIMERA_MEMORY_GLOBAL_ROOT = "~/.chimera-memory/global-memory"
 CHIMERA_MEMORY_MCP_SURFACE = "codex"
 ```
 
 Codex can run repo-scoped with no persona. In that mode CM searches global plus
 current-project memory, writes authored memories under the configured project
-root, intentionally leaves persona identity env unset, and defaults to the
-`codex` MCP surface so exact memory search/query tools remain available.
+root, uses the configured global root for no-persona global authored memory,
+intentionally leaves persona identity env unset, and defaults to the
+`codex` MCP surface so exact memory search/query and scoped live-retrieval
+diagnostic tools remain available.
+Project discovery honors an explicit `CHIMERA_MEMORY_PROJECT_ID` with the
+single configured project root, even when the root folder name would derive a
+different id.
+The MCP server also publishes surface-aware memory-use instructions to clients:
+on the Codex surface, use `memory_context_pack` for substantial work, topic
+shifts, recall questions, and prior-context-sensitive decisions, then use
+`memory_search`, `memory_query`, or `memory_recall` for scoped project/global
+curated memory. Codex does not receive generic transcript recall MCP tools;
+bounded project transcript fallback is opt-in through the `codex exec
+--include-transcripts` wrapper path. These instructions guide tool use, but
+they do not mechanically inject memory into Codex turns without a Codex-side
+hook, wrapper, or harness.
+
+For wrapper or hook experiments, use `codex context` to prefix a prompt with
+scoped evidence only when current project/global memory survives the context-pack
+quality gate. Returned cards include review/authority markers such as
+`review=pending`, `evidence-only`, `needs-confirmation`, `lifecycle=stale`, and
+`lifecycle=archived`; the Codex grounding rule treats those records as
+unconfirmed or non-current leads, not settled instructions. Global
+evidence is filtered to `--global-root`, then `CHIMERA_MEMORY_GLOBAL_ROOT`, then
+CM's default `~/.chimera-memory/global-memory` root:
+
+```bash
+echo "what should Codex remember about this repo?" | chimera-memory codex context
+```
+
+For Codex CLI, `codex exec` can be launched through CM so the wrapped prompt is
+sent to Codex over stdin instead of appearing in the child process command line:
+
+```bash
+chimera-memory codex exec --prompt-file prompt.txt --model gpt-5.3-codex-spark
+chimera-memory codex exec --prompt-file prompt.txt --dry-run --json
+```
+
+Add `--include-transcripts` when Codex should also use bounded transcript
+snippets from prior local Codex sessions in the same project workspace. Pass
+`--project-root <repo-or-.chimera-memory>` when the workspace root is not already
+configured; otherwise the CLI wrapper infers no-persona project id/root from
+`--cd` or the current repo directory when safe.
+Transcript fallback is project-scoped through session `cwd`; it does not search
+all transcript history. For non-dry-run `--json`, CM reports return code and
+stdout/stderr sizes by default; pass `--include-output` only when you explicitly
+want raw Codex child output in the JSON receipt. Exec receipts include a
+body-safe `delivery_proof` object that separates prompt construction, memory
+injection into the wrapped prompt, subprocess stdin delivery, delivery-event
+recording, and launch failure without including prompt text, memory bodies, raw
+commands, or child output. On Windows, bare `codex` wrapper launches are
+normalized to a launchable shim such as `codex.cmd` or `codex.exe` so Python
+subprocesses do not trip over extensionless npm shims.
+
+`chimera-memory codex doctor` reports MCP reachability, performs a local HTTP
+MCP initialize identity check for shared sidecars, reports the latest CM health
+snapshot plus freshness, the live sidecar runtime/provider profile when
+available, enhancement provider smoke evidence, the latest context trace, and
+the latest returned context trace. It warns when a
+shared HTTP sidecar is reachable but is not ChimeraMemory, when a local HTTP
+listener is owned by a different Python runtime than the doctor/repo runtime,
+when the health snapshot is stale, when the sidecar is not running as
+no-persona Codex project+global memory, or when the global memory root is
+missing. Listener runtime diagnostics report only sanitized owner counts,
+process names, and stale PIDs, not raw process commands. It also
+reports the selected enhancement provider/model, credential-ref presence, and
+OAuth-use boolean without making a model call or printing credential refs.
+Doctor prefers the latest sidecar health `provider_profile` when present and
+falls back to a local/config plan-mode smoke when no sidecar profile has been
+recorded. Run `chimera-memory enhance provider-smoke --live --http-sidecar
+--json` when live provider proof is needed. It also reports how many indexed global memory files
+are available to default
+retrieval, so an empty global corpus is visible without being treated as a setup
+failure. When the
+transcript DB is readable, `codex doctor` overlays live global corpus counts on
+the latest health snapshot so a low-cadence snapshot cannot report stale empty
+counts after the watcher has indexed global files. Those live counts separate
+default-available evidence from confirmed instruction-grade global files, so
+pending/review-gated memory is not mistaken for settled operating rules. If the
+corpus is genuinely empty, the diagnostic points to adding/promoting global
+memories or starting the sidecar with a populated global root. For no-persona
+project memory, missing `CHIMERA_MEMORY_GLOBAL_ROOT` fails closed: existing
+global DB rows are reported only as indexed rows without an active root, and the
+global context smoke is skipped instead of using them to prove active global
+memory. Doctor also checks the global review queue and reports sanitized
+pending/reason counts plus confirm-guard blocked/finding counts, warning when a
+pending global file would be blocked by instruction-grade confirmation. It also
+runs an in-memory global context
+smoke against indexed global metadata to verify whether the `codex context`
+wrapper would return prompt evidence right now, without writing trace rows,
+printing prompt text, or exposing memory bodies. It states the boundary plainly:
+MCP tools are on-demand, while mechanical prompt evidence requires
+`codex context`, `codex exec`, or another hook/harness. It also reports whether
+the optional `chimera-memory` wrapper command resolves on PATH, because a
+healthy HTTP MCP sidecar can still coexist with a missing or stale shell shim.
+The JSON report includes a `context_delivery` receipt with generic context
+traces, Codex context-builder traces, real `codex exec` post-run delivery
+events, returned delivery traces, and the no-write global smoke result, so
+diagnostics can separate "CM is healthy" from "Codex actually received memory
+prompt evidence." `codex context` and `codex exec --dry-run` are prompt
+construction evidence, not real delivery. For per-run proof,
+`codex exec --receipt-only --json` exposes `delivery_proof.prompt_injected`,
+`subprocess_stdin_delivered`, and `real_delivery_recorded` as separate
+booleans. When the global context smoke returns
+evidence but no real delivery exists yet, doctor recommends proof and delivery
+commands with `--scope global` so they do not depend on project-id inference
+from the current shell directory. If `codex exec` fails before Codex
+launches, CM records a sanitized `codex_prompt_delivery_failed` event so doctor
+and traces can report a current failed delivery attempt separately from both
+prompt construction and successful real delivery. Real exec delivery also gets a
+recency receipt so an old successful wrapper run is not mistaken for fresh
+prompt evidence in the current work session. If the no-write global smoke can
+retrieve memory but the latest real Codex delivery returned zero cards, doctor
+warns that the real turn was not memory-augmented by ChimeraMemory. Use
+`chimera-memory codex traces`
+for a recent sanitized trace list that classifies each context row as prompt
+construction, diagnostic smoke, generic context trace, failed `codex exec`
+delivery, or real `codex exec` delivery without printing prompt text, memory
+bodies, raw trace payloads, or raw paths. The selected trace DB is reported as a
+path-safe payload with name, provenance, and fingerprint instead of an absolute
+path. Trace receipts include sanitized request scope metadata and returned memory
+scope counts, such as `returned_scopes=global=1`; when the latest returned prompt
+construction contains only global memory, no-real-delivery recommendations use
+`--scope global`. Use `--kind failed`, `--kind real`, `--kind prompt`,
+`--kind diagnostic`, or `--kind context` to inspect one delivery state directly.
+Filtered views still inspect the unfiltered latest delivery attempt, so an old
+failed row does not keep recommending delivery after a newer real wrapper
+delivery succeeds.
+
+On the Codex MCP surface, no-persona project/global mode rejects explicit
+`persona` arguments and env-derived `TRANSCRIPT_PERSONA` identity for memory
+reads, stats, context packs, live retrieval, authored writes, and persona
+scope attempts. Use a non-Codex persona MCP surface for persona-private memory.
+The Codex surface does not register the persona-facing `memory_review` queue or
+persona-source `memory_promote_snapshot`; use `chimera-memory global review` for
+no-persona global-root review.
+Codex `memory_diagnose` is also limited to safe project/global diagnostics:
+tools, stats, context, provider plan, worker/health, guard, and whereami.
+Persona/admin diagnose modes such as zones, traces, audit, harness, gaps, and
+consolidation are rejected on the Codex surface.
+
+Hooks should prefer stdin or `--prompt-file <PATH>` instead of putting prompt
+text in argv. Use `--previous-context-file <PATH>` with `--no-force` when the
+hook tracks a prior turn/topic and wants topic-shift gating. The command emits
+the original prompt unchanged on a miss. It supports only `auto`, `project`, and
+`global` scopes; `auto` and `project` fail closed unless `--project-id`,
+`CHIMERA_MEMORY_PROJECT_ID`, or a configured project root resolves a project id.
+The CLI wrapper can also infer no-persona project id/root from `--project-root`,
+`--cd`, or the current repo directory when safe. It intentionally has no persona
+mode. Use `--receipt-only --json` to verify scope, counts, and trace ids without
+printing prompt text or memory snippets.
+
 If the `chimera-memory` shim on PATH is unavailable or stale, use
 `--command "python -m chimera_memory.cli"` with `codex template` or
 `codex install`; the generated config will split that into a Codex-safe command
@@ -133,12 +284,13 @@ The doctor verifies that the Codex MCP config exists, the `chimera-memory`
 server entry is present, the command resolves, `serve` is passed, and the Codex
 parser is selected with `CHIMERA_CLIENT=codex`.
 It also shows whether runtime fields are explicit or derived, and summarizes the
-latest CM health snapshot when a transcript database is available.
+latest CM health snapshot and live runtime profile when a transcript database is
+available.
 
 Write or update the Codex MCP config directly:
 
 ```bash
-chimera-memory codex install --project-id Chimera-Memory --project-root C:/Github/Chimera-Memory/.chimera-memory
+chimera-memory codex install --project-id Chimera-Memory --project-root "$PWD/.chimera-memory"
 ```
 
 The installer preserves other MCP servers, writes a backup before changing an
@@ -157,7 +309,7 @@ Generate a safe config template without reading or modifying your live Codex
 config:
 
 ```bash
-chimera-memory codex template --project-id Chimera-Memory --project-root C:/Github/Chimera-Memory/.chimera-memory
+chimera-memory codex template --project-id Chimera-Memory --project-root "$PWD/.chimera-memory"
 ```
 
 Add persona identity fields only when you want persona-scoped Codex indexing:
@@ -167,9 +319,9 @@ chimera-memory codex template \
   --persona asa \
   --persona-id developer/asa \
   --persona-name asa \
-  --persona-root C:/Github/ChimeraAgency/personas/developer/asa \
-  --personas-dir C:/Github/ChimeraAgency/personas \
-  --shared-root C:/Github/ChimeraAgency/shared
+  --persona-root "$CHIMERA_AGENCY_ROOT/personas/developer/asa" \
+  --personas-dir "$CHIMERA_AGENCY_ROOT/personas" \
+  --shared-root "$CHIMERA_AGENCY_ROOT/shared"
 ```
 
 Persona profiles can also include `--project-id` and `--project-root` when the
@@ -280,11 +432,12 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 
 | Tool | What it does |
 |------|-------------|
-| `memory_stats` | Corpus overview. File counts by type, status, persona. Zero-token session start check. |
+| `memory_stats` | Scoped corpus overview. Excludes synthesis, restricted, blocked-lifecycle, and non-evidence rows by default. |
 | `memory_context_pack` | Hermes-style turn broker. Builds a fenced, token-capped pack of 3-7 scoped memory cards for harness pre-turn injection. |
-| `memory_search` | FTS5 full-text search across your memory files. |
-| `memory_recall` | Semantic similarity search via embeddings. Use for fuzzy/conceptual queries. |
-| `memory_query` | Structured filter by type, importance, status, tags, about field. |
+| `memory_search` | FTS5 full-text search across scoped memory files. Excludes restricted, blocked-lifecycle, and non-evidence rows by default. Records sanitized recall traces with total-before-limit counts. |
+| `memory_recall` | Semantic similarity search via embeddings. Use for fuzzy/conceptual queries. Filters low-similarity, low-coverage, restricted, blocked, and non-evidence noise by default; lower `min_similarity` only for diagnostics. |
+| `memory_query` | Structured filter by type, importance, status, tags, about field. Excludes restricted, blocked-lifecycle, and non-evidence rows by default. Records sanitized recall traces with total-before-limit counts. |
+| `memory_source_refs` / `memory_artifacts` | Provenance metadata lookups. Full-surface tools; scoped and evidence-safe by default, with explicit restricted/blocked/synthesis opt-ins. MCP text redacts local path-shaped URIs to a filename plus fingerprint; lower-level query APIs keep stored URI values for internal review/debug use. |
 | `memory_guard` | Scan text for credentials, injection patterns, invisible unicode before persisting. |
 | `memory_gaps` | Graph analysis. Finds disconnected memory clusters and isolated files. |
 | `memory_entity_index` | Build the local entity graph from indexed memory frontmatter and tags. Enhancement results can add links too. |
@@ -312,9 +465,9 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 
 | Tool | What it does |
 |------|-------------|
-| `memory_recall_trace_query` | Inspect recent recall traces and optional returned items. Useful for tuning retrieval quality. |
-| `memory_audit_query` | Inspect memory audit events such as recall, review, and enhancement operations. |
-| `memory_live_retrieval_check` | Dry-run proactive recall on topic shifts, silent on miss and logged for tuning. |
+| `memory_recall_trace_query` | Inspect recent recall traces and optional returned items. Returned item paths are display-safe labels plus fingerprints, not raw local filesystem paths. Useful for tuning retrieval quality. |
+| `memory_audit_query` | Inspect memory audit events such as recall, review, and enhancement operations. Returned target IDs and path-like payload fields are display-safe labels/fingerprints for local paths while preserving non-local URIs and opaque IDs. Sensitive prompt/body/command/process-output/credential-like payload fields are returned as redaction receipts. |
+| `memory_live_retrieval_check` | Dry-run scoped proactive recall on topic shifts, quality-filtered for weak broad matches, silent on miss and logged for tuning. Codex project mode exposes this read-only checker. |
 | `memory_review_pending` | List generated or restricted memories that need review before instructional use. |
 | `memory_review_action` | Confirm, restrict, reject, stale, merge, dispute, or supersede a memory review item. |
 | `memory_auto_capture_session_close` | Plan or write an evidence-only session-close memory with ACT NOW items. |
@@ -364,6 +517,11 @@ not launch Codex, Claude Code, or Antigravity just to poll for work.
 Run `chimera-memory enhance worker-doctor --runtime codex --init` or
 `--runtime claude --init` or `--runtime agy --init` to create and inspect the
 generated worker files without launching the provider CLI.
+Doctor JSON is path-safe and argv-redacted: it reports file roles, existence,
+worker-root containment, credential presence, and a command profile instead of
+absolute local paths or raw launch commands. Codex worker readiness requires the
+worker-local copied `auth.json`; Claude readiness requires worker-local copied
+credentials.
 
 ### What It Does
 
@@ -507,6 +665,14 @@ For a Windows per-user service-style launch from this repo's `.venv`, use:
 .\scripts\install-cm-http-autostart.ps1 -Port 8766 -RunNow
 ```
 
+The starter defaults to no-persona Codex project mode for this repo and creates
+both `<repo>/.chimera-memory` and `~/.chimera-memory/global-memory` before the
+watcher starts. Override with `-ProjectId`, `-ProjectRoot`, or `-GlobalRoot`
+when hosting another repo/global-memory root. If the port is already occupied by
+a ChimeraMemory server from a different Python runtime, the starter now refuses
+to silently accept it; rerun with `-Replace` only after confirming the stale
+process should be stopped.
+
 Then configure Codex to use the shared URL instead of a `command`/`args` server:
 
 ```toml
@@ -534,7 +700,7 @@ Each embedding run logs a realtime progress bar and writes live status to `~/.ch
 
 ### Health Snapshots
 
-`chimera-memory serve` also starts a low-cadence health worker by default. Every five minutes it records a `cm_health_snapshot` audit event and logs the overall status. The snapshot checks embedding backlog/staleness, enhancement queue age, provider drift, session rollup mismatches, duplicate message capture, worker startup state, and latest success timestamps.
+`chimera-memory serve` also starts a low-cadence health worker by default. Every five minutes it records a `cm_health_snapshot` audit event and logs the overall status. The snapshot checks embedding backlog/staleness, enhancement queue age, provider drift, session rollup mismatches, duplicate message capture, worker startup state, latest success timestamps, a path-safe runtime profile for Codex/sidecar diagnostics, and a safe provider profile. The runtime profile includes global-memory root presence plus indexed/default-available global corpus counts, but not raw paths. The provider profile records selected provider/model plus credential-ref and user-OAuth booleans, but not credential refs or tokens. `codex doctor` uses the latest snapshot for runtime shape/provider evidence and overlays live DB global corpus counts when available so newly indexed global files are not hidden until the next snapshot.
 
 Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 
@@ -560,6 +726,7 @@ Use `memory_diagnose(mode="health")` for a live health read. Tune with:
 - `CHIMERA_MEMORY_CODEX_BIN=...` overrides automatic Codex executable detection.
 - `CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH=...` overrides the Codex auth file copied into the isolated worker home.
 - `CHIMERA_MEMORY_CODEX_WORKER_BYPASS_APPROVALS_AND_SANDBOX=true` is the Codex worker default for non-interactive MCP calls.
+- `chimera-memory enhance worker-doctor --runtime codex --init --json` verifies the copied worker auth and Spark command profile without printing raw paths or argv.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE=provider` remains the direct HTTP/provider fallback.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_INTERVAL_SECONDS=60` controls polling.
 - `CHIMERA_MEMORY_ENHANCEMENT_WORKER_LIMIT=10` controls jobs per tick.
@@ -577,14 +744,29 @@ watcher events do not create duplicate provider jobs.
 Provider login/import is exposed through safe CLI receipts:
 
 ```bash
-chimera-memory enhance oauth-import --provider openai --source codex_cli
+chimera-memory enhance oauth-import --provider openai --source codex_cli --store "$HOME/.chimera-memory/auth.json"
 chimera-memory enhance oauth-list
 chimera-memory enhance provider-plan
+chimera-memory enhance provider-smoke --expect-provider openai --expect-model gpt-5.3-codex-spark
+chimera-memory enhance provider-smoke --live --http-sidecar --expect-provider openai --expect-model gpt-5.3-codex-spark --json
 ```
 
 Credential values are never printed. `oauth-import` copies an existing provider
 login into CM's local auth store after you invoke it explicitly; `oauth-list`
 reports provider, transport, active status, and hashed refs only.
+When OpenAI/Codex OAuth is visible but has not been imported into CM,
+`provider-plan` returns a body-safe recommendation to run the explicit import
+instead of reporting only `credential_missing`.
+`provider-smoke` is the safe repeatable proof path: plan mode checks selected
+provider/model, OAuth/ref presence, and invocation shape without a model call;
+`--live --http-sidecar` exercises an ephemeral local enhancement sidecar and
+the resolving provider client, returning only metadata shape/counts.
+Enhancement CLI job receipts are also client-safe: queued job storage may keep
+the raw local path and wrapped request body for workers, but `enqueue`,
+`authored-enqueue`, `dry-run`, `worker-fake`, and nested authored-write
+`enrichment_job` JSON receipts collapse paths to safe labels/fingerprints and
+redact wrapped content, authored payload bodies, and content-derived metadata
+fields not needed for status/governance.
 
 ### Hybrid Search (semantic_search)
 
@@ -662,10 +844,38 @@ chimera-memory embed              # Generate transcript embeddings with a live p
 chimera-memory embed --limit 500 --batch-size 64
 chimera-memory stats              # Show database statistics
 chimera-memory split-db           # Split a shared transcript DB into per-persona DBs
+chimera-memory global inspect --json
+chimera-memory global inspect --query "what should Codex remember?" --json
+chimera-memory global inspect --global-root <DIR> --files --json
+chimera-memory global seed --source <DIR> --json
+chimera-memory global seed --source <DIR> --include TEAM_KNOWLEDGE.md --include "modes/**" --json
+chimera-memory global seed --source <DIR> --global-root <DIR> --write --json
+chimera-memory global seed --source <DIR> --allow-mixed-source --write --json
+chimera-memory global reindex --json
+chimera-memory global reindex --include TEAM_KNOWLEDGE.md --write --prune-missing --json
+chimera-memory global review --json
+chimera-memory global review --reason pending_review --json
+chimera-memory global review --relative-path TEAM_KNOWLEDGE.md --json
+chimera-memory global review --relative-path TEAM_KNOWLEDGE.md --action confirm --reviewer <NAME> --expect-body-sha256 <BODY_SHA256> --write --json
+chimera-memory global promote --json
+chimera-memory global promote --enable-auto-promotion --write --json
 chimera-memory codex doctor       # Diagnose Codex MCP setup without printing env values
+chimera-memory codex traces       # Inspect recent Codex context/delivery traces
+chimera-memory codex traces --real-only --json
+chimera-memory codex traces --kind failed --json
+chimera-memory codex traces --since 2026-06-10T21:00:00Z
 chimera-memory codex install      # Write/update Codex MCP setup with backup and import choice
 chimera-memory codex install --project-id <ID> --project-root <DIR>
 chimera-memory codex template --project-id <ID> --project-root <DIR>
+chimera-memory codex context --prompt "prompt text"
+chimera-memory codex context --prompt "prompt text" --receipt-only --json
+chimera-memory codex context --project-id <ID> --prompt "prompt text"
+chimera-memory codex context --project-id <ID> --prompt-file <PATH>
+chimera-memory codex exec --prompt "prompt text" --dry-run --json
+chimera-memory codex exec --prompt "prompt text" --dry-run --receipt-only --json
+chimera-memory codex exec --project-id <ID> --prompt "prompt text" --dry-run --json
+chimera-memory codex exec --project-id <ID> --prompt-file <PATH>
+chimera-memory codex exec --project-id <ID> --project-root <DIR> --prompt-file <PATH> --include-transcripts
 chimera-memory enhance provider-plan --json
 chimera-memory enhance oauth-import --provider openai --source codex_cli
 chimera-memory enhance oauth-list --json
@@ -679,14 +889,181 @@ chimera-memory enhance serve-dry-run --port 8944
 
 `split-db` is for splitting a multi-persona DB after the fact, useful if you started with one shared DB and want per-persona isolation.
 
+`global inspect` is a read-only corpus receipt: it reports configured
+global-root existence, markdown file counts, indexed/default-available DB
+counts, unindexed root markdown, indexed rows whose files are missing,
+target-root DB counts, and path-safe counts/details for indexed global rows
+outside the inspected root. Database counts distinguish default-available
+evidence from confirmed instruction-grade files. The receipt also includes an
+`authority` summary for filesystem frontmatter: evidence-enabled files, trusted
+instruction-grade files, pending-review files, evidence-only reviews, and files
+requiring user confirmation. It also runs a read-only memory
+guard scan over global-root markdown and reports sanitized finding counts and
+relative paths without echoing unsafe samples. Files with missing or
+unrecognized frontmatter are reported as imported, pending, evidence-enabled,
+instruction-disabled, and requiring confirmation. When review-gated global
+files are present, inspect also includes body-safe `recommendations` from the
+global review queue, such as listing the queue, inspecting the first target,
+previewing confirmation, writing confirmation after review, running automated
+promotion, or marking
+the file evidence-only.
+When inspect sees indexed global rows outside the configured root, it says those
+rows are excluded from active retrieval and recommends path-safe `--files`
+inspection plus a dry-run active-root reindex preview instead of implying
+automatic pruning or immediate write-mode repair.
+Pass `--query <TEXT>` to run a read-only global context-pack smoke against an
+in-memory copy of the selected DB. The `query_smoke` receipt reports returned,
+raw, filtered, duplicate-filtered, and token counts plus safe card metadata
+such as relative path, governance labels, score, and query-match profile. Misses
+also include body-safe diagnostics that distinguish no scoped candidates,
+quality-gate filtering, dedupe, and packing-stage gaps, plus matching
+body-safe recommendations. It
+does not persist recall traces or audit rows and does not include memory bodies,
+snippets, card text, prompts, raw DB paths, or raw root paths.
+`global seed` is the dry-run-first write path for no-persona/global memory. It
+copies only markdown files from an explicit source directory into the configured
+global memory root when `--write` is set, skips hidden/cache/auth-style folders,
+and indexes copied files as `memory_scope=global` unless `--no-index` is passed.
+Write mode first fails closed on unresolved target conflicts unless
+`--overwrite` is supplied, then runs the memory guard over selected files and
+fails closed on credential, injection, or hidden-content findings; use
+`--no-guard` only for an intentional compatibility import. Write mode also
+stamps missing or ambiguous global governance frontmatter before indexing,
+making imported global files evidence-only and pending review unless they
+already carry explicit confirmed instruction-grade provenance; use
+`--no-stamp-governance` only for an intentional compatibility import. Write mode
+also fails closed when a broad seed would copy mixed shared/persona-style paths
+such as `roster/**`, `relationships/**`, `image-feedback/**`, or
+`persona-*` files. Use repeatable `--include` and `--exclude` relative globs to
+select only reviewed global files from mixed source trees; broad globs such as
+`**/*.md` do not bypass the mixed-source guard unless the include pattern names
+the mixed path itself. Use `--allow-mixed-source` only for an intentional
+compatibility import where those paths have already been reviewed as
+global-safe. These operator CLI helpers use
+`CHIMERA_MEMORY_GLOBAL_ROOT` when set and otherwise fall back to
+`~/.chimera-memory/global-memory`, matching Codex no-persona setup even when the
+current shell did not inherit the sidecar environment. Inspect, seed, reindex,
+and review receipts represent root and DB locations as names, provenance
+labels, and short fingerprints rather than raw absolute paths; human inspect,
+seed, reindex, and review output uses the same safe labels.
+`global reindex` is the DB repair path for files already present in one global
+root. It is dry-run by default, indexes only that root on `--write`, honors the
+same include/exclude filters, and prunes stale global rows under that root only
+when `--prune-missing` is also supplied. Reindex write mode uses the same memory
+guard and safe governance stamp before indexing unless `--no-guard` or
+`--no-stamp-governance` is supplied. Reindex receipts include safe root and DB
+payloads plus the selected-file `authority` summary so dry runs show whether
+selected files are evidence, trusted instruction-grade, pending, or confirmation-gated before
+indexing/stamping. Stale-row pruning derives filter matching and receipt
+relative paths from each row's resolved path under the selected root, not a
+drifted stored DB `relative_path`. Inspect, files, and query-smoke receipts
+collapse path-shaped stored DB `relative_path` values to filename-only labels
+before returning them. Prune candidate receipts expose only `relative_path`,
+`name`, and a short `path_fingerprint`, not the absolute stale row path.
+Write-mode pruning also removes file-owned side-table rows such as
+source refs, artifacts, entity links, file edges, embeddings, FTS rows, and
+summaries, while preserving trace/review/job history with `file_id` cleared.
+Write-mode seed/reindex receipts are
+non-OK when governance stamping reports errors, indexing reports errors, or
+files are skipped from indexing, even if some filesystem writes already
+completed. Files whose governance stamp fails are not indexed in that run.
+`global promote` is the no-human global promotion path. It is dry-run by
+default and evaluates pending global files through named automated trust
+policies such as `trusted_clean`. Write mode requires explicit enablement via
+`--enable-auto-promotion` or `CHIMERA_MEMORY_GLOBAL_AUTO_PROMOTE=true`; eligible
+files are written with `provenance_status: auto_confirmed`, reindexed, audited
+as `global_memory_auto_promoted`, and left instruction-grade only after clean
+policy, guard, path, body-hash, and rollback checks. Generated, restricted,
+excluded, malformed, wrong-scope, missing-governance under the strict policy,
+or guard-blocked files are skipped with body-safe policy reasons instead of
+being promoted.
+
+`global review` lists pending global-root markdown plus files that need
+governance repair, such as missing required policy keys, wrong memory scope,
+parse errors, or unsafe instruction-grade state. Returned items include
+sanitized `review_reasons`, reason-count summaries, governance flags, and
+confirm-action guard preview counts, not memory bodies. Missing or unrecognized
+frontmatter is treated as pending/untrusted evidence instead of default
+instruction authority. Human-readable listings also include returned
+root-relative review targets with per-file reasons,
+indexed state, confirm-guard blocked counts, and action-guidance-aware
+recommendations. Queue recommendations include a concrete body-safe inspection
+command for the first matching target, and include write commands only when the
+target action can be written without guard blockage; otherwise they suggest
+preview-only remediation actions. Queue-level write recommendations use a
+`<BODY_SHA256>` placeholder until target inspection or preview supplies the real
+reviewed body hash. Use repeatable
+`--reason <REASON>` to focus the listing on files
+with a specific review blocker such as `pending_review`,
+`missing_required_governance`, `non_global_scope`, or `confirm_guard_blocked`;
+filtered receipts keep all-pending `summary` counts separate from
+`matching_summary` and `returned_summary` counts. `confirm_guard_blocked`
+surfaces files whose sanitized confirm-action preview would be blocked by the
+memory guard, including otherwise confirmed instruction-grade files with unsafe
+body content. Even when `--limit 0` returns no file rows, the receipt keeps the
+path-safe `first_matching_relative_path` plus a body-safe
+`first_matching_target` summary with review reasons, guard counts, indexed
+state, and action guidance. This lets diagnostics such as Codex doctor emit
+concrete inspect/confirm/evidence-only/remediation recommendations without
+returning memory bodies or falling back to placeholder commands; automation can
+use `global promote` for the no-human path. With
+`--relative-path` and
+no `--action`, it inspects one target body-safely: the receipt includes
+frontmatter keys, review reasons, indexed/default availability, guard status,
+body hash, body length, and recommendations, but not memory body text. With
+`--relative-path` and
+`--action`, it previews a durable frontmatter review change; with
+`--write --reviewer <NAME>`, it updates the markdown, reindexes the same file as
+`memory_scope=global`, writes a review action row, and records an audit event.
+Inspection and preview recommendations include `--expect-body-sha256 <HASH>`
+when CM knows the reviewed body hash. Write-mode review actions require that
+argument and fail closed before mutation when it is missing, invalid, or no
+longer matches the reviewed body.
+Malformed-frontmatter files can be remediated by review actions: the original
+source text is preserved as markdown body under repaired review frontmatter and
+reported through `source_parse_error`, not echoed in output. Review listings and
+Codex doctor use the same preserved-body path for confirm-guard previews, so
+unsafe malformed sources are counted without leaking their contents.
+If the post-write index/review-audit step fails, CM attempts to restore the
+original markdown and reports a `restore` receipt so the file and DB do not
+silently drift.
+`confirm` is the explicit review path that promotes a global file to
+instruction-grade use; `global promote` is the explicitly enabled automated
+path that records `auto_confirmed` provenance instead of human provenance.
+`evidence_only`, `restrict_scope`, `reject`, and the other review actions are
+durable reviewed decisions that keep the file out of instruction use.
+Review actions are root-relative only and
+preserve the markdown body. Review action receipts use the relative target plus
+hashes and do not return the absolute target file path. Targets with leading
+separators, Windows drive or stream separators, `..`, control characters,
+non-markdown extensions, or missing files fail closed instead of being
+normalized into another target. Targets under hidden, cache, auth, or other
+skipped corpus directories are rejected case-insensitively, matching global
+discovery/seeding boundaries.
+Human-readable review action output reports
+sanitized review-guard required, blocked-file, and finding counts, including
+failed writes. Write-mode review runs the memory guard before any action that
+would leave the post-review file available to default global retrieval; unsafe
+files can still be rejected, disputed, superseded, or restricted out of default
+retrieval.
+Write-mode `global seed`, `global reindex`, and `global review` record compact
+audit events with counts or action metadata, root provenance, root fingerprints,
+and affected relative paths, but not memory bodies or raw absolute roots.
+
 `enhance` commands exercise the memory-enhancement sidecar pipeline without
 requiring a model call. `provider-plan` shows the selected provider and budget
-caps with credential refs hidden. `enqueue` queues an indexed memory file for
-metadata enrichment. `dry-run` consumes queued jobs with deterministic local
-metadata and keeps generated output review-gated: evidence-only, pending review,
-not instruction-grade. `serve-dry-run` exposes the same deterministic behavior
-over CM's HTTP sidecar contract for local integration tests. `sidecar-run`
-processes queued jobs through a sidecar endpoint.
+caps with credential refs hidden; when Codex OAuth exists but CM has not been
+explicitly authorized to use it, the receipt recommends the safe `oauth-import`
+command. `provider-smoke` verifies provider/model/OAuth invocation shape without
+calling a model unless `--live` is passed; `--live --http-sidecar` routes the
+diagnostic through an ephemeral local sidecar contract and returns only safe
+metadata shape/counts. `enqueue` queues an indexed memory file for metadata
+enrichment.
+`dry-run` consumes queued jobs with deterministic local metadata and keeps
+generated output review-gated: evidence-only, pending review, not
+instruction-grade. `serve-dry-run` exposes the same deterministic behavior over
+CM's HTTP sidecar contract for local integration tests. `sidecar-run` processes
+queued jobs through a sidecar endpoint.
 
 Set `CHIMERA_MEMORY_ENHANCEMENT_USE_MODELS_DEV_CATALOG=true` to let
 provider-plan use CM's bundled/offline-first models.dev catalog for recommended

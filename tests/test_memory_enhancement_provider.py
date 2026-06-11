@@ -139,6 +139,30 @@ def test_provider_affinity_does_not_create_credential_ref(tmp_path) -> None:
     assert plan.selected.provider_id == "openai"
 
 
+def test_safe_provider_receipt_recommends_codex_oauth_import_when_visible(tmp_path) -> None:
+    codex_path = tmp_path / ".codex" / "auth.json"
+    codex_path.parent.mkdir()
+    codex_path.write_text(
+        '{"tokens":{"access_token":"TEST_ONLY_OPENAI_ACCESS","refresh_token":"TEST_ONLY_OPENAI_REFRESH"}}',
+        encoding="utf-8",
+    )
+    env = {
+        "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "openai,dry_run",
+        "CHIMERA_MEMORY_CODEX_AUTH_PATH": str(codex_path),
+        "CHIMERA_MEMORY_OAUTH_STORE": str(tmp_path / "empty-auth.json"),
+    }
+
+    plan = resolve_enhancement_provider_plan(env)
+    receipt = safe_provider_receipt(plan, env)
+    payload = str(receipt)
+
+    assert plan.selected.provider_id == "dry_run"
+    assert receipt["recommendations"][0]["code"] == "import_openai_codex_oauth"
+    assert "oauth-import --provider openai --source codex_cli" in receipt["recommendations"][0]["command"]
+    assert "TEST_ONLY_OPENAI_ACCESS" not in payload
+    assert "TEST_ONLY_OPENAI_REFRESH" not in payload
+
+
 def test_resolve_provider_plan_rejects_raw_looking_credential_ref() -> None:
     plan = resolve_enhancement_provider_plan(
         {

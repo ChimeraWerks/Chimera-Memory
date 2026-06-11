@@ -55,6 +55,7 @@ Avoid:
 - `memory_provider_governor.py`: provider usage ledger and budget allow/deny checks
 - `memory_cli_worker_supervisor.py`: generated worker files, bounded CLI commands, launch/restart scaffolding
 - `memory_live_retrieval.py`: deterministic proactive recall planning and miss/suggestion audit logging
+- `memory_relevance.py`: shared deterministic candidate relevance gates
 - `memory_context_pack.py`: scoped, filtered, token-capped memory context packs
 - `memory_retrieval_trace_analysis.py`: post-hoc retrieval diagnostics through injected clients
 - `memory_review.py`: human review state transitions and audit logging

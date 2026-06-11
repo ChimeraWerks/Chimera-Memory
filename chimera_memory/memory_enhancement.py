@@ -76,12 +76,13 @@ ALLOWED_PROVENANCE_STATUSES = {
     "observed",
     "inferred",
     "user_confirmed",
+    "auto_confirmed",
     "imported",
     "generated",
     "superseded",
     "disputed",
 }
-INSTRUCTION_GRADE_PROVENANCE = {"user_confirmed", "imported"}
+INSTRUCTION_GRADE_PROVENANCE = {"user_confirmed", "auto_confirmed"}
 AUTHORED_REVIEW_STATUSES = {
     "pending",
     "confirmed",
@@ -1111,6 +1112,8 @@ def _provenance_policy(payload: Mapping[str, Any]) -> dict[str, Any]:
         requires_user_confirmation = False
     else:
         requires_user_confirmation = status not in INSTRUCTION_GRADE_PROVENANCE
+    if status not in INSTRUCTION_GRADE_PROVENANCE:
+        requires_user_confirmation = True
     if not review_status:
         review_status = "confirmed" if status in INSTRUCTION_GRADE_PROVENANCE and not requires_user_confirmation else "pending"
     can_use_as_instruction = (
@@ -1224,7 +1227,20 @@ def normalize_authored_memory_writeback(
         or "standard"
     )
     sensitivity_tier = _clean_sensitivity_tier(raw_sensitivity)
-    if _contains_restricted_sensitivity_signal(payload, enrichment_payload):
+    sensitivity_sources = {
+        "memory_payload": memory_payload,
+        "source_refs": (
+            payload.get("source_refs")
+            if isinstance(payload.get("source_refs"), list)
+            else memory_payload.get("source_refs", [])
+        ),
+        "models_used": (
+            payload.get("models_used")
+            if isinstance(payload.get("models_used"), list)
+            else memory_payload.get("models_used", [])
+        ),
+    }
+    if _contains_restricted_sensitivity_signal(sensitivity_sources, enrichment_payload):
         sensitivity_tier = "restricted"
 
     return {

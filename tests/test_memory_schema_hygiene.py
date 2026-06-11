@@ -10,6 +10,7 @@ from chimera_memory.memory import (
     memory_query,
     memory_search,
     memory_source_ref_query,
+    memory_stats,
     normalized_content_fingerprint,
 )
 
@@ -220,6 +221,187 @@ def test_index_file_syncs_memory_payload_artifacts(tmp_path: Path) -> None:
     )
     assert index_file(conn, "asa", "memory.md", memory_file)
     assert memory_artifact_query(conn, persona="asa") == []
+
+
+def test_provenance_queries_apply_scope_and_retrieval_safety(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+
+    def write_memory(name: str, frontmatter: list[str]) -> Path:
+        path = tmp_path / name
+        path.write_text(
+            "\n".join(
+                [
+                    "---",
+                    "type: procedural",
+                    "importance: 8",
+                    *frontmatter,
+                    "source_refs:",
+                    "  - kind: test-source",
+                    f"    uri: '{name}'",
+                    "memory_payload:",
+                    "  artifacts:",
+                    "    - kind: test-artifact",
+                    f"      uri: '{name}'",
+                    "---",
+                    f"Provenance body for {name}.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    project_ok = write_memory("project-ok.md", [])
+    project_restricted = write_memory("project-restricted.md", ["sensitivity_tier: restricted"])
+    project_blocked = write_memory("project-blocked.md", ["lifecycle_status: rejected"])
+    project_non_evidence = write_memory("project-non-evidence.md", ["can_use_as_evidence: false"])
+    project_synthesis = write_memory("project-synthesis.md", ["exclude_from_default_search: true"])
+    global_ok = write_memory("global-ok.md", [])
+    persona_private = write_memory("persona-private.md", [])
+
+    assert index_file(conn, "project:chimera-memory", "project/ok.md", project_ok)
+    assert index_file(conn, "project:chimera-memory", "project/restricted.md", project_restricted)
+    assert index_file(conn, "project:chimera-memory", "project/blocked.md", project_blocked)
+    assert index_file(conn, "project:chimera-memory", "project/non-evidence.md", project_non_evidence)
+    assert index_file(conn, "project:chimera-memory", "project/synthesis.md", project_synthesis)
+    assert index_file(conn, "global", "global/ok.md", global_ok)
+    assert index_file(conn, "asa", "persona/private.md", persona_private)
+
+    default_refs = memory_source_ref_query(conn, project_id="chimera-memory", scope="auto", limit=10)
+    default_artifacts = memory_artifact_query(conn, project_id="chimera-memory", scope="auto", limit=10)
+    project_only_refs = memory_source_ref_query(conn, project_id="chimera-memory", scope="project", limit=10)
+    opt_in_refs = memory_source_ref_query(
+        conn,
+        project_id="chimera-memory",
+        scope="project",
+        limit=10,
+        include_synthesis=True,
+        include_restricted=True,
+        include_blocked=True,
+    )
+
+    assert {row["relative_path"] for row in default_refs} == {"global/ok.md", "project/ok.md"}
+    assert {row["relative_path"] for row in default_artifacts} == {"global/ok.md", "project/ok.md"}
+    assert {row["relative_path"] for row in project_only_refs} == {"project/ok.md"}
+    assert {row["relative_path"] for row in opt_in_refs} == {
+        "project/ok.md",
+        "project/restricted.md",
+        "project/blocked.md",
+        "project/synthesis.md",
+    }
+    assert all(row["memory_scope"] in {"global", "project"} for row in default_refs)
+    assert all(row["project_id"] == "chimera-memory" for row in project_only_refs)
+
+
+def test_provenance_queries_filter_global_rows_outside_active_root(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    active_global_root = tmp_path / "active-global"
+    stale_global_root = tmp_path / "stale-global"
+    project_root = tmp_path / "repo" / ".chimera-memory"
+
+    def write_memory(path: Path, uri: str, frontmatter: list[str]) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(
+                [
+                    "---",
+                    "type: procedural",
+                    "importance: 8",
+                    *frontmatter,
+                    "source_refs:",
+                    "  - kind: test-source",
+                    f"    uri: '{uri}'",
+                    "memory_payload:",
+                    "  artifacts:",
+                    "    - kind: test-artifact",
+                    f"      uri: '{uri}'",
+                    "---",
+                    f"Provenance root boundary marker {uri}.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    active = write_memory(active_global_root / "active.md", "active-global", [])
+    stale = write_memory(stale_global_root / "stale.md", "stale-global", [])
+    project = write_memory(
+        project_root / "memory" / "project.md",
+        "project",
+        ["memory_scope: project", "project_id: chimera-memory"],
+    )
+
+    assert index_file(conn, "global", "active.md", active)
+    assert index_file(conn, "global", "stale.md", stale)
+    assert index_file(conn, "project:chimera-memory", "memory/project.md", project)
+
+    refs = memory_source_ref_query(
+        conn,
+        project_id="chimera-memory",
+        scope="auto",
+        limit=10,
+        global_root=active_global_root,
+    )
+    artifacts = memory_artifact_query(
+        conn,
+        project_id="chimera-memory",
+        scope="auto",
+        limit=10,
+        global_root=active_global_root,
+    )
+
+    assert {row["relative_path"] for row in refs} == {"active.md", "memory/project.md"}
+    assert {row["relative_path"] for row in artifacts} == {"active.md", "memory/project.md"}
+    assert "stale.md" not in {row["relative_path"] for row in refs}
+    assert "stale.md" not in {row["relative_path"] for row in artifacts}
+
+
+def test_memory_stats_apply_scope_and_retrieval_safety(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+
+    def write_memory(name: str, frontmatter: list[str]) -> Path:
+        path = tmp_path / name
+        path.write_text(
+            "\n".join(["---", "type: procedural", "importance: 8", *frontmatter, "---", name, ""]),
+            encoding="utf-8",
+        )
+        return path
+
+    project_ok = write_memory("project-ok.md", [])
+    project_restricted = write_memory("project-restricted.md", ["sensitivity_tier: restricted"])
+    project_blocked = write_memory("project-blocked.md", ["lifecycle_status: rejected"])
+    project_non_evidence = write_memory("project-non-evidence.md", ["can_use_as_evidence: false"])
+    project_synthesis = write_memory("project-synthesis.md", ["exclude_from_default_search: true"])
+    global_ok = write_memory("global-ok.md", [])
+    persona_private = write_memory("persona-private.md", [])
+
+    assert index_file(conn, "project:chimera-memory", "project/ok.md", project_ok)
+    assert index_file(conn, "project:chimera-memory", "project/restricted.md", project_restricted)
+    assert index_file(conn, "project:chimera-memory", "project/blocked.md", project_blocked)
+    assert index_file(conn, "project:chimera-memory", "project/non-evidence.md", project_non_evidence)
+    assert index_file(conn, "project:chimera-memory", "project/synthesis.md", project_synthesis)
+    assert index_file(conn, "global", "global/ok.md", global_ok)
+    assert index_file(conn, "asa", "persona/private.md", persona_private)
+
+    default_stats = memory_stats(conn, project_id="chimera-memory", scope="auto")
+    opt_in_stats = memory_stats(
+        conn,
+        project_id="chimera-memory",
+        scope="project",
+        include_synthesis=True,
+        include_restricted=True,
+        include_blocked=True,
+    )
+
+    assert default_stats["total_files"] == 2
+    assert default_stats["by_persona"] == {"project:chimera-memory": 1, "global": 1}
+    assert default_stats["scope_policy"]["includes"] == ["global", "project"]
+    assert opt_in_stats["total_files"] == 4
+    assert opt_in_stats["by_persona"] == {"project:chimera-memory": 4}
 
 
 def test_index_file_adds_memory_payload_to_fts(tmp_path: Path) -> None:

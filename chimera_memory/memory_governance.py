@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 PROVENANCE_STATUSES = {
-    "observed", "inferred", "user_confirmed", "imported",
+    "observed", "inferred", "user_confirmed", "auto_confirmed", "imported",
     "generated", "superseded", "disputed",
 }
 LIFECYCLE_STATUSES = {"active", "stale", "archived", "superseded", "disputed", "rejected"}
@@ -13,7 +13,7 @@ REVIEW_STATUSES = {
     "rejected", "stale", "merged", "superseded", "disputed",
 }
 SENSITIVITY_TIERS = {"standard", "restricted", "unknown"}
-INSTRUCTION_GRADE_PROVENANCE = {"user_confirmed", "imported"}
+INSTRUCTION_GRADE_PROVENANCE = {"user_confirmed", "auto_confirmed"}
 
 
 def _choice(value: object, allowed: set[str], default: str) -> str:
@@ -64,6 +64,12 @@ def governance_from_frontmatter(fm: dict) -> dict:
         can_use_as_instruction = 0
 
     requires_default = provenance not in INSTRUCTION_GRADE_PROVENANCE
+    requires_user_confirmation = _bool_int(
+        fm.get("requires_user_confirmation"),
+        requires_default,
+    )
+    if provenance not in INSTRUCTION_GRADE_PROVENANCE:
+        requires_user_confirmation = 1
     return {
         "provenance_status": provenance,
         "confidence": _optional_float(fm.get("confidence")),
@@ -72,8 +78,5 @@ def governance_from_frontmatter(fm: dict) -> dict:
         "sensitivity_tier": sensitivity,
         "can_use_as_instruction": can_use_as_instruction,
         "can_use_as_evidence": _bool_int(fm.get("can_use_as_evidence"), True),
-        "requires_user_confirmation": _bool_int(
-            fm.get("requires_user_confirmation"),
-            requires_default,
-        ),
+        "requires_user_confirmation": requires_user_confirmation,
     }

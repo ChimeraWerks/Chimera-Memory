@@ -167,6 +167,7 @@ def test_full_reindex_auto_enqueues_allowed_shadow_persona(tmp_path: Path, monke
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE", "true")
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PERSONAS", "sarah")
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PROVIDER", "dry_run")
+    monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(root / "missing-global"))
 
     updated = full_reindex(conn, root / "personas", embed=False)
 
@@ -189,6 +190,8 @@ def test_shadow_enqueue_uses_resolved_provider_when_no_explicit_hint(tmp_path: P
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PERSONAS", "sarah")
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER", "openai,anthropic,dry_run")
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF", "oauth:anthropic-memory")
+    monkeypatch.setenv("CHIMERA_MEMORY_OAUTH_STORE", str(tmp_path / "empty-auth.json"))
+    monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(root / "missing-global"))
 
     full_reindex(conn, root / "personas", embed=False)
 
@@ -207,6 +210,7 @@ def test_shadow_report_compares_completed_metadata(tmp_path: Path, monkeypatch) 
     init_memory_tables(conn)
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_MODE", "true")
     monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_SHADOW_PERSONAS", "sarah")
+    monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(root / "missing-global"))
     full_reindex(conn, root / "personas", embed=False)
 
     processed = run_memory_enhancement_dry_run(conn, persona="sarah", limit=1)

@@ -11,11 +11,14 @@ import html
 import math
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from .memory_live_retrieval import build_live_retrieval_plan
 from .memory_observability import record_memory_audit_event, record_memory_recall_trace
-from .memory_scope import MEMORY_SCOPE_AUTO, scope_filter_sql
+from .memory_display import safe_memory_relative_path_display, safe_memory_text_display
+from .memory_relevance import quality_filter_candidates
+from .memory_scope import MEMORY_SCOPE_AUTO, global_root_filter_values, scope_filter_sql
 from .sanitizer import build_fts_query
 
 
@@ -23,13 +26,13 @@ MEMORY_CONTEXT_PACK_SCHEMA_VERSION = "chimera-memory.context-pack.v1"
 
 _BLOCKED_LIFECYCLE = {"disputed", "rejected", "superseded"}
 _CONTEXT_BLOCK_RE = re.compile(
-    r"<\s*(?:chimera-memory-context|memory-context|supermemory-context)(?:\s+[^>]*)?>"
+    r"<\s*(?:chimera-memory-context|chimera-transcript-context|memory-context|supermemory-context)(?:\s+[^>]*)?>"
     r"[\s\S]*?"
-    r"</\s*(?:chimera-memory-context|memory-context|supermemory-context)\s*>",
+    r"</\s*(?:chimera-memory-context|chimera-transcript-context|memory-context|supermemory-context)\s*>",
     re.IGNORECASE,
 )
 _CONTEXT_TAG_RE = re.compile(
-    r"</?\s*(?:chimera-memory-context|memory-context|supermemory-context)(?:\s+[^>]*)?>",
+    r"</?\s*(?:chimera-memory-context|chimera-transcript-context|memory-context|supermemory-context)(?:\s+[^>]*)?>",
     re.IGNORECASE,
 )
 _HIGHLIGHT_RE = re.compile(r">>>|<<<")
@@ -73,6 +76,7 @@ def _clean_snippet(value: object, *, max_chars: int = 260) -> str:
     text = str(value or "")
     text = strip_memory_context(text)
     text = _HIGHLIGHT_RE.sub("", text)
+    text = safe_memory_text_display(text)
     text = " ".join(text.split())
     if len(text) <= max_chars:
         return text
@@ -87,6 +91,7 @@ def _memory_conditions(
     scope: str,
     include_restricted: bool,
     include_synthesis: bool,
+    global_root: str | Path | None = None,
 ) -> tuple[list[str], list[object], dict[str, object]]:
     scope_sql, scope_params, scope_policy = scope_filter_sql(
         table_alias="f",
@@ -106,6 +111,17 @@ def _memory_conditions(
         conditions.append("COALESCE(f.fm_sensitivity_tier, 'standard') <> 'restricted'")
     if not include_synthesis:
         conditions.append("COALESCE(f.fm_exclude_from_default_search, 0) = 0")
+    root_filter = global_root_filter_values(global_root)
+    if root_filter is not None:
+        conditions.append(
+            "("
+            "COALESCE(f.memory_scope, '') <> 'global' "
+            "OR LOWER(REPLACE(COALESCE(f.path, ''), '\\', '/')) = ? "
+            "OR LOWER(REPLACE(COALESCE(f.path, ''), '\\', '/')) LIKE ?"
+            ")"
+        )
+        params.extend(root_filter)
+        scope_policy["global_root_filtered"] = True
     return conditions, params, scope_policy
 
 
@@ -126,8 +142,10 @@ def _base_candidate(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
         "review_status": row[12],
         "sensitivity_tier": row[13],
         "requires_user_confirmation": bool(row[14]),
-        "memory_scope": row[15],
-        "project_id": row[16],
+        "can_use_as_instruction": bool(row[15]),
+        "memory_scope": row[16],
+        "project_id": row[17],
+        "content_fingerprint": row[18],
         "snippet": "",
         "fts_score": 0.0,
         "similarity": None,
@@ -144,6 +162,7 @@ def _fts_candidates(
     scope: str,
     include_restricted: bool,
     include_synthesis: bool,
+    global_root: str | Path | None,
     limit: int,
 ) -> tuple[list[dict[str, Any]], dict[str, object]]:
     fts_query = build_fts_query(query_terms)
@@ -156,6 +175,7 @@ def _fts_candidates(
         scope=scope,
         include_restricted=include_restricted,
         include_synthesis=include_synthesis,
+        global_root=global_root,
     )
     conditions.insert(0, "memory_fts MATCH ?")
     rows = conn.execute(
@@ -164,7 +184,8 @@ def _fts_candidates(
                f.fm_importance, f.fm_status, f.fm_about, f.fm_tags,
                f.fm_failure_count, f.fm_confidence, f.fm_lifecycle_status,
                f.fm_review_status, f.fm_sensitivity_tier,
-               f.fm_requires_user_confirmation, f.memory_scope, f.project_id,
+               f.fm_requires_user_confirmation, f.fm_can_use_as_instruction,
+               f.memory_scope, f.project_id, f.content_fingerprint,
                snippet(memory_fts, 3, '>>>', '<<<', '...', 32) AS snippet
         FROM memory_fts
         JOIN memory_files f ON f.id = memory_fts.rowid
@@ -177,7 +198,7 @@ def _fts_candidates(
     results: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
         item = _base_candidate(row)
-        item["snippet"] = row[17]
+        item["snippet"] = row[19]
         item["fts_score"] = 1.0 / (index + 1)
         results.append(item)
     return results, {"enabled": True, "scope_policy": scope_policy}
@@ -192,6 +213,7 @@ def _semantic_candidates(
     scope: str,
     include_restricted: bool,
     include_synthesis: bool,
+    global_root: str | Path | None,
     limit: int,
 ) -> tuple[list[dict[str, Any]], dict[str, object]]:
     if not query_text.strip():
@@ -212,6 +234,7 @@ def _semantic_candidates(
         scope=scope,
         include_restricted=include_restricted,
         include_synthesis=include_synthesis,
+        global_root=global_root,
     )
     rows = conn.execute(
         f"""
@@ -219,7 +242,8 @@ def _semantic_candidates(
                f.fm_importance, f.fm_status, f.fm_about, f.fm_tags,
                f.fm_failure_count, f.fm_confidence, f.fm_lifecycle_status,
                f.fm_review_status, f.fm_sensitivity_tier,
-               f.fm_requires_user_confirmation, f.memory_scope, f.project_id,
+               f.fm_requires_user_confirmation, f.fm_can_use_as_instruction,
+               f.memory_scope, f.project_id, f.content_fingerprint,
                e.embedding
         FROM memory_files f
         JOIN memory_embeddings e ON e.file_id = f.id
@@ -229,7 +253,7 @@ def _semantic_candidates(
     ).fetchall()
     scored: list[tuple[float, dict[str, Any]]] = []
     for row in rows:
-        similarity = cosine_similarity(query_emb, unpack_embedding(row[17]))
+        similarity = cosine_similarity(query_emb, unpack_embedding(row[19]))
         item = _base_candidate(row)
         item["similarity"] = round(similarity, 4)
         item["semantic_score"] = max(0.0, similarity)
@@ -281,10 +305,67 @@ def _combine_candidates(*candidate_sets: list[dict[str, Any]], limit: int) -> li
     return results[:limit]
 
 
+def _dedupe_keys(item: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    fingerprint = str(item.get("content_fingerprint") or "").strip()
+    if fingerprint:
+        keys.append(f"fingerprint:{fingerprint}")
+    scope = str(item.get("memory_scope") or "").strip().lower()
+    relative_path = str(item.get("relative_path") or "").strip().replace("\\", "/").lower()
+    if scope == "global" and relative_path:
+        keys.append(f"global-relative:{relative_path}")
+    if not keys:
+        keys.append(f"id:{item.get('id')}")
+    return keys
+
+
+def _dedupe_candidates(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Collapse duplicate memory candidates after ranking while preserving best evidence."""
+    selected: list[dict[str, Any]] = []
+    seen: dict[str, int] = {}
+    duplicate_keys: list[str] = []
+    for item in candidates:
+        keys = _dedupe_keys(item)
+        matched_key = next((key for key in keys if key in seen), "")
+        if matched_key:
+            duplicate_keys.append(matched_key)
+            continue
+        candidate = dict(item)
+        candidate["dedupe_key"] = keys[0]
+        for key in keys:
+            seen[key] = int(candidate.get("id") or 0)
+        selected.append(candidate)
+    return selected, {
+        "enabled": True,
+        "input_count": len(candidates),
+        "returned_count": len(selected),
+        "removed_count": len(candidates) - len(selected),
+        "duplicate_key_count": len(set(duplicate_keys)),
+        "keys": {
+            "global_relative_path": True,
+            "content_fingerprint": True,
+        },
+    }
+
+
+def _card_display_path(item: dict[str, Any]) -> str:
+    relative_path = safe_memory_relative_path_display(
+        item.get("relative_path"),
+        fallback_path=item.get("path"),
+    )
+    if relative_path:
+        return relative_path
+    scope = str(item.get("memory_scope") or item.get("persona") or "memory").strip().replace("\\", "/")
+    file_id = item.get("id")
+    if isinstance(file_id, int):
+        return f"{scope or 'memory'}#{file_id}"
+    return "unknown"
+
+
 def _card_line(item: dict[str, Any], *, index: int) -> str:
     scope = item.get("memory_scope") or "persona"
     project = f":{item['project_id']}" if item.get("project_id") else ""
-    path = item.get("relative_path") or item.get("path") or "unknown"
+    path = _card_display_path(item)
     about = _clean_snippet(item.get("about"), max_chars=140)
     snippet = _clean_snippet(item.get("snippet"), max_chars=220)
     evidence = snippet or about or "Memory file matched the current turn."
@@ -293,6 +374,14 @@ def _card_line(item: dict[str, Any], *, index: int) -> str:
         f"score={_safe_float(item.get('ranking_score')):.2f}; "
         f"importance={item.get('importance') or 0}"
     )
+    review_status = str(item.get("review_status") or "").strip()
+    if review_status:
+        meta += f"; review={review_status}"
+    lifecycle_status = str(item.get("lifecycle_status") or "").strip()
+    if lifecycle_status and lifecycle_status != "active":
+        meta += f"; lifecycle={lifecycle_status}"
+    if not item.get("can_use_as_instruction"):
+        meta += "; evidence-only"
     if item.get("requires_user_confirmation"):
         meta += "; needs-confirmation"
     return f"{index}. {path} ({meta})\n   {evidence}"
@@ -328,11 +417,14 @@ def memory_context_pack(
     include_restricted: bool = False,
     include_synthesis: bool = False,
     scope: str = MEMORY_SCOPE_AUTO,
+    global_root: str | Path | None = None,
     actor: str = "system",
+    delivery_mode: str = "",
 ) -> dict[str, Any]:
     """Build a small, traceable memory pack for the current turn."""
     selected_limit = _clamp_int(limit, default=5, minimum=1, maximum=20)
     selected_budget = _clamp_int(token_budget, default=800, minimum=120, maximum=4000)
+    selected_delivery_mode = str(delivery_mode or "").strip().lower().replace("-", "_")
     clean_current = strip_memory_context(current_context or "")
     clean_previous = strip_memory_context(previous_context or "")
     plan = build_live_retrieval_plan(
@@ -374,6 +466,7 @@ def memory_context_pack(
         scope=scope,
         include_restricted=include_restricted,
         include_synthesis=include_synthesis,
+        global_root=global_root,
         limit=max(selected_limit * 4, 20),
     )
     semantic, semantic_policy = _semantic_candidates(
@@ -384,9 +477,15 @@ def memory_context_pack(
         scope=scope,
         include_restricted=include_restricted,
         include_synthesis=include_synthesis,
+        global_root=global_root,
         limit=max(selected_limit * 4, 20),
     )
-    candidates = _combine_candidates(fts, semantic, limit=max(selected_limit * 4, selected_limit))
+    raw_candidates = _combine_candidates(fts, semantic, limit=max(selected_limit * 4, selected_limit))
+    candidates, quality_policy = quality_filter_candidates(
+        raw_candidates,
+        query_terms=list(plan.get("query_terms") or []),
+    )
+    candidates, duplicate_policy = _dedupe_candidates(candidates)
 
     cards: list[dict[str, Any]] = []
     used_tokens = rough_token_count(
@@ -414,6 +513,7 @@ def memory_context_pack(
         persona=persona,
         requested_limit=selected_limit,
         results=cards,
+        result_count=len(candidates),
         request_payload={
             "schema_version": MEMORY_CONTEXT_PACK_SCHEMA_VERSION,
             "current_context_chars": len(clean_current),
@@ -423,16 +523,22 @@ def memory_context_pack(
             "scope": scope,
             "include_restricted": include_restricted,
             "include_synthesis": include_synthesis,
+            "global_root_filter_enabled": global_root_filter_values(global_root) is not None,
             "token_budget": selected_budget,
+            "delivery_mode": selected_delivery_mode,
         },
         response_policy={
             "mode": "turn_context_pack",
+            "delivery_mode": selected_delivery_mode,
             "ranking": "hybrid_semantic_fts_importance_governance",
             "result_count": len(candidates),
+            "raw_result_count": len(raw_candidates),
             "returned_count": len(cards),
             "token_estimate": used_tokens,
             "fts_policy": fts_policy,
             "semantic_policy": semantic_policy,
+            "quality_gate": quality_policy,
+            "dedupe": duplicate_policy,
             "context_fencing": "chimera-memory-context",
             "injects_into_prompt": False,
         },
@@ -448,8 +554,12 @@ def memory_context_pack(
         payload={
             "schema_version": MEMORY_CONTEXT_PACK_SCHEMA_VERSION,
             "result_count": len(candidates),
+            "raw_result_count": len(raw_candidates),
+            "filtered_count": quality_policy["filtered_count"],
+            "duplicate_filtered_count": duplicate_policy["removed_count"],
             "returned_count": len(cards),
             "token_estimate": used_tokens,
+            "delivery_mode": selected_delivery_mode,
             "plan": plan,
         },
         actor=actor,
@@ -460,6 +570,9 @@ def memory_context_pack(
         "trace_id": trace_id,
         "plan": plan,
         "result_count": len(candidates),
+        "raw_result_count": len(raw_candidates),
+        "filtered_count": quality_policy["filtered_count"],
+        "duplicate_filtered_count": duplicate_policy["removed_count"],
         "returned_count": len(cards),
         "token_estimate": used_tokens,
         "cards": cards,

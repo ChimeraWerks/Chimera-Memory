@@ -147,7 +147,10 @@ runtime, not a provider; set `HERMES_INFERENCE_PROVIDER` when a Hermes runtime
 should bias toward its current inference backend. Affinity does not create a
 credential, read an interactive runtime token, or authorize CM to reuse a user
 OAuth session. Cloud providers still become available only through the
-credential reference rules below.
+credential reference rules below. If Codex OAuth is present but CM has not been
+explicitly authorized to use it, `chimera-memory enhance provider-plan --json`
+returns a body-safe `import_openai_codex_oauth` recommendation rather than only
+showing `credential_missing`.
 
 Cloud providers become available only when a credential reference is configured.
 Credential references are names, not token values. Accepted forms are:
@@ -162,10 +165,44 @@ For frontier providers (OpenAI, Anthropic, Gemini/Google), `oauth:` refs are
 intended for subscription/external-OAuth credential plumbing and `secret:` or
 `env:` refs are intended for API-key plumbing. CM stores and logs only the ref.
 PA owns the actual credential resolution and provider-specific auth flow.
+For Codex/OpenAI OAuth, import is explicit:
+
+```powershell
+chimera-memory enhance oauth-import --provider openai --source codex_cli --store "$env:USERPROFILE\.chimera-memory\auth.json" --json
+```
+
+After import, use the safe smoke helper instead of hand-building provider
+requests:
+
+```powershell
+chimera-memory enhance provider-smoke --expect-provider openai --expect-model gpt-5.3-codex-spark --json
+chimera-memory enhance provider-smoke --live --http-sidecar --expect-provider openai --expect-model gpt-5.3-codex-spark --json
+```
+
+The first command is no-provider-call plan evidence. The second command makes an
+explicit live call through an ephemeral local HTTP sidecar and the resolving
+provider client. Both receipts hide credential refs, token values, raw smoke
+body, provider stderr, and raw provider response text; live receipts return only
+metadata shape/counts and governance booleans.
+
+The shared HTTP sidecar startup scripts accept `-OAuthStore`, `-Provider`, and
+`-EnableProviderWorker`; by default `scripts/start-cm-http.ps1` now uses the
+user-global CM state root and auth store so scheduled starts do not silently
+fall back to a repo-local empty store.
+
+Queue storage can keep raw local paths and wrapped request payloads because
+workers need the source material to run. Client-facing enhancement receipts are
+separate: CLI JSON for `enqueue`, `authored-enqueue`, `dry-run`, `worker-fake`,
+and nested authored-write `enrichment_job` receipts must return safe path
+labels/fingerprints and redaction markers instead of raw paths, wrapped memory
+content, authored payload bodies, or content-derived metadata fields that are
+not needed for status/governance.
 
 Configured keys:
 
 ```text
+CHIMERA_MEMORY_STATE_ROOT
+CHIMERA_MEMORY_OAUTH_STORE
 CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF
 CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF
 CHIMERA_MEMORY_ENHANCEMENT_GOOGLE_CREDENTIAL_REF
@@ -237,6 +274,12 @@ Provider receipts intentionally expose only whether a credential reference is
 present. They do not include credential reference values and never include raw
 credential material.
 
+HTTP sidecar clients and servers must preserve those same boundaries on
+transport failure. Auth rejects return the bounded `auth_error` code, rejected
+small request bodies are drained before the response to avoid platform socket
+aborts, and client-side OS/network failures collapse to sanitized availability
+or timeout messages instead of raw exception text.
+
 ## Provider Runner Boundary
 
 `chimera_memory/memory_enhancement_runner.py` defines the batch runner that a
@@ -266,10 +309,17 @@ Default retrieval paths exclude frontmatter with:
 exclude_from_default_search: true
 ```
 
-`memory_search`, `memory_query`, and `memory_recall` all default to excluding
-those rows. Callers must opt in with `include_synthesis=true` when they want
-generated summaries included. This mirrors OB1's dossier pollution warning but
-enforces the read-side filter in CM.
+`memory_search`, `memory_query`, `memory_recall`, `memory_context_pack`,
+`memory_live_retrieval_check`, `memory_stats`, `memory_source_refs`, and
+`memory_artifacts` all default to excluding those rows. Callers must opt in
+with `include_synthesis=true` when they want generated summaries included. This
+mirrors OB1's dossier pollution warning but enforces the read-side filter in CM.
+
+The same direct retrieval paths also exclude restricted, blocked-lifecycle, and
+non-evidence rows by default, and the stats/provenance metadata lookups follow
+the same default policy. Callers may opt into restricted or blocked rows for
+review/debug work, but `can_use_as_evidence=false` rows remain out of ordinary
+retrieval.
 
 `memory_entity_wiki_generate` currently supports:
 
@@ -446,8 +496,9 @@ The validator rejects any output that:
 
 - Is not valid JSON.
 - Adds fields outside the schema.
-- Sets `can_use_as_instruction=true` unless provenance is `user_confirmed` or
-  `imported`.
+- Sets `can_use_as_instruction=true` unless provenance is `user_confirmed`.
+  Imported/generated output stays review-gated evidence until human review
+  promotes it.
 - Emits raw secrets or credential-looking strings.
 - Exceeds configured list sizes.
 - Marks restricted content as standard when deterministic guards identify a

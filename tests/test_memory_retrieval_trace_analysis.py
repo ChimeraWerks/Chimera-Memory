@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from chimera_memory.memory import (
     init_memory_tables,
     memory_audit_query,
     memory_search,
+    record_memory_recall_trace,
 )
 from chimera_memory.memory_retrieval_trace_analysis import (
     StaticMemoryRetrievalTraceAnalysisClient,
@@ -74,6 +76,90 @@ def test_retrieval_trace_analysis_sends_safe_trace_summary(tmp_path: Path) -> No
     events = memory_audit_query(conn, event_type="memory_retrieval_trace_analysis", persona="asa")
     assert len(events) == 1
     assert events[0]["payload"]["category_counts"] == {"query_too_vague": 1}
+
+
+def test_retrieval_trace_analysis_omits_context_prompt_and_sanitizes_trace_payload(
+    tmp_path: Path,
+) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+
+    auth_ref = "C:/Users/test/.codex/auth.json"
+    fake_pat = "ghp_" + "B" * 40
+    local_file = tmp_path / "private" / "context.md"
+    local_file.parent.mkdir()
+    record_memory_recall_trace(
+        conn,
+        tool_name="memory_context_pack",
+        query_text=f"context analyzer prompt must not leak {auth_ref} {fake_pat}",
+        persona=None,
+        requested_limit=1,
+        results=[
+            {
+                "id": 1,
+                "path": str(local_file),
+                "relative_path": "memory/context.md",
+                "persona": "global",
+                "type": "procedural",
+                "about": f"Analyzer metadata mentions {auth_ref} and {fake_pat}",
+                "metadata": {
+                    "raw_prompt": "analysis metadata prompt must not leak",
+                    "source_path": str(local_file),
+                },
+            }
+        ],
+        request_payload={
+            "plan": {
+                "query_text": "analysis plan query must not leak",
+                "query_terms": [auth_ref, fake_pat],
+                "shift_score": 1.0,
+            },
+            "raw_prompt": "analysis request prompt must not leak",
+        },
+        response_policy={
+            "raw_prompt": "analysis response prompt must not leak",
+            "provider_stderr": f"provider stderr {auth_ref}",
+        },
+    )
+    client = StaticMemoryRetrievalTraceAnalysisClient(
+        [
+            {
+                "category": "ok",
+                "secondary_categories": [],
+                "severity": "info",
+                "confidence": 0.8,
+                "recommendation": "No fix needed.",
+                "evidence": ["Trace is sanitized."],
+                "query_expansions": [],
+                "suggested_tool_route": "memory_recall",
+            }
+        ]
+    )
+
+    result = memory_retrieval_trace_analyze(
+        conn,
+        client=client,
+        env={"CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "dry_run"},
+        tool_name="memory_context_pack",
+        limit=1,
+    )
+    trace = client.invocations[0]["request"]["trace"]
+    serialized = json.dumps(client.invocations[0], sort_keys=True).replace("\\\\", "/").replace("\\", "/")
+
+    assert result["analysis_count"] == 1
+    assert trace["query_text"].startswith("[omitted:")
+    assert "context analyzer prompt must not leak" not in serialized
+    assert "analysis plan query must not leak" not in serialized
+    assert "analysis request prompt must not leak" not in serialized
+    assert "analysis response prompt must not leak" not in serialized
+    assert "analysis metadata prompt must not leak" not in serialized
+    assert "ghp_" not in serialized
+    assert ".codex/auth.json" not in serialized
+    assert str(tmp_path).replace("\\", "/") not in serialized
+    assert trace["request_payload"]["plan"]["query_text"]["redacted"] is True
+    assert trace["response_policy"]["raw_prompt"]["redacted"] is True
+    assert trace["response_policy"]["provider_stderr"]["redacted"] is True
+    assert trace["items"][0]["metadata"]["about"].startswith("Analyzer metadata mentions local-path:auth.json")
 
 
 def test_retrieval_trace_analysis_normalizes_untrusted_model_output() -> None:

@@ -90,12 +90,15 @@ from .memory_auto_capture import build_auto_capture_plan, write_auto_capture_fil
 from .memory_authored_writeback import (
     build_authored_memory_write_plan,
     write_authored_memory_file,
+    write_authored_memory_global_file,
     write_authored_memory_project_file,
 )
 from .memory_review import REVIEW_ACTIONS, memory_review_action as _db_memory_review_action, memory_review_pending
 from .memory_scope import (
     MEMORY_SCOPE_AUTO,
+    MEMORY_SCOPE_GLOBAL,
     MEMORY_SCOPE_PROJECT,
+    global_root_filter_values,
     global_memory_root,
     infer_memory_scope,
     project_memory_roots,
@@ -408,9 +411,9 @@ def discover_files(personas_dir: Path) -> list[tuple[str, str, Path]]:
     are indexed from the persona tree. Global/shared and current-project memory
     may also be indexed because those scopes are intentionally non-private.
 
-    When TRANSCRIPT_PERSONA is unset and project roots are configured, skips the
-    persona tree and indexes only global/shared/project memory. Otherwise it
-    keeps the legacy multi-persona aggregation behavior.
+    When TRANSCRIPT_PERSONA is unset and project roots or Codex no-persona mode
+    are configured, skips the persona tree and indexes only global/shared/project
+    memory. Otherwise it keeps the legacy multi-persona aggregation behavior.
 
     Returns [(persona, relative_path, full_path)].
     """
@@ -418,7 +421,7 @@ def discover_files(personas_dir: Path) -> list[tuple[str, str, Path]]:
 
     scope_persona = os.environ.get("TRANSCRIPT_PERSONA", "").strip()
     project_roots = project_memory_roots()
-    skip_persona_tree = not scope_persona and bool(project_roots)
+    skip_persona_tree = _skip_persona_tree_for_runtime(scope_persona, project_roots)
 
     if personas_dir.exists() and not skip_persona_tree:
         for persona_dir in personas_dir.iterdir():
@@ -450,21 +453,87 @@ def discover_files(personas_dir: Path) -> list[tuple[str, str, Path]]:
     return results
 
 
+def _skip_persona_tree_for_runtime(
+    scope_persona: str,
+    project_roots: tuple[tuple[str, Path], ...],
+) -> bool:
+    if scope_persona:
+        return False
+    if project_roots:
+        return True
+    client = os.environ.get("CHIMERA_CLIENT", "").strip().lower()
+    surface = os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower()
+    return client == "codex" or surface == "codex"
+
+
 def _walk_project_memory_files(project_dir: Path, persona: str, results: list) -> None:
     """Index only explicit project-memory subtrees from a project root.
 
     A repo-level .chimera-memory folder may also contain auth/cache state. V1
     only indexes named project memory subdirs to keep credentials out of scope.
     """
+    for root in _project_index_roots(project_dir):
+        _walk_for_files(root, persona, project_dir, results)
+
+
+def _project_index_roots(project_dir: Path) -> list[Path]:
     roots = []
     for name in sorted(PROJECT_MEMORY_DIRS):
         child = project_dir / name
         if child.exists() and child.is_dir():
             roots.append(child)
-    if not roots:
-        roots = [project_dir]
+    return roots or [project_dir]
+
+
+def _managed_reindex_roots(personas_dir: Path) -> list[Path]:
+    """Return filesystem roots this runtime is authoritative to prune."""
+    roots: list[Path] = []
+    scope_persona = os.environ.get("TRANSCRIPT_PERSONA", "").strip()
+    project_roots = project_memory_roots()
+    skip_persona_tree = _skip_persona_tree_for_runtime(scope_persona, project_roots)
+
+    if personas_dir.exists() and not skip_persona_tree:
+        for persona_dir in personas_dir.iterdir():
+            if not persona_dir.is_dir() or persona_dir.name.startswith("."):
+                continue
+            for sub in persona_dir.iterdir():
+                if not sub.is_dir() or sub.name.startswith("."):
+                    continue
+                if scope_persona and sub.name != scope_persona:
+                    continue
+                for index_root_name in sorted(MEMORY_DIRS - {"shared"}):
+                    index_root = sub / index_root_name
+                    if index_root.exists() and index_root.is_dir():
+                        roots.append(index_root.resolve(strict=False))
+
+    shared_dir = personas_dir.parent / "shared"
+    if shared_dir.exists():
+        roots.append(shared_dir.resolve(strict=False))
+
+    global_dir = global_memory_root()
+    if global_dir.exists() and global_dir.resolve(strict=False) != shared_dir.resolve(strict=False):
+        roots.append(global_dir.resolve(strict=False))
+
+    for _project_id, project_dir in project_roots:
+        if project_dir.exists():
+            roots.extend(root.resolve(strict=False) for root in _project_index_roots(project_dir))
+    return roots
+
+
+def _is_under_any_root(path_text: str, roots: list[Path]) -> bool:
+    if not path_text or not roots:
+        return False
+    try:
+        path = Path(path_text).resolve(strict=False)
+    except OSError:
+        return False
     for root in roots:
-        _walk_for_files(root, persona, project_dir, results)
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 def cleanup_other_personas(conn, scope_persona: str) -> dict:
@@ -520,9 +589,17 @@ def cleanup_other_personas(conn, scope_persona: str) -> dict:
     return counts
 
 
+def _skip_memory_child_path(path: Path) -> bool:
+    return path.name in SKIP_DIRS or path.name.startswith(".") or path.is_symlink()
+
+
+def _memory_relative_path_allowed(relative_path: Path) -> bool:
+    return not any(part in SKIP_DIRS or part.startswith(".") for part in relative_path.parts)
+
+
 def _walk_for_files(directory: Path, persona: str, base: Path, results: list):
     for item in directory.iterdir():
-        if item.name in SKIP_DIRS:
+        if _skip_memory_child_path(item):
             continue
         if item.is_dir():
             _walk_for_files(item, persona, base, results)
@@ -732,9 +809,10 @@ def full_reindex(conn: sqlite3.Connection, personas_dir: Path, embed: bool = Tru
 
     # Clean up deleted files
     indexed_paths = {str(fp).replace("\\", "/") for _, _, fp in files}
+    managed_roots = _managed_reindex_roots(personas_dir)
     rows = conn.execute("SELECT id, path FROM memory_files").fetchall()
     for file_id, path in rows:
-        if path not in indexed_paths:
+        if path not in indexed_paths and _is_under_any_root(str(path or ""), managed_roots):
             conn.execute("DELETE FROM memory_fts WHERE rowid = ?", (file_id,))
             conn.execute("DELETE FROM memory_embeddings WHERE file_id = ?", (file_id,))
             conn.execute("DELETE FROM memory_files WHERE id = ?", (file_id,))
@@ -819,21 +897,74 @@ def embed_memory_files(conn: sqlite3.Connection, file_ids: list[int]):
 
 # â”€â”€â”€ Search Tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+_BLOCKED_RETRIEVAL_LIFECYCLE = {"disputed", "rejected", "superseded"}
+
+
+def _add_default_retrieval_safety_conditions(
+    conditions: list[str],
+    params: list[object],
+    *,
+    include_restricted: bool,
+    include_blocked: bool,
+) -> dict[str, object]:
+    conditions.append("COALESCE(f.fm_can_use_as_evidence, 1) = 1")
+    if not include_restricted:
+        conditions.append("COALESCE(f.fm_sensitivity_tier, 'standard') <> 'restricted'")
+    if not include_blocked:
+        placeholders = ",".join("?" * len(_BLOCKED_RETRIEVAL_LIFECYCLE))
+        conditions.append(f"COALESCE(f.fm_lifecycle_status, 'active') NOT IN ({placeholders})")
+        params.extend(sorted(_BLOCKED_RETRIEVAL_LIFECYCLE))
+    return {
+        "can_use_as_evidence": True,
+        "include_restricted": bool(include_restricted),
+        "include_blocked": bool(include_blocked),
+        "blocked_lifecycle": sorted(_BLOCKED_RETRIEVAL_LIFECYCLE),
+    }
+
+
+def _add_active_global_root_conditions(
+    conditions: list[str],
+    params: list[object],
+    *,
+    global_root: str | Path | None,
+    scope_policy: dict[str, object] | None = None,
+) -> bool:
+    root_filter = global_root_filter_values(global_root)
+    if root_filter is None:
+        return False
+    conditions.append(
+        "("
+        "COALESCE(f.memory_scope, '') <> 'global' "
+        "OR LOWER(REPLACE(COALESCE(f.path, ''), '\\', '/')) = ? "
+        "OR LOWER(REPLACE(COALESCE(f.path, ''), '\\', '/')) LIKE ?"
+        ")"
+    )
+    params.extend(root_filter)
+    if scope_policy is not None:
+        scope_policy["global_root_filtered"] = True
+    return True
+
+
 def memory_search(
     conn: sqlite3.Connection,
     query: str,
     persona: Optional[str] = None,
     limit: int = 20,
     include_synthesis: bool = False,
+    include_restricted: bool = False,
+    include_blocked: bool = False,
     source_kind: Optional[str] = None,
     source_uri: Optional[str] = None,
     project_id: Optional[str] = None,
     scope: str = MEMORY_SCOPE_AUTO,
+    global_root: str | Path | None = None,
 ) -> list[dict]:
     """Full-text search across memory files."""
     from .cognitive import reinforce_on_access
+    from .memory_relevance import quality_filter_candidates
 
-    fts_query = build_fts_query(query.split())
+    query_terms = query.split()
+    fts_query = build_fts_query(query_terms)
     if not fts_query:
         return []
 
@@ -842,6 +973,12 @@ def memory_search(
         "(? OR COALESCE(f.fm_exclude_from_default_search, 0) = 0)",
     ]
     params: list[object] = [fts_query, int(bool(include_synthesis))]
+    safety_policy = _add_default_retrieval_safety_conditions(
+        conditions,
+        params,
+        include_restricted=include_restricted,
+        include_blocked=include_blocked,
+    )
     scope_sql, scope_params, scope_policy = scope_filter_sql(
         table_alias="f",
         persona=persona,
@@ -851,8 +988,24 @@ def memory_search(
     if scope_sql:
         conditions.append(scope_sql)
         params.extend(scope_params)
+    global_root_filtered = _add_active_global_root_conditions(
+        conditions,
+        params,
+        global_root=global_root,
+        scope_policy=scope_policy,
+    )
     _add_source_ref_conditions(conditions, params, source_kind=source_kind, source_uri=source_uri)
     where = " AND ".join(conditions)
+    total_count = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM memory_fts
+        JOIN memory_files f ON f.id = memory_fts.rowid
+        WHERE {where}
+        """,
+        params,
+    ).fetchone()[0]
+    candidate_limit = min(max(limit * 10, 100), 500)
     rows = conn.execute(f"""
         SELECT f.id, f.path, f.persona, f.relative_path, f.fm_type, f.fm_importance,
                f.fm_status, snippet(memory_fts, 3, '>>>', '<<<', '...', 40) as snippet,
@@ -861,17 +1014,22 @@ def memory_search(
         JOIN memory_files f ON f.id = memory_fts.rowid
         WHERE {where}
         ORDER BY rank LIMIT ?
-    """, params + [limit]).fetchall()
+    """, params + [candidate_limit]).fetchall()
 
-    for r in rows:
-        reinforce_on_access(conn, r[0])
-
-    results = [
+    candidates = [
         {"id": r[0], "path": r[1], "persona": r[2], "relative_path": r[3], "type": r[4],
          "importance": r[5], "status": r[6], "snippet": r[7],
          "memory_scope": r[8], "project_id": r[9]}
         for r in rows
     ]
+    filtered_candidates, quality_policy = quality_filter_candidates(
+        candidates,
+        query_terms=query_terms,
+    )
+    results = filtered_candidates[:limit]
+
+    for item in results:
+        reinforce_on_access(conn, int(item["id"]))
     record_memory_recall_trace(
         conn,
         tool_name="memory_search",
@@ -879,20 +1037,27 @@ def memory_search(
         persona=persona,
         requested_limit=limit,
         results=results,
+        result_count=total_count,
         request_payload={
             "query": query,
             "persona": persona,
             "limit": limit,
             "source_kind": source_kind,
-            "source_uri": source_uri,
+            "source_uri_supplied": bool(source_uri),
             "project_id": project_id,
             "scope": scope,
+            "include_restricted": bool(include_restricted),
+            "include_blocked": bool(include_blocked),
+            "global_root_filter_enabled": global_root_filtered,
         },
         response_policy={
             "ranking": "fts5_rank",
-            "returned": "all_results",
+            "returned": "quality_filtered_top_limit",
             "include_synthesis": bool(include_synthesis),
+            "safety_policy": safety_policy,
             "scope_policy": scope_policy,
+            "candidate_pool_limit": candidate_limit,
+            "quality_gate": quality_policy,
         },
     )
     return results
@@ -905,15 +1070,18 @@ def memory_query(
     tag: Optional[str] = None, about: Optional[str] = None,
     sort_by: str = "importance", sort_order: str = "DESC", limit: int = 50,
     include_synthesis: bool = False,
+    include_restricted: bool = False,
+    include_blocked: bool = False,
     source_kind: Optional[str] = None,
     source_uri: Optional[str] = None,
     project_id: Optional[str] = None,
     scope: str = MEMORY_SCOPE_AUTO,
+    global_root: str | Path | None = None,
 ) -> list[dict]:
     """Structured query against frontmatter fields."""
     conditions, params = [], []
 
-    scope_sql, scope_params, _scope_policy = scope_filter_sql(
+    scope_sql, scope_params, scope_policy = scope_filter_sql(
         table_alias="f",
         persona=persona,
         project_id=project_id,
@@ -922,6 +1090,12 @@ def memory_query(
     if scope_sql:
         conditions.append(scope_sql)
         params.extend(scope_params)
+    global_root_filtered = _add_active_global_root_conditions(
+        conditions,
+        params,
+        global_root=global_root,
+        scope_policy=scope_policy,
+    )
     if fm_type:
         conditions.append("f.fm_type = ?")
         params.append(fm_type)
@@ -942,6 +1116,12 @@ def memory_query(
         params.append(f"%{about}%")
     if not include_synthesis:
         conditions.append("COALESCE(f.fm_exclude_from_default_search, 0) = 0")
+    safety_policy = _add_default_retrieval_safety_conditions(
+        conditions,
+        params,
+        include_restricted=include_restricted,
+        include_blocked=include_blocked,
+    )
     _add_source_ref_conditions(conditions, params, source_kind=source_kind, source_uri=source_uri)
 
     where = " AND ".join(conditions) if conditions else "1=1"
@@ -953,8 +1133,13 @@ def memory_query(
     sort_col = valid_sorts.get(sort_by, "fm_importance")
     order = "ASC" if sort_order.upper() == "ASC" else "DESC"
 
+    total_count = conn.execute(
+        f"SELECT COUNT(*) FROM memory_files f WHERE {where}",
+        params,
+    ).fetchone()[0]
+
     rows = conn.execute(f"""
-        SELECT path, persona, relative_path, fm_type, fm_importance,
+        SELECT id, path, persona, relative_path, fm_type, fm_importance,
                fm_created, fm_last_accessed, fm_access_count, fm_status,
                fm_about, fm_tags, fm_entity, fm_relationship_temperature,
                fm_trust_level, fm_trend, fm_failure_count,
@@ -967,22 +1152,106 @@ def memory_query(
         ORDER BY {sort_col} {order} NULLS LAST LIMIT ?
     """, params + [limit]).fetchall()
 
-    return [
-        {"path": r[0], "persona": r[1], "relative_path": r[2], "type": r[3],
-         "importance": r[4], "created": r[5], "last_accessed": r[6],
-         "access_count": r[7], "status": r[8], "about": r[9],
-         "tags": json.loads(r[10]) if r[10] else [], "entity": r[11],
-         "relationship_temperature": r[12], "trust_level": r[13],
-         "trend": r[14], "failure_count": r[15],
-         "provenance_status": r[16], "confidence": r[17],
-         "lifecycle_status": r[18], "review_status": r[19],
-         "sensitivity_tier": r[20], "can_use_as_instruction": bool(r[21]),
-         "can_use_as_evidence": bool(r[22]),
-         "requires_user_confirmation": bool(r[23]),
-         "exclude_from_default_search": bool(r[24]),
-         "memory_scope": r[25], "project_id": r[26]}
+    results = [
+        {"id": r[0], "path": r[1], "persona": r[2], "relative_path": r[3], "type": r[4],
+         "importance": r[5], "created": r[6], "last_accessed": r[7],
+         "access_count": r[8], "status": r[9], "about": r[10],
+         "tags": json.loads(r[11]) if r[11] else [], "entity": r[12],
+         "relationship_temperature": r[13], "trust_level": r[14],
+         "trend": r[15], "failure_count": r[16],
+         "provenance_status": r[17], "confidence": r[18],
+         "lifecycle_status": r[19], "review_status": r[20],
+         "sensitivity_tier": r[21], "can_use_as_instruction": bool(r[22]),
+         "can_use_as_evidence": bool(r[23]),
+         "requires_user_confirmation": bool(r[24]),
+         "exclude_from_default_search": bool(r[25]),
+         "memory_scope": r[26], "project_id": r[27]}
         for r in rows
     ]
+    record_memory_recall_trace(
+        conn,
+        tool_name="memory_query",
+        query_text=_memory_query_trace_text(
+            persona=persona,
+            fm_type=fm_type,
+            min_importance=min_importance,
+            max_importance=max_importance,
+            status=status,
+            tag=tag,
+            about=about,
+            source_kind=source_kind,
+            source_uri_supplied=bool(source_uri),
+            project_id=project_id,
+            scope=scope,
+        ),
+        persona=persona,
+        requested_limit=limit,
+        results=results,
+        result_count=total_count,
+        request_payload={
+            "persona": persona,
+            "type": fm_type,
+            "min_importance": min_importance,
+            "max_importance": max_importance,
+            "status": status,
+            "tag": tag,
+            "about": about,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "limit": limit,
+            "source_kind": source_kind,
+            "source_uri_supplied": bool(source_uri),
+            "project_id": project_id,
+            "scope": scope,
+            "include_restricted": bool(include_restricted),
+            "include_blocked": bool(include_blocked),
+            "global_root_filter_enabled": global_root_filtered,
+        },
+        response_policy={
+            "ranking": "frontmatter_sort",
+            "sort_column": sort_col,
+            "sort_order": order,
+            "returned": "limited_results",
+            "include_synthesis": bool(include_synthesis),
+            "safety_policy": safety_policy,
+            "scope_policy": scope_policy,
+        },
+    )
+    return results
+
+
+def _memory_query_trace_text(
+    *,
+    persona: Optional[str],
+    fm_type: Optional[str],
+    min_importance: Optional[int],
+    max_importance: Optional[int],
+    status: Optional[str],
+    tag: Optional[str],
+    about: Optional[str],
+    source_kind: Optional[str],
+    source_uri_supplied: bool,
+    project_id: Optional[str],
+    scope: str,
+) -> str:
+    parts = ["structured memory query"]
+    for label, value in (
+        ("persona", persona),
+        ("type", fm_type),
+        ("min_importance", min_importance),
+        ("max_importance", max_importance),
+        ("status", status),
+        ("tag", tag),
+        ("about", about),
+        ("source_kind", source_kind),
+        ("project_id", project_id),
+        ("scope", scope),
+    ):
+        if value is not None and str(value).strip():
+            parts.append(f"{label}={str(value).strip()[:80]}")
+    if source_uri_supplied:
+        parts.append("source_uri_supplied=true")
+    return " ".join(parts)
 
 
 def _add_source_ref_conditions(
@@ -1014,12 +1283,39 @@ def memory_source_ref_query(
     source_kind: Optional[str] = None,
     uri: Optional[str] = None,
     limit: int = 50,
+    *,
+    project_id: Optional[str] = None,
+    scope: str = MEMORY_SCOPE_AUTO,
+    include_synthesis: bool = False,
+    include_restricted: bool = False,
+    include_blocked: bool = False,
+    global_root: str | Path | None = None,
 ) -> list[dict]:
     """Query indexed memory source references without reading memory bodies."""
     conditions, params = [], []
-    if persona:
-        conditions.append("r.persona = ?")
-        params.append(persona)
+    scope_sql, scope_params, scope_policy = scope_filter_sql(
+        table_alias="f",
+        persona=persona,
+        project_id=project_id,
+        scope=scope,
+    )
+    if scope_sql:
+        conditions.append(scope_sql)
+        params.extend(scope_params)
+    _add_active_global_root_conditions(
+        conditions,
+        params,
+        global_root=global_root,
+        scope_policy=scope_policy,
+    )
+    if not include_synthesis:
+        conditions.append("COALESCE(f.fm_exclude_from_default_search, 0) = 0")
+    _add_default_retrieval_safety_conditions(
+        conditions,
+        params,
+        include_restricted=include_restricted,
+        include_blocked=include_blocked,
+    )
     if source_kind:
         conditions.append("r.source_kind = ?")
         params.append(source_kind.strip().lower())
@@ -1030,7 +1326,8 @@ def memory_source_ref_query(
     rows = conn.execute(
         f"""
         SELECT r.persona, f.relative_path, f.fm_type, f.fm_importance,
-               r.source_kind, r.uri, r.title, r.source_timestamp, r.metadata
+               r.source_kind, r.uri, r.title, r.source_timestamp, r.metadata,
+               f.memory_scope, f.project_id
         FROM memory_file_source_refs r
         JOIN memory_files f ON f.id = r.file_id
         WHERE {where}
@@ -1050,6 +1347,8 @@ def memory_source_ref_query(
             "title": r[6],
             "timestamp": r[7],
             "metadata": json.loads(r[8]) if r[8] else {},
+            "memory_scope": r[9],
+            "project_id": r[10],
         }
         for r in rows
     ]
@@ -1061,12 +1360,39 @@ def memory_artifact_query(
     artifact_kind: Optional[str] = None,
     uri: Optional[str] = None,
     limit: int = 50,
+    *,
+    project_id: Optional[str] = None,
+    scope: str = MEMORY_SCOPE_AUTO,
+    include_synthesis: bool = False,
+    include_restricted: bool = False,
+    include_blocked: bool = False,
+    global_root: str | Path | None = None,
 ) -> list[dict]:
     """Query indexed artifact references without reading memory bodies."""
     conditions, params = [], []
-    if persona:
-        conditions.append("a.persona = ?")
-        params.append(persona)
+    scope_sql, scope_params, scope_policy = scope_filter_sql(
+        table_alias="f",
+        persona=persona,
+        project_id=project_id,
+        scope=scope,
+    )
+    if scope_sql:
+        conditions.append(scope_sql)
+        params.extend(scope_params)
+    _add_active_global_root_conditions(
+        conditions,
+        params,
+        global_root=global_root,
+        scope_policy=scope_policy,
+    )
+    if not include_synthesis:
+        conditions.append("COALESCE(f.fm_exclude_from_default_search, 0) = 0")
+    safety_policy = _add_default_retrieval_safety_conditions(
+        conditions,
+        params,
+        include_restricted=include_restricted,
+        include_blocked=include_blocked,
+    )
     if artifact_kind:
         conditions.append("a.artifact_kind = ?")
         params.append(artifact_kind.strip().lower())
@@ -1077,7 +1403,8 @@ def memory_artifact_query(
     rows = conn.execute(
         f"""
         SELECT a.persona, f.relative_path, f.fm_type, f.fm_importance,
-               a.artifact_kind, a.uri, a.description, a.metadata
+               a.artifact_kind, a.uri, a.description, a.metadata,
+               f.memory_scope, f.project_id
         FROM memory_file_artifacts a
         JOIN memory_files f ON f.id = a.file_id
         WHERE {where}
@@ -1096,6 +1423,8 @@ def memory_artifact_query(
             "uri": r[5],
             "description": r[6],
             "metadata": json.loads(r[7]) if r[7] else {},
+            "memory_scope": r[8],
+            "project_id": r[9],
         }
         for r in rows
     ]
@@ -1109,11 +1438,26 @@ def memory_recall(
     include_synthesis: bool = False,
     project_id: Optional[str] = None,
     scope: str = MEMORY_SCOPE_AUTO,
+    min_similarity: float = 0.15,
+    include_restricted: bool = False,
+    include_blocked: bool = False,
+    global_root: str | Path | None = None,
 ) -> list[dict]:
     """Semantic recall: find memories most similar to a concept."""
     from .embeddings import embed_text, unpack_embedding, cosine_similarity
+    from .memory_live_retrieval import extract_live_retrieval_terms
+    from .memory_relevance import quality_filter_candidates
 
     query_emb = embed_text(concept)
+    try:
+        selected_min_similarity = float(min_similarity)
+    except (TypeError, ValueError):
+        selected_min_similarity = 0.15
+    enable_fts_rescue = selected_min_similarity <= 0.15
+    try:
+        selected_limit = max(0, int(limit))
+    except (TypeError, ValueError):
+        selected_limit = 10
 
     scope_sql, scope_params, scope_policy = scope_filter_sql(
         table_alias="f",
@@ -1123,38 +1467,205 @@ def memory_recall(
     )
     conditions = ["(? OR COALESCE(f.fm_exclude_from_default_search, 0) = 0)"]
     params: list[object] = [int(bool(include_synthesis))]
+    safety_policy = _add_default_retrieval_safety_conditions(
+        conditions,
+        params,
+        include_restricted=include_restricted,
+        include_blocked=include_blocked,
+    )
     if scope_sql:
         conditions.append(scope_sql)
         params.extend(scope_params)
+    global_root_filtered = _add_active_global_root_conditions(
+        conditions,
+        params,
+        global_root=global_root,
+        scope_policy=scope_policy,
+    )
     where = " AND ".join(conditions)
     rows = conn.execute(f"""
         SELECT f.id, f.path, f.persona, f.relative_path, f.fm_type,
-               f.fm_importance, f.fm_status, f.fm_about, e.embedding,
-               f.memory_scope, f.project_id
+               f.fm_importance, f.fm_status, f.fm_about, f.fm_tags, e.embedding,
+               f.memory_scope, f.project_id, substr(memory_fts.content, 1, 2000) AS match_text
         FROM memory_files f
         JOIN memory_embeddings e ON e.file_id = f.id
+        LEFT JOIN memory_fts ON memory_fts.rowid = f.id
         WHERE {where}
     """, params).fetchall()
 
-    scored = []
+    query_terms = extract_live_retrieval_terms(concept, limit=8)
+    scored: list[tuple[float, dict]] = []
+    semantic_scores: dict[int, float] = {}
     for r in rows:
-        emb = unpack_embedding(r[8])
+        emb = unpack_embedding(r[9])
         sim = cosine_similarity(query_emb, emb)
-        scored.append((sim, r))
+        file_id = int(r[0])
+        semantic_scores[file_id] = sim
+        if sim < selected_min_similarity:
+            continue
+        scored.append((sim, {
+            "id": r[0],
+            "path": r[1],
+            "persona": r[2],
+            "relative_path": r[3],
+            "type": r[4],
+            "importance": r[5],
+            "status": r[6],
+            "about": r[7],
+            "tags": r[8],
+            "similarity": round(sim, 4),
+            "semantic_score": sim,
+            "fts_score": 0.0,
+            "snippet": "",
+            "match_text": "",
+            "memory_scope": r[10],
+            "project_id": r[11],
+            "recall_source": "semantic",
+        }))
 
     scored.sort(key=lambda x: -x[0])
-    top = scored[:limit]
+    semantic_candidates = [item for _sim, item in scored]
+    if selected_min_similarity <= 0:
+        similarity_filtered_count = 0
+    else:
+        similarity_filtered_count = len(rows) - len(semantic_candidates)
+
+    fts_candidates: list[dict] = []
+    fts_policy: dict[str, object] = {"enabled": False, "reason": "empty_query", "raw_candidate_count": 0}
+    fts_query = build_fts_query(query_terms)
+    if not enable_fts_rescue:
+        fts_policy = {
+            "enabled": False,
+            "reason": "min_similarity_above_default",
+            "raw_candidate_count": 0,
+            "query_term_count": len(query_terms),
+        }
+    elif fts_query:
+        fts_limit = max(selected_limit * 4, 20)
+        fts_rows = conn.execute(f"""
+            SELECT f.id, f.path, f.persona, f.relative_path, f.fm_type,
+                   f.fm_importance, f.fm_status, f.fm_about, f.fm_tags,
+                   f.memory_scope, f.project_id,
+                   snippet(memory_fts, 3, '>>>', '<<<', '...', 32) AS snippet,
+                   substr(memory_fts.content, 1, 2000) AS match_text,
+                   rank
+            FROM memory_fts
+            JOIN memory_files f ON f.id = memory_fts.rowid
+            WHERE memory_fts MATCH ? AND {where}
+            ORDER BY rank
+            LIMIT ?
+        """, [fts_query, *params, fts_limit]).fetchall()
+        for index, r in enumerate(fts_rows):
+            file_id = int(r[0])
+            sim = semantic_scores.get(file_id)
+            fts_candidates.append({
+                "id": r[0],
+                "path": r[1],
+                "persona": r[2],
+                "relative_path": r[3],
+                "type": r[4],
+                "importance": r[5],
+                "status": r[6],
+                "about": r[7],
+                "tags": r[8],
+                "similarity": round(sim, 4) if sim is not None else None,
+                "semantic_score": max(0.0, sim or 0.0),
+                "fts_score": 1.0 / (index + 1),
+                "snippet": r[11] or "",
+                "match_text": r[12] or "",
+                "memory_scope": r[9],
+                "project_id": r[10],
+                "recall_source": "fts_rescue",
+                "requires_strict_term_coverage": True,
+            })
+        fts_policy = {
+            "enabled": True,
+            "raw_candidate_count": len(fts_rows),
+            "query_term_count": len(query_terms),
+        }
+
+    combined_by_id: dict[int, dict] = {}
+    for candidate in [*semantic_candidates, *fts_candidates]:
+        file_id = int(candidate["id"])
+        existing = combined_by_id.get(file_id)
+        if existing is None:
+            combined_by_id[file_id] = dict(candidate)
+            continue
+        existing["semantic_score"] = max(float(existing.get("semantic_score") or 0.0), float(candidate.get("semantic_score") or 0.0))
+        existing["fts_score"] = max(float(existing.get("fts_score") or 0.0), float(candidate.get("fts_score") or 0.0))
+        if candidate.get("similarity") is not None:
+            existing["similarity"] = candidate.get("similarity")
+        if candidate.get("snippet") and not existing.get("snippet"):
+            existing["snippet"] = candidate.get("snippet")
+        if candidate.get("match_text") and not existing.get("match_text"):
+            existing["match_text"] = candidate.get("match_text")
+        existing["recall_source"] = "hybrid"
+        existing["requires_strict_term_coverage"] = bool(
+            existing.get("requires_strict_term_coverage") or candidate.get("requires_strict_term_coverage")
+        )
+
+    ranked_candidates = []
+    for item in combined_by_id.values():
+        importance_score = max(0.0, min(1.0, float(item.get("importance") or 0) / 10.0))
+        ranking_score = (
+            0.65 * float(item.get("semantic_score") or 0.0)
+            + 0.30 * float(item.get("fts_score") or 0.0)
+            + 0.05 * importance_score
+        )
+        item["ranking_score"] = round(max(0.0, ranking_score), 4)
+        ranked_candidates.append(item)
+    ranked_candidates.sort(
+        key=lambda item: (
+            float(item.get("ranking_score") or 0.0),
+            float(item.get("semantic_score") or 0.0),
+            float(item.get("importance") or 0.0),
+        ),
+        reverse=True,
+    )
+
+    if selected_min_similarity <= 0:
+        filtered_candidates = ranked_candidates
+        quality_policy = {
+            "enabled": False,
+            "reason": "min_similarity_disabled",
+            "raw_candidate_count": len(ranked_candidates),
+            "filtered_count": 0,
+            "returned_candidate_count": len(ranked_candidates),
+        }
+    else:
+        filtered_candidates, quality_policy = quality_filter_candidates(
+            ranked_candidates,
+            query_terms=query_terms,
+        )
+    top = filtered_candidates[:selected_limit]
 
     from .cognitive import reinforce_on_access
-    for _, r in top:
-        reinforce_on_access(conn, r[0])
+    for item in top:
+        reinforce_on_access(conn, item["id"])
 
     results = [
-        {"id": r[0], "path": r[1], "persona": r[2], "relative_path": r[3], "type": r[4],
-         "importance": r[5], "status": r[6], "about": r[7], "similarity": round(sim, 4),
-         "memory_scope": r[9], "project_id": r[10]}
-        for sim, r in top
+        {
+            "id": item["id"],
+            "path": item["path"],
+            "persona": item["persona"],
+            "relative_path": item["relative_path"],
+            "type": item["type"],
+            "importance": item["importance"],
+            "status": item["status"],
+            "about": item["about"],
+            "similarity": item["similarity"],
+            "ranking_score": item.get("ranking_score"),
+            "memory_scope": item["memory_scope"],
+            "project_id": item["project_id"],
+            "metadata": {
+                "recall_source": item.get("recall_source"),
+                "fts_score": item.get("fts_score"),
+            },
+        }
+        for item in top
     ]
+    quality_filtered_count = int(quality_policy.get("filtered_count") or 0)
+    filtered_count = max(0, len(rows) - len(results))
     record_memory_recall_trace(
         conn,
         tool_name="memory_recall",
@@ -1162,38 +1673,110 @@ def memory_recall(
         persona=persona,
         requested_limit=limit,
         results=results,
+        result_count=len(filtered_candidates),
         request_payload={
             "concept": concept,
             "persona": persona,
             "limit": limit,
             "project_id": project_id,
             "scope": scope,
+            "min_similarity": selected_min_similarity,
+            "raw_candidate_count": len(rows),
+            "semantic_candidate_count": len(semantic_candidates),
+            "fts_candidate_count": len(fts_candidates),
+            "combined_candidate_count": len(ranked_candidates),
+            "include_restricted": bool(include_restricted),
+            "include_blocked": bool(include_blocked),
+            "global_root_filter_enabled": global_root_filtered,
         },
         response_policy={
-            "ranking": "embedding_cosine",
+            "ranking": "hybrid_semantic_fts_rescue",
             "returned": "top_limit",
             "include_synthesis": bool(include_synthesis),
             "scope_policy": scope_policy,
+            "safety_policy": safety_policy,
+            "min_similarity": selected_min_similarity,
+            "raw_candidate_count": len(rows),
+            "similarity_filtered_count": similarity_filtered_count,
+            "semantic_candidate_count": len(semantic_candidates),
+            "fts_rescue": fts_policy,
+            "combined_candidate_count": len(ranked_candidates),
+            "quality_gate": quality_policy,
+            "quality_filtered_count": quality_filtered_count,
+            "filtered_count": filtered_count,
         },
     )
     return results
 
 
-def memory_stats(conn: sqlite3.Connection, persona: Optional[str] = None) -> dict:
+def memory_stats(
+    conn: sqlite3.Connection,
+    persona: Optional[str] = None,
+    *,
+    project_id: Optional[str] = None,
+    scope: str = MEMORY_SCOPE_AUTO,
+    include_synthesis: bool = False,
+    include_restricted: bool = False,
+    include_blocked: bool = False,
+    global_root: str | Path | None = None,
+) -> dict:
     """Get memory corpus statistics."""
-    where = "WHERE persona = ?" if persona else ""
-    params = [persona] if persona else []
+    conditions, params = [], []
+    scope_sql, scope_params, scope_policy = scope_filter_sql(
+        table_alias="f",
+        persona=persona,
+        project_id=project_id,
+        scope=scope,
+    )
+    if scope_sql:
+        conditions.append(scope_sql)
+        params.extend(scope_params)
+    _add_active_global_root_conditions(
+        conditions,
+        params,
+        global_root=global_root,
+        scope_policy=scope_policy,
+    )
+    if not include_synthesis:
+        conditions.append("COALESCE(f.fm_exclude_from_default_search, 0) = 0")
+    safety_policy = _add_default_retrieval_safety_conditions(
+        conditions,
+        params,
+        include_restricted=include_restricted,
+        include_blocked=include_blocked,
+    )
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
-    total = conn.execute(f"SELECT COUNT(*) FROM memory_files {where}", params).fetchone()[0]
-    by_type = conn.execute(f"SELECT fm_type, COUNT(*) FROM memory_files {where} GROUP BY fm_type ORDER BY COUNT(*) DESC", params).fetchall()
-    by_status = conn.execute(f"SELECT fm_status, COUNT(*) FROM memory_files {where} GROUP BY fm_status ORDER BY COUNT(*) DESC", params).fetchall()
-    by_persona = conn.execute("SELECT persona, COUNT(*) FROM memory_files GROUP BY persona ORDER BY COUNT(*) DESC").fetchall()
+    total = conn.execute(f"SELECT COUNT(*) FROM memory_files f {where}", params).fetchone()[0]
+    by_type = conn.execute(
+        f"""
+        SELECT f.fm_type, COUNT(*) FROM memory_files f {where}
+        GROUP BY f.fm_type ORDER BY COUNT(*) DESC
+        """,
+        params,
+    ).fetchall()
+    by_status = conn.execute(
+        f"""
+        SELECT f.fm_status, COUNT(*) FROM memory_files f {where}
+        GROUP BY f.fm_status ORDER BY COUNT(*) DESC
+        """,
+        params,
+    ).fetchall()
+    by_persona = conn.execute(
+        f"""
+        SELECT f.persona, COUNT(*) FROM memory_files f {where}
+        GROUP BY f.persona ORDER BY COUNT(*) DESC
+        """,
+        params,
+    ).fetchall()
 
     return {
         "total_files": total,
         "by_type": {r[0] or "unknown": r[1] for r in by_type},
         "by_status": {r[0] or "unknown": r[1] for r in by_status},
         "by_persona": {r[0]: r[1] for r in by_persona},
+        "scope_policy": scope_policy,
+        "safety_policy": safety_policy,
     }
 
 
@@ -1639,6 +2222,7 @@ def memory_authored_writeback(
     requested_model: str = "",
     memory_scope: str = "persona",
     project_id: str = "",
+    global_root: Path | None = None,
     project_root: Path | None = None,
     actor: str = "agent",
 ) -> dict:
@@ -1681,6 +2265,8 @@ def memory_authored_writeback(
         if project_root is None:
             return {"ok": False, "error": "project root required"}
         write_result = write_authored_memory_project_file(project_root, plan)
+    elif plan.get("memory_scope") == MEMORY_SCOPE_GLOBAL:
+        write_result = write_authored_memory_global_file(global_root or global_memory_root(), plan)
     else:
         write_result = write_authored_memory_file(personas_dir, plan)
     if not write_result.get("ok"):
@@ -2214,6 +2800,7 @@ def start_memory_watcher(db, personas_dir: Path):
 
     import os as _os
     _scope_persona = _os.environ.get("TRANSCRIPT_PERSONA", "").strip()
+    skip_persona_tree = _skip_persona_tree_for_runtime(_scope_persona, project_roots)
 
     def _resolve(path: Path) -> tuple[str, str] | None:
         """Map an absolute path to (persona, relative_path) or None.
@@ -2223,16 +2810,18 @@ def start_memory_watcher(db, personas_dir: Path):
         """
         if path.suffix not in INDEX_EXTENSIONS:
             return None
+        if path.is_symlink():
+            return None
         try:
             resolved = path.resolve()
         except OSError:
             resolved = path
-        if any(part in SKIP_DIRS for part in resolved.parts):
-            return None
 
         # shared/** â†’ persona="shared", rel relative to shared_root
         try:
             rel = resolved.relative_to(shared_root)
+            if not _memory_relative_path_allowed(rel):
+                return None
             return ("shared", str(rel).replace("\\", "/"))
         except ValueError:
             pass
@@ -2240,6 +2829,8 @@ def start_memory_watcher(db, personas_dir: Path):
         if global_root is not None and global_dir.exists():
             try:
                 rel = resolved.relative_to(global_root)
+                if not _memory_relative_path_allowed(rel):
+                    return None
                 return ("global", str(rel).replace("\\", "/"))
             except ValueError:
                 pass
@@ -2251,11 +2842,16 @@ def start_memory_watcher(db, personas_dir: Path):
                 rel = resolved.relative_to(project_root)
             except ValueError:
                 continue
+            if not _memory_relative_path_allowed(rel):
+                return None
             parts = rel.parts
             if parts and parts[0] in PROJECT_MEMORY_DIRS:
                 return (f"project:{project_id}", str(rel).replace("\\", "/"))
             if not any((project_root / name).exists() for name in PROJECT_MEMORY_DIRS):
                 return (f"project:{project_id}", str(rel).replace("\\", "/"))
+
+        if skip_persona_tree:
+            return None
 
         # personas/<persona>/<sub>/** â†’ persona=<sub>, rel relative to <sub>
         try:
@@ -2263,6 +2859,8 @@ def start_memory_watcher(db, personas_dir: Path):
         except ValueError:
             return None
         parts = rel_full.parts
+        if not _memory_relative_path_allowed(rel_full):
+            return None
         if len(parts) < 3:
             return None
         # Privacy boundary: skip files belonging to other personas
@@ -2274,6 +2872,8 @@ def start_memory_watcher(db, personas_dir: Path):
         try:
             rel = resolved.relative_to(sub_root)
         except ValueError:
+            return None
+        if not _memory_relative_path_allowed(rel):
             return None
         return (parts[1], str(rel).replace("\\", "/"))
 
@@ -2349,7 +2949,7 @@ def start_memory_watcher(db, personas_dir: Path):
     observer = Observer()
     handler = _Handler()
     scheduled = []
-    if personas_dir.exists():
+    if personas_dir.exists() and not skip_persona_tree:
         observer.schedule(handler, str(personas_dir), recursive=True)
         scheduled.append(str(personas_dir))
     if shared_dir.exists():
@@ -2358,9 +2958,10 @@ def start_memory_watcher(db, personas_dir: Path):
     if global_dir.exists() and global_dir.resolve() != shared_dir.resolve():
         observer.schedule(handler, str(global_dir), recursive=True)
         scheduled.append(str(global_dir))
-    if project_dir and project_dir.exists() and project_id:
-        observer.schedule(handler, str(project_dir), recursive=True)
-        scheduled.append(str(project_dir))
+    for project_id, project_dir, _project_root in resolved_project_roots:
+        if project_dir.exists() and project_id:
+            observer.schedule(handler, str(project_dir), recursive=True)
+            scheduled.append(str(project_dir))
 
     if not scheduled:
         log.warning("start_memory_watcher: no directories to watch")

@@ -66,7 +66,22 @@ def global_memory_root() -> Path:
     override = os.environ.get("CHIMERA_MEMORY_GLOBAL_ROOT", "").strip()
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".claude" / "global-memory"
+    return Path.home() / ".chimera-memory" / "global-memory"
+
+
+def global_root_filter_values(global_root: str | Path | None) -> tuple[str, str] | None:
+    """Return normalized exact/prefix values for active-root global SQL filters."""
+    text = str(global_root or "").strip()
+    if not text:
+        return None
+    try:
+        root = Path(os.path.expandvars(os.path.expanduser(text))).resolve(strict=False)
+    except OSError:
+        return None
+    normalized = str(root).replace("\\", "/").rstrip("/").lower()
+    if not normalized:
+        return None
+    return normalized, normalized + "/%"
 
 
 def project_memory_root(project_id: object = "") -> Path | None:
@@ -88,11 +103,31 @@ def project_memory_root(project_id: object = "") -> Path | None:
     return root if inferred == selected_project_id else None
 
 
+def workspace_root_from_project_root(root: object) -> Path | None:
+    text = str(root or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve(strict=False)
+    if path.name in {"memory", "project"} and path.parent.name == ".chimera-memory":
+        return path.parent.parent
+    if path.name == ".chimera-memory":
+        return path.parent
+    return path
+
+
+def project_workspace_root(project_id: object = "") -> Path | None:
+    root = project_memory_root(project_id)
+    return workspace_root_from_project_root(root) if root is not None else None
+
+
 def project_memory_roots() -> tuple[tuple[str, Path], ...]:
     roots: dict[str, Path] = {}
     root = _single_project_memory_root()
     if root is not None:
-        project_id = _project_id_from_root(root)
+        project_id = safe_project_id(os.environ.get("CHIMERA_MEMORY_PROJECT_ID", "")) or _project_id_from_root(root)
         if project_id:
             roots[project_id] = root
     roots.update(_project_memory_root_map())

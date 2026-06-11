@@ -144,18 +144,41 @@ def _check_enhancement_queue(conn: sqlite3.Connection, now: datetime, thresholds
     }
 
 
-def _selected_provider() -> str:
+def _provider_profile() -> dict[str, Any]:
     try:
-        from .memory_enhancement_provider import resolve_enhancement_provider_plan
+        from .memory_enhancement_provider import resolve_enhancement_provider_plan, safe_provider_receipt
 
         plan = resolve_enhancement_provider_plan(os.environ)
-        return str(getattr(plan, "selected_provider", "") or "")
+        receipt = safe_provider_receipt(plan, os.environ)
+        selected_provider = str(receipt.get("selected_provider") or "")
+        selected_model = str(receipt.get("selected_model") or "")
+        selected_candidate = {}
+        candidates = receipt.get("candidates") if isinstance(receipt.get("candidates"), list) else []
+        for candidate in candidates:
+            if isinstance(candidate, dict) and candidate.get("provider_id") == selected_provider:
+                selected_candidate = candidate
+                break
+        return {
+            "status": "ok",
+            "selected_provider": selected_provider,
+            "selected_model": selected_model,
+            "provider_affinity": str(receipt.get("provider_affinity") or ""),
+            "credential_ref_present": bool(selected_candidate.get("credential_ref_present")),
+            "uses_user_oauth": bool(selected_candidate.get("uses_user_oauth")),
+            "requires_network": bool(selected_candidate.get("requires_network")),
+            "live": False,
+        }
     except Exception:
-        return ""
+        return {"status": "unavailable"}
 
 
-def _check_provider_drift(conn: sqlite3.Connection) -> dict[str, Any]:
-    selected = _selected_provider()
+def _selected_provider(provider_profile: dict[str, Any] | None = None) -> str:
+    profile = provider_profile if isinstance(provider_profile, dict) else _provider_profile()
+    return str(profile.get("selected_provider") or "") if profile.get("status") == "ok" else ""
+
+
+def _check_provider_drift(conn: sqlite3.Connection, provider_profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    selected = _selected_provider(provider_profile)
     drift_count = 0
     if selected:
         drift_count = int(
@@ -254,6 +277,85 @@ def _check_last_success(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _global_memory_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS indexed_count,
+            SUM(CASE
+                WHEN COALESCE(f.fm_exclude_from_default_search, 0) = 0
+                  AND COALESCE(f.fm_can_use_as_evidence, 1) = 1
+                  AND COALESCE(f.fm_sensitivity_tier, 'standard') <> 'restricted'
+                  AND COALESCE(f.fm_lifecycle_status, 'active') NOT IN ('disputed', 'rejected', 'superseded')
+                THEN 1 ELSE 0 END) AS available_count,
+            SUM(CASE
+                WHEN COALESCE(f.fm_exclude_from_default_search, 0) = 0
+                  AND COALESCE(f.fm_can_use_as_evidence, 1) = 1
+                  AND COALESCE(f.fm_sensitivity_tier, 'standard') <> 'restricted'
+                  AND COALESCE(f.fm_lifecycle_status, 'active') NOT IN ('disputed', 'rejected', 'superseded')
+                  AND COALESCE(f.fm_can_use_as_instruction, 1) = 1
+                  AND COALESCE(f.fm_review_status, 'confirmed') = 'confirmed'
+                  AND COALESCE(f.fm_provenance_status, 'imported') IN ('user_confirmed', 'auto_confirmed')
+                THEN 1 ELSE 0 END) AS instruction_grade_count
+        FROM memory_files f
+        WHERE COALESCE(f.memory_scope, '') = 'global'
+        """
+    ).fetchone()
+    return {
+        "indexed": int(row[0] or 0),
+        "available": int(row[1] or 0),
+        "instruction_grade": int(row[2] or 0),
+    }
+
+
+def _runtime_profile(conn: sqlite3.Connection, persona: str | None) -> dict[str, Any]:
+    """Return a path-safe runtime profile for diagnostics."""
+    try:
+        from .config import load_config
+        from .memory_scope import current_project_id, global_memory_root, project_memory_roots
+
+        config = load_config()
+        client = str(config.get("client") or "").strip()
+        surface = str(config.get("mcp_surface") or "").strip() or "full"
+        transcript_persona = (
+            os.environ.get("TRANSCRIPT_PERSONA", "").strip()
+            or str(config.get("persona") or "").strip()
+            or str(persona or "").strip()
+        )
+        project_id = current_project_id() or ""
+        project_roots = project_memory_roots()
+        global_root = global_memory_root()
+        global_root_source = "env" if os.environ.get("CHIMERA_MEMORY_GLOBAL_ROOT", "").strip() else "default"
+        global_counts = _global_memory_counts(conn)
+    except Exception:
+        return {"status": "unavailable"}
+
+    persona_set = bool(transcript_persona)
+    project_root_configured = bool(project_roots)
+    memory_profile = "persona" if persona_set else ("project" if project_root_configured or project_id else "unscoped")
+    persona_tree_indexing = not (
+        not persona_set
+        and (project_root_configured or client.lower() == "codex" or surface.lower() == "codex")
+    )
+    return {
+        "status": "ok",
+        "client": client,
+        "mcp_surface": surface,
+        "memory_profile": memory_profile,
+        "transcript_persona_set": persona_set,
+        "project_id": project_id,
+        "project_id_set": bool(project_id),
+        "project_root_configured": project_root_configured,
+        "project_roots_count": len(project_roots),
+        "global_root_source": global_root_source,
+        "global_root_exists": global_root.exists(),
+        "global_indexed_file_count": global_counts["indexed"],
+        "global_available_file_count": global_counts["available"],
+        "global_instruction_grade_file_count": global_counts["instruction_grade"],
+        "persona_tree_indexing": persona_tree_indexing,
+    }
+
+
 def collect_cm_health(
     conn: sqlite3.Connection,
     *,
@@ -279,10 +381,11 @@ def collect_cm_health(
     if thresholds:
         effective_thresholds.update(thresholds)
 
+    provider_profile = _provider_profile()
     checks = {
         "embeddings": _check_embeddings(conn, effective_thresholds, now),
         "enhancement_queue": _check_enhancement_queue(conn, now, effective_thresholds),
-        "provider_drift": _check_provider_drift(conn),
+        "provider_drift": _check_provider_drift(conn, provider_profile),
         "session_rollups": _check_session_rollups(conn),
         "duplicate_capture": _check_duplicate_capture(conn),
         "last_success": _check_last_success(conn),
@@ -300,6 +403,8 @@ def collect_cm_health(
         "schema_version": "chimera-memory.health.v1",
         "created_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "persona": persona or "",
+        "runtime_profile": _runtime_profile(conn, persona),
+        "provider_profile": provider_profile,
         "status": status,
         "checks": checks,
     }
@@ -333,6 +438,31 @@ def format_cm_health(snapshot: dict[str, Any]) -> str:
     persona = snapshot.get("persona")
     if persona:
         lines.append(f"persona: {persona}")
+    runtime_profile = snapshot.get("runtime_profile")
+    if isinstance(runtime_profile, dict) and runtime_profile.get("status") == "ok":
+        lines.append(
+            "runtime_profile: "
+            f"client={runtime_profile.get('client') or '-'} "
+            f"surface={runtime_profile.get('mcp_surface') or '-'} "
+            f"profile={runtime_profile.get('memory_profile') or '-'} "
+            f"project_root_configured={bool(runtime_profile.get('project_root_configured'))} "
+            f"global_root_exists={bool(runtime_profile.get('global_root_exists'))} "
+            f"global_available_files={int(runtime_profile.get('global_available_file_count') or 0)}/"
+            f"{int(runtime_profile.get('global_indexed_file_count') or 0)} "
+            f"global_instruction_grade_files={int(runtime_profile.get('global_instruction_grade_file_count') or 0)}/"
+            f"{int(runtime_profile.get('global_available_file_count') or 0)} "
+            f"persona_tree_indexing={bool(runtime_profile.get('persona_tree_indexing'))}"
+        )
+    provider_profile = snapshot.get("provider_profile")
+    if isinstance(provider_profile, dict) and provider_profile.get("status") == "ok":
+        lines.append(
+            "provider_profile: "
+            f"provider={provider_profile.get('selected_provider') or '-'} "
+            f"model={provider_profile.get('selected_model') or '-'} "
+            f"credential_ref_present={bool(provider_profile.get('credential_ref_present'))} "
+            f"uses_user_oauth={bool(provider_profile.get('uses_user_oauth'))} "
+            f"requires_network={bool(provider_profile.get('requires_network'))}"
+        )
     lines.append("")
     for name, check in snapshot.get("checks", {}).items():
         lines.append(f"{name}: {check.get('status', 'unknown')}")

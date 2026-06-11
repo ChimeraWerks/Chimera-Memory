@@ -1016,8 +1016,11 @@ def test_agy_worker_prompt_is_bounded_to_one_pass(tmp_path: Path) -> None:
 
 
 def test_inspect_cli_worker_setup_can_initialize_codex_files(tmp_path: Path, monkeypatch) -> None:
+    source_auth = tmp_path / "codex-auth.json"
+    source_auth.write_text('{"access_token":"TEST_ONLY_TOKEN"}\n', encoding="utf-8")
     monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setenv("CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH", str(source_auth))
     monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", lambda command: command)
 
     receipt = inspect_cli_worker_setup(runtime="codex", init=True)
@@ -1026,9 +1029,39 @@ def test_inspect_cli_worker_setup_can_initialize_codex_files(tmp_path: Path, mon
     assert receipt["runtime"] == "codex"
     assert receipt["initialized"] is True
     assert receipt["launch_performed"] is False
+    assert receipt["credential"] == {"required": True, "present": True, "role": "auth"}
+    assert receipt["readiness"]["missing_required_files"] == []
     assert receipt["files"]["agents"]["exists"] is True
+    assert receipt["files"]["auth"]["exists"] is True
+    assert receipt["files"]["auth"]["sensitive"] is True
     assert receipt["files"]["mcp_config"]["exists"] is True
-    assert receipt["command_preview"] == codex_worker_command(load_codex_cli_worker_config())
+    assert "command_preview" not in receipt
+    assert receipt["command_profile"]["model"] == load_codex_cli_worker_config().model
+    assert receipt["command_profile"]["bypass_approvals_and_sandbox"] is True
+    assert str(tmp_path) not in json.dumps(receipt)
+
+
+def test_inspect_cli_worker_setup_requires_codex_auth_and_redacts_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    missing_auth = tmp_path / "missing-auth.json"
+    monkeypatch.setenv("CHIMERA_MEMORY_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(tmp_path / "transcript.db"))
+    monkeypatch.setenv("CHIMERA_MEMORY_CODEX_WORKER_AUTH_PATH", str(missing_auth))
+    monkeypatch.setenv("CHIMERA_MEMORY_CODEX_BIN", str(tmp_path / "bin" / "codex.cmd"))
+    monkeypatch.setattr("chimera_memory.memory_cli_worker_supervisor.shutil.which", lambda command: command)
+
+    receipt = inspect_cli_worker_setup(runtime="codex", init=True)
+    serialized = json.dumps(receipt)
+
+    assert receipt["ok"] is False
+    assert receipt["credential"] == {"required": True, "present": False, "role": "auth"}
+    assert "auth" in receipt["readiness"]["missing_required_files"]
+    assert receipt["files"]["auth"]["exists"] is False
+    assert receipt["executable"] == "codex.cmd"
+    assert "command_preview" not in receipt
+    assert str(tmp_path) not in serialized
 
 
 def test_inspect_cli_worker_setup_reports_missing_uninitialized_claude_files(
@@ -1044,8 +1077,11 @@ def test_inspect_cli_worker_setup_reports_missing_uninitialized_claude_files(
     assert receipt["runtime"] == "claude"
     assert receipt["initialized"] is False
     assert receipt["launch_performed"] is False
+    assert receipt["credential"] == {"required": True, "present": False, "role": "credentials"}
+    assert "credentials" in receipt["readiness"]["missing_required_files"]
     assert receipt["files"]["claude"]["exists"] is False
-    assert receipt["command_preview"] == claude_worker_command(load_claude_cli_worker_config())
+    assert "command_preview" not in receipt
+    assert receipt["command_profile"]["model"] == load_claude_cli_worker_config().model
 
 
 def test_inspect_cli_worker_setup_can_initialize_agy_files(tmp_path: Path, monkeypatch) -> None:
@@ -1060,7 +1096,10 @@ def test_inspect_cli_worker_setup_can_initialize_agy_files(tmp_path: Path, monke
     assert receipt["runtime"] == "agy"
     assert receipt["initialized"] is True
     assert receipt["launch_performed"] is False
+    assert receipt["credential"] == {"required": False, "present": True, "role": ""}
+    assert receipt["readiness"]["missing_required_files"] == []
     assert receipt["files"]["agents"]["exists"] is True
     assert receipt["files"]["gemini"]["exists"] is True
     assert receipt["files"]["mcp_config"]["exists"] is True
-    assert receipt["command_preview"] == agy_worker_command(load_agy_cli_worker_config())
+    assert "command_preview" not in receipt
+    assert receipt["command_profile"]["sandbox_enabled"] is True

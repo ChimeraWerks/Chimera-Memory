@@ -481,9 +481,9 @@ def build_enhancement_invocation(
     }
 
 
-def safe_provider_receipt(plan: EnhancementProviderPlan) -> dict[str, Any]:
+def safe_provider_receipt(plan: EnhancementProviderPlan, env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Return provider-resolution diagnostics without credential material."""
-    return {
+    receipt = {
         "selected_provider": plan.selected.provider_id,
         "selected_model": plan.selected.model,
         "provider_affinity": plan.provider_affinity,
@@ -510,6 +510,62 @@ def safe_provider_receipt(plan: EnhancementProviderPlan) -> dict[str, Any]:
             for candidate in plan.candidates
         ],
     }
+    recommendations = _provider_credential_recommendations(plan, env or {})
+    if recommendations:
+        receipt["recommendations"] = recommendations
+    return receipt
+
+
+def _provider_credential_recommendations(
+    plan: EnhancementProviderPlan,
+    env: Mapping[str, str],
+) -> list[dict[str, str]]:
+    recommendations: list[dict[str, str]] = []
+    for candidate in plan.candidates:
+        if candidate.available or candidate.reason != "credential_missing":
+            continue
+        if candidate.provider_id == "openai" and _openai_codex_oauth_importable(env):
+            recommendations.append(
+                {
+                    "code": "import_openai_codex_oauth",
+                    "provider_id": "openai",
+                    "message": (
+                        "Codex/OpenAI OAuth appears available, but CM has no OpenAI credential in its OAuth store; "
+                        "explicitly import the Codex login before expecting provider-backed memory enhancement."
+                    ),
+                    "command": (
+                        "chimera-memory enhance oauth-import --provider openai --source codex_cli "
+                        "--store <CM_OAUTH_STORE> --json"
+                    ),
+                }
+            )
+        elif candidate.provider_id in NETWORK_PROVIDERS:
+            recommendations.append(
+                {
+                    "code": f"configure_{candidate.provider_id}_credential",
+                    "provider_id": candidate.provider_id,
+                    "message": (
+                        f"{candidate.provider_id} is configured or ordered for enhancement but has no CM credential ref; "
+                        "import an OAuth login or configure a credential reference before relying on this provider."
+                    ),
+                    "command": "chimera-memory enhance oauth-list --json",
+                }
+            )
+    return recommendations
+
+
+def _openai_codex_oauth_importable(env: Mapping[str, str]) -> bool:
+    try:
+        from .memory_enhancement_oauth_import import detect_memory_enhancement_oauth_import_sources
+
+        status = detect_memory_enhancement_oauth_import_sources(
+            provider_id="openai",
+            source="codex_cli",
+            codex_auth_path=env.get("CHIMERA_MEMORY_CODEX_AUTH_PATH") or env.get("CODEX_AUTH_PATH") or None,
+        )
+    except Exception:
+        return False
+    return bool(status.get("available"))
 
 
 _HERMES_REASON_TO_FAILURE_CATEGORY = {

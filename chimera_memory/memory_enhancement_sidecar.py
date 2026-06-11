@@ -179,6 +179,7 @@ class DryRunMemoryEnhancementSidecarHandler(BaseHTTPRequestHandler):
         if self.expected_bearer_token:
             expected = f"Bearer {self.expected_bearer_token}"
             if self.headers.get("Authorization", "") != expected:
+                self._drain_rejected_request_body()
                 self._write_json(401, build_dry_run_sidecar_error("auth_error"))
                 return
 
@@ -214,6 +215,18 @@ class DryRunMemoryEnhancementSidecarHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _drain_rejected_request_body(self) -> None:
+        # Drain small unauthorized bodies before 401 so Windows clients get the
+        # JSON auth error instead of a raw socket abort; covered by
+        # test_http_client_sidecar_auth_failure_is_sanitized.
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return
+        if content_length < 1 or content_length > MAX_REQUEST_BYTES:
+            return
+        self.rfile.read(content_length)
+
 
 class ProviderMemoryEnhancementSidecarHandler(DryRunMemoryEnhancementSidecarHandler):
     """HTTP handler for real provider-backed enhancement."""
@@ -227,6 +240,7 @@ class ProviderMemoryEnhancementSidecarHandler(DryRunMemoryEnhancementSidecarHand
         if self.expected_bearer_token:
             expected = f"Bearer {self.expected_bearer_token}"
             if self.headers.get("Authorization", "") != expected:
+                self._drain_rejected_request_body()
                 self._write_json(401, build_dry_run_sidecar_error("auth_error"))
                 return
 

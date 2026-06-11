@@ -15,7 +15,7 @@ from .memory_enhancement import (
     build_authored_memory_enrichment_request,
     normalize_authored_memory_writeback,
 )
-from .memory_scope import MEMORY_SCOPE_PROJECT, normalize_memory_scope, safe_project_id
+from .memory_scope import MEMORY_SCOPE_GLOBAL, MEMORY_SCOPE_PROJECT, normalize_memory_scope, safe_project_id
 from .sanitizer import scan_for_injection
 
 AUTHORED_MEMORY_WRITE_SCHEMA_VERSION = "chimera-memory.authored-memory-write.v1"
@@ -198,6 +198,36 @@ def write_authored_memory_project_file(
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Write a planned structured memory file under a project memory root."""
+    return _write_authored_memory_root_file(
+        project_root,
+        plan,
+        root_label="project",
+        overwrite=overwrite,
+    )
+
+
+def write_authored_memory_global_file(
+    global_root: Path,
+    plan: Mapping[str, Any],
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Write a planned structured memory file under the global memory root."""
+    return _write_authored_memory_root_file(
+        global_root,
+        plan,
+        root_label="global",
+        overwrite=overwrite,
+    )
+
+
+def _write_authored_memory_root_file(
+    root_path: Path,
+    plan: Mapping[str, Any],
+    *,
+    root_label: str,
+    overwrite: bool,
+) -> dict[str, Any]:
     if not plan.get("ok"):
         return dict(plan)
     if plan.get("blocking_findings"):
@@ -212,17 +242,17 @@ def write_authored_memory_project_file(
     if relative_path.is_absolute() or any(part == ".." for part in relative_path.parts):
         return {
             "ok": False,
-            "error": "authored memory relative path escapes project root",
+            "error": f"authored memory relative path escapes {root_label} root",
             "relative_path": relative_text,
         }
-    root = project_root.expanduser().resolve()
+    root = root_path.expanduser().resolve()
     target = (root / relative_path).resolve()
     try:
         target.relative_to(root)
     except ValueError:
         return {
             "ok": False,
-            "error": "authored memory relative path escapes project root",
+            "error": f"authored memory relative path escapes {root_label} root",
             "relative_path": relative_text,
         }
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -237,7 +267,7 @@ def write_authored_memory_project_file(
         "ok": True,
         "path": str(target),
         "relative_path": str(relative_path).replace("\\", "/"),
-        "project_root": str(root),
+        f"{root_label}_root": str(root),
     }
 
 
@@ -336,6 +366,8 @@ def _frontmatter_from_payload(
     if memory_scope == MEMORY_SCOPE_PROJECT:
         frontmatter["memory_scope"] = MEMORY_SCOPE_PROJECT
         frontmatter["project_id"] = project_id
+    elif memory_scope == MEMORY_SCOPE_GLOBAL:
+        frontmatter["memory_scope"] = MEMORY_SCOPE_GLOBAL
     return {key: value for key, value in frontmatter.items() if value not in ("", None)}
 
 

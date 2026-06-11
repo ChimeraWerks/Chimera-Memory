@@ -8,12 +8,16 @@ import socket
 import sqlite3
 import time
 import uuid
+from errno import EPERM, ESRCH
 from pathlib import Path
 from typing import Any
 
 
 ACTIVE_HARNESS_SCHEMA_VERSION = "chimera-memory.active-harness-lease.v1"
 DEFAULT_LEASE_TTL_SECONDS = 30 * 60
+_WINDOWS_ERROR_ACCESS_DENIED = 5
+_WINDOWS_ERROR_INVALID_PARAMETER = 87
+_WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 def _json_text(value: object) -> str:
@@ -48,6 +52,55 @@ def _row_to_lease(row: sqlite3.Row | tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+def _process_is_alive(process_id: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(
+            _WINDOWS_PROCESS_QUERY_LIMITED_INFORMATION,
+            False,
+            int(process_id),
+        )
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        error_code = kernel32.GetLastError()
+        if error_code == _WINDOWS_ERROR_INVALID_PARAMETER:
+            return False
+        if error_code == _WINDOWS_ERROR_ACCESS_DENIED:
+            return True
+        return True
+
+    try:
+        os.kill(process_id, 0)
+    except PermissionError:
+        return True
+    except OSError as exc:
+        if getattr(exc, "errno", None) == EPERM:
+            return True
+        if getattr(exc, "errno", None) == ESRCH:
+            return False
+        if getattr(exc, "winerror", None) == 87:
+            return False
+        return True
+    return True
+
+
+def _lease_has_live_process(lease: dict[str, Any], *, hostname: str | None = None) -> bool:
+    lease_hostname = str(lease.get("hostname") or "").strip().lower()
+    current_hostname = str(hostname or socket.gethostname()).strip().lower()
+    if not lease_hostname or lease_hostname != current_hostname:
+        return True
+    try:
+        process_id = int(lease.get("process_id") or 0)
+    except (TypeError, ValueError):
+        return True
+    if process_id <= 0:
+        return True
+    return _process_is_alive(process_id)
+
+
 def _active_rows(
     conn: sqlite3.Connection,
     *,
@@ -77,7 +130,12 @@ def _active_rows(
         """,
         params + [max(0, min(limit, 200))],
     ).fetchall()
-    return [_row_to_lease(row) for row in rows]
+    hostname = socket.gethostname()
+    return [
+        lease
+        for lease in (_row_to_lease(row) for row in rows)
+        if _lease_has_live_process(lease, hostname=hostname)
+    ]
 
 
 def register_active_harness(

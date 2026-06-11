@@ -59,6 +59,8 @@ class MemoryEnhancementHttpClient:
             raise RuntimeError("memory enhancement sidecar unavailable") from exc
         except TimeoutError as exc:
             raise RuntimeError("memory enhancement sidecar timeout") from exc
+        except OSError as exc:
+            raise RuntimeError("memory enhancement sidecar unavailable") from exc
 
         return _metadata_from_response(raw_body)
 

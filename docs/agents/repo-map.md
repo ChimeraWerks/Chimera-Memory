@@ -43,7 +43,7 @@ shape is:
 - Governance and trust metadata: `memory_governance.py`
 - Recall traces and audits: `memory_observability.py`
 - Health snapshots: `memory_health.py`
-- Live retrieval and context packs: `memory_live_retrieval.py`, `memory_context_pack.py`
+- Live retrieval, relevance gates, and context packs: `memory_live_retrieval.py`, `memory_relevance.py`, `memory_context_pack.py`
 - Human review: `memory_review.py`
 - Auto-capture and authored writeback: `memory_auto_capture.py`, `memory_authored_writeback.py`
 - Entity graph and memory-file edges: `memory_entities.py`, `memory_entity_wiki.py`, `memory_file_edges.py`, `memory_file_edge_classifier.py`

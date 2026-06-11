@@ -57,6 +57,91 @@ def import_memory_enhancement_oauth_credential(
     return credential
 
 
+def detect_memory_enhancement_oauth_import_sources(
+    *,
+    provider_id: str,
+    source: str = "auto",
+    hermes_home: str | Path | None = None,
+    claude_credentials_path: str | Path | None = None,
+    codex_auth_path: str | Path | None = None,
+) -> dict[str, object]:
+    """Return body-safe importability metadata for existing provider logins."""
+    provider = provider_id.strip().lower().replace("-", "_")
+    selected_source = source.strip().lower()
+    sources: list[dict[str, object]] = []
+    if provider == "openai":
+        attempts = ("codex_cli", "hermes_auth_pool") if selected_source == "auto" else (selected_source,)
+        for attempt in attempts:
+            if attempt == "codex_cli":
+                path = _codex_auth_path(codex_auth_path)
+                credential = _openai_from_payload(OPENAI_OAUTH_NAME, _read_json(path))
+                sources.append(_safe_import_source_status(attempt, credential, path_exists=path.exists()))
+            elif attempt == "hermes_auth_pool":
+                credential = _openai_from_hermes_auth_pool(
+                    OPENAI_OAUTH_NAME,
+                    _hermes_auth_pool_entry(hermes_home, "openai-codex"),
+                )
+                sources.append(_safe_import_source_status(attempt, credential))
+            else:
+                raise ProtocolValidationError("memory enhancement openai oauth import source unsupported")
+    elif provider == "anthropic":
+        attempts = ("hermes_pkce", "claude_code") if selected_source == "auto" else (selected_source,)
+        for attempt in attempts:
+            if attempt == "hermes_pkce":
+                path = _hermes_home(hermes_home) / ".anthropic_oauth.json"
+                credential = _anthropic_from_payload(ANTHROPIC_OAUTH_NAME, _read_json(path), source="hermes_pkce")
+                sources.append(_safe_import_source_status(attempt, credential, path_exists=path.exists()))
+            elif attempt == "claude_code":
+                path = _claude_credentials_path(claude_credentials_path)
+                credential = _anthropic_from_payload(ANTHROPIC_OAUTH_NAME, _read_json(path), source="claude_code")
+                sources.append(_safe_import_source_status(attempt, credential, path_exists=path.exists()))
+            else:
+                raise ProtocolValidationError("memory enhancement anthropic oauth import source unsupported")
+    elif provider == "google":
+        attempts = ("gemini_cli", "hermes_google", "hermes_auth_pool") if selected_source == "auto" else (selected_source,)
+        for attempt in attempts:
+            if attempt == "gemini_cli":
+                path = _gemini_cli_oauth_path(None)
+                credential = _google_from_gemini_cli_payload(GOOGLE_OAUTH_NAME, _read_json(path))
+                sources.append(_safe_import_source_status(attempt, credential, path_exists=path.exists()))
+            elif attempt in {"hermes_google", "google_pkce"}:
+                path = _hermes_home(hermes_home) / "auth" / "google_oauth.json"
+                credential = _google_from_payload(GOOGLE_OAUTH_NAME, _read_json(path))
+                sources.append(_safe_import_source_status(attempt, credential, path_exists=path.exists()))
+            elif attempt == "hermes_auth_pool":
+                credential = _google_from_hermes_auth_pool(
+                    GOOGLE_OAUTH_NAME,
+                    _hermes_auth_pool_entry(hermes_home, "gemini"),
+                )
+                sources.append(_safe_import_source_status(attempt, credential))
+            else:
+                raise ProtocolValidationError("memory enhancement google oauth import source unsupported")
+    else:
+        raise ProtocolValidationError("memory enhancement oauth import provider unsupported")
+    return {
+        "provider_id": provider,
+        "available": any(bool(item.get("available")) for item in sources),
+        "sources": sources,
+    }
+
+
+def _safe_import_source_status(
+    source: str,
+    credential: MemoryEnhancementOAuthCredential | None,
+    *,
+    path_exists: bool | None = None,
+) -> dict[str, object]:
+    status: dict[str, object] = {
+        "source": source,
+        "available": credential is not None,
+    }
+    if path_exists is not None:
+        status["path_exists"] = bool(path_exists)
+    if credential is not None:
+        status["credential"] = credential.to_safe_dict()
+    return status
+
+
 def _import_openai(
     source: str,
     *,

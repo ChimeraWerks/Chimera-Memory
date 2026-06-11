@@ -139,6 +139,27 @@ def test_http_client_preserves_safe_error_code_from_http_error_envelope() -> Non
     assert fake_token not in message
 
 
+def test_http_client_os_errors_do_not_echo_request_or_token() -> None:
+    fake_token = "TEST_ONLY_SIDE_TOKEN"
+
+    def opener(_request, *, timeout: int):
+        raise ConnectionAbortedError("captured content TEST_ONLY_SIDE_TOKEN")
+
+    client = MemoryEnhancementHttpClient(
+        "http://127.0.0.1:8944/enhance",
+        bearer_token=fake_token,
+        opener=opener,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client.invoke({"request": {"wrapped_content": "captured content"}})
+
+    message = str(exc_info.value)
+    assert "unavailable" in message
+    assert "captured content" not in message
+    assert fake_token not in message
+
+
 def test_http_client_rejects_non_ok_response_with_code_only() -> None:
     opener = _FakeOpener(
         {

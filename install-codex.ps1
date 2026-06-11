@@ -3,6 +3,7 @@ param(
     [string]$PersonaRoot = "",
     [string]$ProjectId = "",
     [string]$ProjectRoot = "",
+    [string]$GlobalRoot = "",
     [string]$Provider = "",
     [switch]$ReuseProviderLogin,
     [switch]$EnableProviderWorker,
@@ -105,6 +106,9 @@ if ($PersonaId) {
     $installArgs += @("--persona-id", $PersonaId, "--persona-root", $PersonaRoot)
 } else {
     $installArgs += @("--project-id", $ProjectId, "--project-root", $ProjectRoot)
+    if ($GlobalRoot) {
+        $installArgs += @("--global-root", $GlobalRoot)
+    }
 }
 
 if ($CodexConfig) {

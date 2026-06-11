@@ -71,11 +71,26 @@ orient by session before pulling content.
 
 For curated memory recall, prefer:
 
-- `memory_stats` for a cheap corpus overview.
+- `memory_stats` for a cheap scoped corpus overview.
 - `memory_context_pack` for a bounded, fenced pre-turn pack.
-- `memory_recall` for fuzzy/conceptual memory lookup.
-- `memory_search` for exact FTS5 search.
+- `memory_recall` for fuzzy/conceptual memory lookup; it filters weak semantic
+  hits, low query-term coverage, and unsafe governance states by default, while
+  exact FTS/body matches can rescue below-floor semantic hits only when stricter
+  term coverage is present. Explicit `min_similarity` values above the default
+  disable that rescue.
+- `memory_search` for exact FTS5 search; it filters restricted, blocked, and
+  non-evidence rows by default.
 - `memory_query` for structured filters such as type, importance, status, tags, or `about`.
+
+`memory_search`, `memory_query`, and context-pack/transcript fallback traces
+separate candidate availability from returned context: `result_count` is the
+filtered result set before limits or token budgets, and `returned_count` is what
+actually reached the caller. `memory_query` records only whether `source_uri`
+was supplied, not the raw URI value; exact `memory_search` does the same.
+
+Use `include_restricted=true` or `include_blocked=true` only for deliberate
+review/debug work. Direct retrieval, stats, and provenance metadata lookups
+always exclude rows marked `can_use_as_evidence=false`.
 
 For normal persona work, reason in the persona belt from
 `docs/FEDERATED_MEMORY_SCOPE.md`:
@@ -88,14 +103,25 @@ For normal persona work, reason in the persona belt from
 - `memory_diagnose`
 
 Use `CHIMERA_MEMORY_MCP_SURFACE=codex` for Codex Desktop project mode with the
-memory belt, transcript recall, exact `memory_search`, and structured
-`memory_query`. Use `persona` to expose the persona memory belt plus transcript
-recall tools. Use `persona_memory` for only the memory belt. Use `worker` only
-for enhancement workers.
+project/global memory belt, exact `memory_search`, structured `memory_query`,
+scoped `memory_stats`, and live-retrieval diagnostics. Codex does not expose
+generic transcript recall MCP tools; use the Codex exec wrapper with
+`--include-transcripts` for bounded project transcript fallback. Use `persona`
+to expose the persona memory belt plus transcript recall tools. Use
+`persona_memory` for only the memory belt. Use `worker` only for enhancement
+workers.
+
+For Codex CLI prompt wrapping, `chimera-memory codex exec --include-transcripts`
+adds bounded snippets only from sessions whose `cwd` is inside the current
+project workspace. Use it when curated memory is sparse but project-local
+session history is relevant.
 
 For diagnostics, prefer `memory_diagnose` modes before inspecting raw DBs or
 logs. Important modes include tools, harness, health, enhancement, and
-cli_worker.
+cli_worker. Use `memory_diagnose(mode="context")` when you need a compact
+answer to whether CM has recently attempted or returned prompt-context evidence
+without exposing prompt text or memory bodies. Context diagnostics render stored
+UTC timestamps with local-time companions so UTC day rollovers are explicit.
 
 For imports and generated memory, use plan/preview modes first. Imported,
 generated, auto-captured, and sidecar-produced outputs start as evidence-only

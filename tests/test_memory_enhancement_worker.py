@@ -64,6 +64,13 @@ def test_run_memory_enhancement_dry_run_consumes_queue_without_mutating_memory(t
     init_memory_tables(conn)
     _index_worker_memory(conn, tmp_path)
     enqueued = memory_enhancement_enqueue(conn, file_path="worker.md")
+    memory_row_before = conn.execute(
+        """
+        SELECT fm_review_status, fm_can_use_as_instruction
+        FROM memory_files
+        WHERE relative_path = 'worker.md'
+        """
+    ).fetchone()
 
     processed = run_memory_enhancement_dry_run(conn, persona="asa")
 
@@ -84,7 +91,8 @@ def test_run_memory_enhancement_dry_run_consumes_queue_without_mutating_memory(t
         WHERE relative_path = 'worker.md'
         """
     ).fetchone()
-    assert memory_row == ("confirmed", 1)
+    assert memory_row == memory_row_before
+    assert memory_row == ("pending", 0)
 
     events = memory_audit_query(conn, persona="asa")
     event_types = {event["event_type"] for event in events}

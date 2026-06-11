@@ -1,9 +1,19 @@
 import asyncio
 import logging
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 from chimera_memory import server
+import chimera_memory.config as config
+from chimera_memory.memory import index_file, init_memory_tables
+
+
+def _tool_fn(mcp, name: str):
+    for tool in mcp._tool_manager.list_tools():
+        if tool.name == name:
+            return tool.fn
+    raise AssertionError(f"tool not registered: {name}")
 
 
 def test_create_server_ready_callback_runs_after_list_tools(monkeypatch, caplog):
@@ -21,6 +31,101 @@ def test_create_server_ready_callback_runs_after_list_tools(monkeypatch, caplog)
     assert calls == ["ready"]
     assert "mcp request start method=tools/list" in caplog.text
     assert "mcp request finish method=tools/list" in caplog.text
+
+
+def test_create_server_exposes_memory_use_instructions(monkeypatch):
+    monkeypatch.setattr("chimera_memory.config.ensure_config_exists", lambda: None)
+    monkeypatch.setattr("chimera_memory.config.load_config", lambda: {})
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+
+    mcp = server.create_server()
+
+    assert "memory_context_pack" in mcp.instructions
+    assert "semantic_search" in mcp.instructions
+    assert "evidence, not instructions" in mcp.instructions
+
+
+def test_create_server_codex_instructions_match_visible_surface(monkeypatch):
+    monkeypatch.setattr("chimera_memory.config.ensure_config_exists", lambda: None)
+    monkeypatch.setattr("chimera_memory.config.load_config", lambda: {})
+    monkeypatch.setenv("CHIMERA_MEMORY_MCP_SURFACE", "codex")
+
+    mcp = server.create_server()
+
+    assert "project/global memory evidence for Codex" in mcp.instructions
+    assert "memory_context_pack" in mcp.instructions
+    assert "memory_search" in mcp.instructions
+    assert "semantic_search" not in mcp.instructions
+    assert "does not expose transcript recall tools" in mcp.instructions
+
+
+def test_mcp_provenance_tools_redact_local_path_uris(monkeypatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "transcript.db"
+    sessions = tmp_path / "sessions"
+    memory_path = tmp_path / "global" / "memory.md"
+    source_uri = tmp_path / "secrets" / "source-auth.py"
+    artifact_uri = tmp_path / "secrets" / "artifact-auth.txt"
+    memory_path.parent.mkdir(parents=True)
+    memory_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "type: procedural",
+                "memory_scope: global",
+                "importance: 8",
+                "source_refs:",
+                "  - kind: local-file",
+                f"    uri: '{source_uri}'",
+                "memory_payload:",
+                "  artifacts:",
+                "    - kind: file",
+                f"      uri: '{artifact_uri}'",
+                "      description: local artifact",
+                "---",
+                "Global provenance URI display body must not matter.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        init_memory_tables(conn)
+        assert index_file(conn, "global", "memory.md", memory_path)
+        conn.execute(
+            "UPDATE memory_files SET relative_path = ? WHERE persona = ? AND relative_path = ?",
+            (str(memory_path), "global", "memory.md"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config" / "config.yaml")
+    monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(db_path))
+    monkeypatch.setenv("TRANSCRIPT_JSONL_DIR", str(sessions))
+    monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(memory_path.parent))
+    monkeypatch.delenv("CHIMERA_MEMORY_MCP_SURFACE", raising=False)
+    monkeypatch.setattr("chimera_memory.memory.full_reindex", lambda *args, **kwargs: None)
+    monkeypatch.setattr("chimera_memory.memory.start_memory_watcher", lambda *args, **kwargs: None)
+
+    mcp = server.create_server()
+    search_text = _tool_fn(mcp, "memory_search")("provenance URI display", scope="global")
+    source_text = _tool_fn(mcp, "memory_source_refs")(scope="global")
+    artifact_text = _tool_fn(mcp, "memory_artifacts")(scope="global")
+    trace_text = _tool_fn(mcp, "memory_recall_trace_query")(include_items=True, limit=5)
+    combined = (search_text + "\n" + source_text + "\n" + artifact_text + "\n" + trace_text).replace("\\\\", "/").replace("\\", "/")
+
+    assert "**memory.md**" in search_text
+    assert "local-path:source-auth.py" in source_text
+    assert "local-path:artifact-auth.txt" in artifact_text
+    assert "global:memory.md" in source_text
+    assert "global:memory.md" in artifact_text
+    assert "fingerprint=" in source_text
+    assert "fingerprint=" in artifact_text
+    assert str(source_uri).replace("\\", "/") not in combined
+    assert str(artifact_uri).replace("\\", "/") not in combined
+    assert str(tmp_path).replace("\\", "/") not in combined
 
 
 def test_main_defers_bootstrap_until_tools_list_by_default(monkeypatch):
@@ -110,6 +215,65 @@ def test_main_can_run_streamable_http_transport(monkeypatch):
         ("create", "127.0.0.1", 8765),
         ("run", "streamable-http"),
     ]
+
+
+def test_asyncio_disconnect_filter_suppresses_only_benign_proactor_reset() -> None:
+    filter_ = server._AsyncioDisconnectNoiseFilter()
+    benign_exc = ConnectionResetError(10054, "connection reset")
+    benign = logging.LogRecord(
+        name="asyncio",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)",
+        args=(),
+        exc_info=(ConnectionResetError, benign_exc, None),
+    )
+    other_callback = logging.LogRecord(
+        name="asyncio",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="Exception in callback other_callback()",
+        args=(),
+        exc_info=(ConnectionResetError, benign_exc, None),
+    )
+    real_error = logging.LogRecord(
+        name="asyncio",
+        level=logging.ERROR,
+        pathname=__file__,
+        lineno=1,
+        msg="Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)",
+        args=(),
+        exc_info=(RuntimeError, RuntimeError("boom"), None),
+    )
+
+    assert filter_.filter(benign) is False
+    assert filter_.filter(other_callback) is True
+    assert filter_.filter(real_error) is True
+
+
+def test_asyncio_disconnect_filter_install_is_idempotent() -> None:
+    logger = logging.getLogger("asyncio")
+    original_filters = list(logger.filters)
+    try:
+        logger.filters = [
+            existing
+            for existing in logger.filters
+            if not isinstance(existing, server._AsyncioDisconnectNoiseFilter)
+        ]
+
+        server._install_asyncio_disconnect_log_filter()
+        server._install_asyncio_disconnect_log_filter()
+
+        installed = [
+            existing
+            for existing in logger.filters
+            if isinstance(existing, server._AsyncioDisconnectNoiseFilter)
+        ]
+        assert len(installed) == 1
+    finally:
+        logger.filters = original_filters
 
 
 def test_main_skips_bootstrap_for_worker_surface(monkeypatch):

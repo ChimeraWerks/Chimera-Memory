@@ -1,5 +1,7 @@
 import sqlite3
+import socket
 
+from chimera_memory import memory_active_harness as harness
 from chimera_memory.memory_active_harness import (
     active_harness_report,
     register_active_harness,
@@ -126,3 +128,52 @@ def test_expired_or_released_harnesses_do_not_warn() -> None:
         now=112.0,
     )
     assert report["active_count"] == 0
+
+
+def test_dead_same_host_harness_lease_does_not_warn(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+
+    register_active_harness(
+        conn,
+        persona="asa",
+        db_path="C:/tmp/asa/transcript.db",
+        lease_id="fresh",
+        now=100.0,
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_active_harness_leases (
+            lease_id, created_at, last_seen_at, expires_at, status,
+            persona, process_id, hostname, runtime_name, client,
+            db_path, persona_root, metadata
+        ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "stale",
+            100.0,
+            101.0,
+            200.0,
+            "asa",
+            424242,
+            socket.gethostname(),
+            "test-runtime",
+            "codex",
+            "C:/tmp/asa/transcript.db",
+            "",
+            "{}",
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(harness, "_process_is_alive", lambda process_id: process_id != 424242)
+
+    report = active_harness_report(
+        conn,
+        persona="asa",
+        db_path="C:/tmp/asa/transcript.db",
+        now=110.0,
+    )
+
+    assert report["active_count"] == 1
+    assert [lease["lease_id"] for lease in report["leases"]] == ["fresh"]
+    assert report["warnings"] == []

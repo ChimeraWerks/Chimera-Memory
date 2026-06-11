@@ -10,6 +10,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .memory_display import (
+    local_path_fingerprint,
+    looks_like_local_path_reference,
+    redact_local_path_references,
+    safe_local_path_reference_display,
+    safe_memory_relative_path_display,
+)
 from .memory_enhancement import (
     build_authored_memory_enrichment_request,
     build_memory_enhancement_request,
@@ -20,11 +27,36 @@ from .memory_entities import apply_enhancement_entities
 from .memory_frontmatter import parse_frontmatter
 from .memory_observability import _json_object, _json_text, record_memory_audit_event
 from .memory_provider_governor import provider_governor_check, provider_usage_record
+from .sanitizer import sanitize_content
 
 ENHANCEMENT_JOB_STATUSES = {"pending", "running", "succeeded", "failed", "skipped"}
 WORKER_HEARTBEAT_STATUSES = {"idle", "running", "stopping", "failed"}
 WORKER_CAPABILITIES = {"enhancement"}
 DEFAULT_ENHANCEMENT_ENQUEUE_DEBOUNCE_SECONDS = 60
+_PUBLIC_REQUEST_PAYLOAD_KEYS = {
+    "schema_version",
+    "request_id",
+    "task",
+    "persona",
+    "source_path",
+    "source_ref",
+    "policy",
+    "expected_fields",
+}
+_PUBLIC_RESULT_PAYLOAD_KEYS = {
+    "schema_version",
+    "payload_schema_version",
+    "memory_type",
+    "confidence",
+    "sensitivity_tier",
+    "provenance_status",
+    "review_status",
+    "can_use_as_instruction",
+    "can_use_as_evidence",
+    "requires_user_confirmation",
+    "enrichment_status",
+    "review_actions_supported",
+}
 
 
 def _utc_now() -> str:
@@ -89,6 +121,108 @@ def _enhancement_job_to_dict(row: sqlite3.Row | tuple | None) -> dict | None:
         "locked_at": row[17],
         "locked_by_worker": row[18] if len(row) > 18 else "",
     }
+
+
+def _safe_receipt_text(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return redact_local_path_references(sanitize_content(text) or "")
+
+
+def _safe_receipt_path(value: object, *, fallback_path: object = "") -> str:
+    text = str(value or "").strip()
+    fallback = str(fallback_path or "").strip()
+    if text and looks_like_local_path_reference(text):
+        return safe_local_path_reference_display(text)
+    display = safe_memory_relative_path_display(text, fallback_path=fallback)
+    if display:
+        return display
+    if fallback and looks_like_local_path_reference(fallback):
+        return safe_local_path_reference_display(fallback)
+    return _safe_receipt_text(text or fallback)
+
+
+def _public_request_payload(payload: object, *, fallback_path: object = "") -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    public: dict[str, object] = {}
+    for key in _PUBLIC_REQUEST_PAYLOAD_KEYS:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if key in {"source_path", "source_ref"}:
+            public[key] = _safe_receipt_path(value, fallback_path=fallback_path)
+        elif isinstance(value, str):
+            public[key] = _safe_receipt_text(value)
+        else:
+            public[key] = value
+    redacted = sorted(str(key) for key in payload.keys() if str(key) not in _PUBLIC_REQUEST_PAYLOAD_KEYS)
+    if redacted:
+        public["redacted_fields"] = redacted
+    return public
+
+
+def _public_result_payload(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return {}
+    public = {key: payload[key] for key in _PUBLIC_RESULT_PAYLOAD_KEYS if key in payload}
+    redacted = sorted(str(key) for key in payload.keys() if str(key) not in _PUBLIC_RESULT_PAYLOAD_KEYS)
+    if redacted:
+        public["redacted_fields"] = redacted
+    return public
+
+
+def safe_enhancement_job_receipt(job: object) -> object:
+    """Return a user-facing enhancement job receipt without raw body/path payloads."""
+    if not isinstance(job, dict):
+        return job
+    receipt = dict(job)
+    raw_path = receipt.get("path")
+    request_payload = receipt.get("request_payload") if isinstance(receipt.get("request_payload"), dict) else {}
+    display_path = _safe_receipt_path(
+        request_payload.get("source_path") or request_payload.get("source_ref") or raw_path,
+        fallback_path=raw_path,
+    )
+    if display_path:
+        receipt["path"] = display_path
+    if raw_path and looks_like_local_path_reference(raw_path):
+        receipt["path_fingerprint"] = local_path_fingerprint(raw_path)
+    if "file_path" in receipt:
+        receipt["file_path"] = _safe_receipt_path(receipt.get("file_path"))
+    if "request_payload" in receipt:
+        receipt["request_payload"] = _public_request_payload(request_payload, fallback_path=raw_path)
+    if "result_payload" in receipt:
+        receipt["result_payload"] = _public_result_payload(receipt.get("result_payload"))
+    if "error" in receipt:
+        receipt["error"] = _safe_receipt_text(receipt.get("error"))
+    return receipt
+
+
+def safe_enhancement_receipt(receipt: object) -> object:
+    """Sanitize enhancement CLI/API receipts for client-facing JSON output."""
+    if isinstance(receipt, list):
+        return [safe_enhancement_receipt(item) for item in receipt]
+    if not isinstance(receipt, dict):
+        return receipt
+    safe = dict(receipt)
+    if "job" in safe:
+        safe["job"] = safe_enhancement_job_receipt(safe.get("job"))
+    if "processed" in safe:
+        safe["processed"] = safe_enhancement_receipt(safe.get("processed"))
+    if "failures" in safe:
+        safe["failures"] = safe_enhancement_receipt(safe.get("failures"))
+    if "enrichment_job" in safe:
+        safe["enrichment_job"] = safe_enhancement_receipt(safe.get("enrichment_job"))
+    if "file_path" in safe:
+        safe["file_path"] = _safe_receipt_path(safe.get("file_path"))
+    if "path" in safe and "job_id" in safe:
+        safe = safe_enhancement_job_receipt(safe)
+    elif "path" in safe:
+        safe["path"] = _safe_receipt_path(safe.get("path"))
+    if "error" in safe:
+        safe["error"] = _safe_receipt_text(safe.get("error"))
+    return safe
 
 
 def _select_enhancement_job(conn: sqlite3.Connection, job_id: str) -> dict | None:

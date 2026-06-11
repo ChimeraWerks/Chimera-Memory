@@ -300,6 +300,27 @@ def test_normalize_authored_memory_writeback_ignores_model_authoritative_fields(
     assert normalized["can_use_as_instruction"] is False
 
 
+def test_normalize_authored_memory_writeback_does_not_scan_contract_topic_enum() -> None:
+    request = build_authored_memory_enrichment_request(
+        memory_payload={
+            "memory_type": "procedural",
+            "decisions": [{"what": "Shared authored writeback can remain standard."}],
+            "entities": {"topics": ["writeback discipline"], "projects": ["ChimeraMemory"]},
+        },
+        persona="global",
+        provenance={"status": "user_confirmed", "requires_review": False, "confidence": 1.0},
+        request_id="authored-topic-enum",
+    )
+
+    assert "oauth" in request["topic_enum"]
+    assert "credential-handling" in request["topic_enum"]
+
+    normalized = normalize_authored_memory_writeback(request)
+
+    assert normalized["sensitivity_tier"] == "standard"
+    assert normalized["can_use_as_instruction"] is True
+
+
 def test_normalize_authored_memory_writeback_allows_confirmed_instruction_grade() -> None:
     request = build_authored_memory_enrichment_request(
         memory_payload={
@@ -317,6 +338,25 @@ def test_normalize_authored_memory_writeback_allows_confirmed_instruction_grade(
     assert normalized["review_status"] == "confirmed"
     assert normalized["can_use_as_instruction"] is True
     assert normalized["confidence"] == 0.91
+
+
+def test_normalize_authored_memory_writeback_imported_stays_review_gated() -> None:
+    request = build_authored_memory_enrichment_request(
+        memory_payload={
+            "memory_type": "procedural",
+            "lessons": [{"teaching": "Imported authored memory still needs review."}],
+        },
+        persona="global",
+        provenance={"status": "imported", "requires_review": False, "confidence": 0.91},
+        request_id="authored-imported",
+    )
+
+    normalized = normalize_authored_memory_writeback(request)
+
+    assert normalized["provenance_status"] == "imported"
+    assert normalized["review_status"] == "pending"
+    assert normalized["can_use_as_instruction"] is False
+    assert normalized["requires_user_confirmation"] is True
 
 
 def test_enhancement_metadata_to_frontmatter_outputs_cm_yaml_fields() -> None:

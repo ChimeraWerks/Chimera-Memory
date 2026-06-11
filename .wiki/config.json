@@ -1,0 +1,9 @@
+{
+  "kind": "repo",
+  "schema_version": 1,
+  "repo_id": "chimera-memory",
+  "name": "Chimera-Memory",
+  "created": "2026-06-09",
+  "updated": "2026-06-09",
+  "export_policy": "federated-packets"
+}

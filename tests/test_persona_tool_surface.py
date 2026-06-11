@@ -51,7 +51,7 @@ def test_promote_snapshot_is_documented_as_implemented() -> None:
     server_source = (ROOT / "chimera_memory" / "server.py").read_text(encoding="utf-8")
 
     assert "memory_promote_snapshot" in functions
-    assert "Implemented: `memory_context_pack`, `memory_recall`, `memory_remember`" in doc
+    assert "Implemented: `memory_context_pack`, `memory_live_retrieval_check`, `memory_recall`" in doc
     assert "memory_promote_snapshot - preview or write approved project/global snapshots" in server_source
 
 
@@ -62,6 +62,7 @@ def test_memory_diagnose_owns_zone_and_trace_inspection() -> None:
         "tool_surface",
         "zones",
         "traces",
+        "context",
         "trace_analyze",
         "harness",
         "provider_plan",
@@ -125,7 +126,14 @@ def test_codex_desktop_surface_exposes_project_memory_search_tools(monkeypatch, 
         "memory_search",
         "memory_query",
         "memory_whereami",
+        "memory_live_retrieval_check",
     } <= tools
+    assert "memory_promote_snapshot" not in tools
+    assert "memory_review" not in tools
+    assert "discord_recall_index" not in tools
+    assert "discord_detail" not in tools
+    assert "semantic_search" not in tools
+    assert "session_list" not in tools
     assert "memory_import_chatgpt_export" not in tools
     assert "transcript_backfill" not in tools
 

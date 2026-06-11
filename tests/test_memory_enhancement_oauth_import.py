@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 
 from chimera_memory.memory_enhancement_oauth import MemoryEnhancementOAuthStore
-from chimera_memory.memory_enhancement_oauth_import import import_memory_enhancement_oauth_credential
+from chimera_memory.memory_enhancement_oauth_import import (
+    detect_memory_enhancement_oauth_import_sources,
+    import_memory_enhancement_oauth_credential,
+)
 
 
 def test_import_openai_codex_credentials(tmp_path: Path):
@@ -37,6 +40,38 @@ def test_import_openai_codex_credentials(tmp_path: Path):
     assert credential.base_url == "https://chatgpt.com/backend-api/codex"
     assert credential.account_label == "acct_test"
     assert store.get("openai-memory", provider_id="openai").refresh_token == "TEST_ONLY_OPENAI_REFRESH"
+
+
+def test_detect_openai_codex_import_source_is_body_safe(tmp_path: Path):
+    codex_path = tmp_path / ".codex" / "auth.json"
+    codex_path.parent.mkdir()
+    codex_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "TEST_ONLY_OPENAI_ACCESS",
+                    "refresh_token": "TEST_ONLY_OPENAI_REFRESH",
+                    "account_id": "acct_test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status = detect_memory_enhancement_oauth_import_sources(
+        provider_id="openai",
+        source="codex_cli",
+        codex_auth_path=codex_path,
+    )
+    payload = json.dumps(status, sort_keys=True)
+
+    assert status["provider_id"] == "openai"
+    assert status["available"] is True
+    assert status["sources"][0]["source"] == "codex_cli"
+    assert status["sources"][0]["path_exists"] is True
+    assert status["sources"][0]["credential"]["value_present"] is True
+    assert "TEST_ONLY_OPENAI_ACCESS" not in payload
+    assert "TEST_ONLY_OPENAI_REFRESH" not in payload
 
 
 def test_import_openai_hermes_auth_pool_credentials(tmp_path: Path):

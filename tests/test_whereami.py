@@ -17,6 +17,10 @@ RUNTIME_ENV_KEYS = [
     "CHIMERA_SHARED_ROOT",
     "CHIMERA_CLIENT",
     "CHIMERA_MEMORY_PERSONA_DB_ROOT",
+    "CHIMERA_MEMORY_PROJECT_ID",
+    "CHIMERA_MEMORY_PROJECT_ROOT",
+    "CHIMERA_MEMORY_PROJECT_ROOTS",
+    "CHIMERA_MEMORY_GLOBAL_ROOT",
 ]
 
 
@@ -33,9 +37,13 @@ def test_memory_whereami_reports_env_overrides(tmp_path: Path, monkeypatch) -> N
     shared_root = tmp_path / "shared"
     jsonl_dir = tmp_path / "sessions"
     db_path = tmp_path / "transcript.db"
+    global_root = tmp_path / "global-memory"
+    project_root = tmp_path / "repo" / ".chimera-memory"
     persona_root.mkdir(parents=True)
     shared_root.mkdir()
     jsonl_dir.mkdir()
+    global_root.mkdir()
+    project_root.mkdir(parents=True)
 
     monkeypatch.setenv("TRANSCRIPT_DB_PATH", str(db_path))
     monkeypatch.setenv("TRANSCRIPT_JSONL_DIR", str(jsonl_dir))
@@ -46,6 +54,9 @@ def test_memory_whereami_reports_env_overrides(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setenv("CHIMERA_PERSONAS_DIR", str(tmp_path / "personas"))
     monkeypatch.setenv("CHIMERA_SHARED_ROOT", str(shared_root))
     monkeypatch.setenv("CHIMERA_CLIENT", "codex")
+    monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(global_root))
+    monkeypatch.setenv("CHIMERA_MEMORY_PROJECT_ID", "ChimeraMemory")
+    monkeypatch.setenv("CHIMERA_MEMORY_PROJECT_ROOT", str(project_root))
 
     payload = server.resolve_memory_whereami()
 
@@ -56,6 +67,10 @@ def test_memory_whereami_reports_env_overrides(tmp_path: Path, monkeypatch) -> N
     assert payload["resolved"]["transcript_persona"] == "asa"
     assert payload["resolved"]["persona_id"] == "developer/asa"
     assert payload["resolved"]["client"] == "codex"
+    assert payload["resolved"]["global_root"] == str(global_root)
+    assert payload["provenance"]["global_root"] == {"source": "env", "key": "CHIMERA_MEMORY_GLOBAL_ROOT"}
+    assert payload["resolved"]["project_id"] == "ChimeraMemory"
+    assert payload["resolved"]["project_root"] == str(project_root)
     assert payload["warnings"] == []
 
 
@@ -90,6 +105,11 @@ def test_memory_whereami_reports_config_and_default_sources(tmp_path: Path, monk
     assert payload["provenance"]["client"]["source"] == "config"
     assert payload["resolved"]["persona_id"] is None
     assert payload["provenance"]["persona_id"] == {"source": "missing", "key": "CHIMERA_PERSONA_ID"}
+    assert payload["resolved"]["global_root"] == str(Path.home() / ".chimera-memory" / "global-memory")
+    assert payload["provenance"]["global_root"] == {
+        "source": "default",
+        "function": "chimera_memory.memory_scope.global_memory_root",
+    }
 
 
 def test_memory_whereami_warns_when_root_is_overridden_by_explicit_db(tmp_path: Path, monkeypatch) -> None:

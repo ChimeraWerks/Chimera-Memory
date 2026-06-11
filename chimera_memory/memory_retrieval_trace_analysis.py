@@ -16,7 +16,12 @@ from .memory_enhancement_provider import (
     resolve_enhancement_provider_plan,
     safe_provider_receipt,
 )
-from .memory_observability import _json_object, record_memory_audit_event
+from .memory_observability import (
+    _json_object,
+    _safe_audit_payload,
+    _safe_recall_trace_query_text,
+    record_memory_audit_event,
+)
 
 RETRIEVAL_TRACE_ANALYSIS_VERSION = "chimera-memory.retrieval-trace-analysis.v1"
 
@@ -171,12 +176,12 @@ def _fetch_traces(
             "created_at": row[1],
             "tool_name": row[2],
             "persona": row[3],
-            "query_text": row[4],
+            "query_text": _safe_recall_trace_query_text(row[2], row[4]),
             "requested_limit": row[5],
             "result_count": row[6],
             "returned_count": row[7],
             "request_payload": _safe_request_payload(_json_object(row[8])),
-            "response_policy": _json_object(row[9]),
+            "response_policy": _safe_audit_payload(_json_object(row[9])),
         }
         item_rows = conn.execute(
             """
@@ -279,11 +284,13 @@ def _safe_request_payload(payload: object) -> object:
     safe: dict[str, Any] = {}
     for key in ("query", "concept", "persona", "limit", "source_kind", "source_uri", "include_synthesis"):
         if key in payload:
-            safe[key] = payload[key]
+            safe[key] = _safe_audit_payload(payload[key])
     if "plan" in payload and isinstance(payload["plan"], Mapping):
         safe["plan"] = {
-            "query_text": _bounded_text(payload["plan"].get("query_text"), 300),
-            "query_terms": payload["plan"].get("query_terms") if isinstance(payload["plan"].get("query_terms"), list) else [],
+            "query_text": _safe_audit_payload({"query_text": payload["plan"].get("query_text")}).get("query_text"),
+            "query_terms": _safe_audit_payload(payload["plan"].get("query_terms"))
+            if isinstance(payload["plan"].get("query_terms"), list)
+            else [],
             "shift_score": payload["plan"].get("shift_score"),
         }
     return safe
@@ -295,7 +302,7 @@ def _safe_item_metadata(metadata: object) -> dict[str, Any]:
     return {
         "importance": metadata.get("importance"),
         "status": metadata.get("status"),
-        "about": _bounded_text(metadata.get("about"), 240),
+        "about": _bounded_text(_safe_audit_payload(metadata.get("about")), 240),
         "snippet_chars": metadata.get("snippet_chars"),
     }
 

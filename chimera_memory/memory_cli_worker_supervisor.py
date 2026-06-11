@@ -1011,6 +1011,99 @@ def agy_worker_command(config: AgyCliWorkerConfig, session: Mapping[str, Any] | 
     return command
 
 
+def _path_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_executable_label(executable: str) -> str:
+    text = _clean(executable, default="unknown", max_chars=240)
+    return Path(text).name or text
+
+
+def _worker_file_status(files: Mapping[str, str], *, required: set[str]) -> dict[str, dict[str, Any]]:
+    worker_root = Path(files.get("worker_root") or ".")
+    sensitive = {"auth", "credentials"}
+    status: dict[str, dict[str, Any]] = {}
+    for name, raw_path in files.items():
+        path = Path(raw_path)
+        status[name] = {
+            "role": name,
+            "exists": path.exists(),
+            "required": name in required,
+            "sensitive": name in sensitive,
+            "under_worker_root": _path_under(path, worker_root),
+        }
+    return status
+
+
+def _credential_status(runtime: str, file_status: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    role = {"codex": "auth", "claude": "credentials"}.get(runtime, "")
+    if not role:
+        return {"required": False, "present": True, "role": ""}
+    return {
+        "required": True,
+        "present": bool(file_status.get(role, {}).get("exists")),
+        "role": role,
+    }
+
+
+def _command_profile(
+    *,
+    runtime: str,
+    config: CodexCliWorkerConfig | ClaudeCliWorkerConfig | AgyCliWorkerConfig,
+    command: list[str],
+) -> dict[str, Any]:
+    profile: dict[str, Any] = {
+        "argv_redacted": True,
+        "runtime": runtime,
+        "model": _clean(getattr(config, "model", ""), max_chars=120),
+        "model_present": bool(_clean(getattr(config, "model", ""), max_chars=120)),
+        "session_mode": _clean(getattr(config, "session_mode", ""), max_chars=40),
+    }
+    if runtime == "codex":
+        profile.update(
+            {
+                "mode": "exec",
+                "json_events": "--json" in command,
+                "skip_git_repo_check": "--skip-git-repo-check" in command,
+                "stdin_prompt": bool(command and command[-1] == "-"),
+                "bypass_approvals_and_sandbox": bool(
+                    getattr(config, "bypass_approvals_and_sandbox", False)
+                ),
+                "sandbox_mode": "bypass"
+                if bool(getattr(config, "bypass_approvals_and_sandbox", False))
+                else "read-only",
+                "resume": len(command) > 2 and command[2] == "resume",
+                "effort": _clean(getattr(config, "effort", ""), max_chars=40),
+            }
+        )
+    elif runtime == "claude":
+        profile.update(
+            {
+                "mode": "print",
+                "stream_json": "stream-json" in command,
+                "strict_mcp_config": "--strict-mcp-config" in command,
+                "permission_mode": "dontAsk" if "dontAsk" in command else "",
+                "session_persistence": "--no-session-persistence" not in command,
+                "effort": _clean(getattr(config, "effort", ""), max_chars=40),
+            }
+        )
+    else:
+        profile.update(
+            {
+                "mode": "print",
+                "sandbox_enabled": "--sandbox" in command,
+                "continue_session": "--continue" in command,
+                "print_timeout": _clean(getattr(config, "print_timeout", ""), max_chars=40),
+            }
+        )
+    return profile
+
+
 def _windows_subprocess_kwargs() -> dict[str, object]:
     if os.name != "nt":
         return {}
@@ -1757,6 +1850,15 @@ def inspect_cli_worker_setup(
         command = claude_worker_command(config)
         runtime_id = "claude"
         executable = config.claude_bin
+        required_files = {
+            "worker_root",
+            "claude_config_dir",
+            "claude",
+            "mcp_config",
+            "credentials",
+            "sessions",
+            "logs",
+        }
     elif normalized in {"agy", "antigravity", "google", "gemini"}:
         config = load_agy_cli_worker_config(source)
         if init:
@@ -1775,6 +1877,16 @@ def inspect_cli_worker_setup(
         command = agy_worker_command(config)
         runtime_id = "agy"
         executable = config.agy_bin
+        required_files = {
+            "worker_root",
+            "agy_home",
+            "agents",
+            "gemini",
+            "settings",
+            "mcp_config",
+            "sessions",
+            "logs",
+        }
     else:
         config = load_codex_cli_worker_config(source)
         if init:
@@ -1783,6 +1895,7 @@ def inspect_cli_worker_setup(
             files = {
                 "worker_root": str(config.worker_root),
                 "codex_home": str(config.codex_home),
+                "auth": str(config.codex_home / "auth.json"),
                 "agents": str(config.worker_root / "AGENTS.md"),
                 "mcp_config": str(config.codex_home / "config.toml"),
                 "mcp_legacy_json": str(config.codex_home / "mcp_servers.json"),
@@ -1792,20 +1905,22 @@ def inspect_cli_worker_setup(
         command = codex_worker_command(config)
         runtime_id = "codex"
         executable = config.codex_bin
-
-    file_status = {
-        name: {
-            "path": path,
-            "exists": Path(path).exists(),
+        required_files = {
+            "worker_root",
+            "codex_home",
+            "auth",
+            "agents",
+            "mcp_config",
+            "sessions",
+            "logs",
         }
-        for name, path in files.items()
-    }
-    command_preview = list(command)
-    ok = bool(shutil.which(executable)) and all(
-        item["exists"]
-        for key, item in file_status.items()
-        if key in {"worker_root", "mcp_config", "agents", "claude", "sessions", "logs"}
+
+    file_status = _worker_file_status(files, required=required_files)
+    missing_required_files = sorted(
+        key for key in required_files if not bool(file_status.get(key, {}).get("exists"))
     )
+    executable_found = bool(shutil.which(executable))
+    ok = executable_found and not missing_required_files
     return {
         "ok": ok,
         "runtime": runtime_id,
@@ -1813,9 +1928,16 @@ def inspect_cli_worker_setup(
         "worker_id": config.worker_id,
         "provider": config.provider,
         "persona": config.persona,
-        "executable": executable,
-        "executable_found": bool(shutil.which(executable)),
+        "executable": _safe_executable_label(executable),
+        "executable_found": executable_found,
+        "credential": _credential_status(runtime_id, file_status),
         "files": file_status,
-        "command_preview": command_preview,
+        "command_profile": _command_profile(runtime=runtime_id, config=config, command=command),
+        "readiness": {
+            "ok": ok,
+            "missing_required_files": missing_required_files,
+            "path_details_redacted": True,
+            "command_preview_redacted": True,
+        },
         "launch_performed": False,
     }

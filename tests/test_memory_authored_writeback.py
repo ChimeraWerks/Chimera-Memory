@@ -9,6 +9,7 @@ from chimera_memory.memory import (
     memory_enhancement_claim_next,
     memory_enhancement_complete,
     memory_entity_query,
+    memory_search,
 )
 from chimera_memory.memory_authored_writeback import build_authored_memory_write_plan
 
@@ -220,6 +221,60 @@ def test_memory_authored_writeback_writes_project_memory(tmp_path: Path) -> None
     ).fetchone()
     assert row == ("project:ChimeraMemory", "project", "ChimeraMemory")
     assert result["enrichment_job"]["enqueued"] is False
+
+
+def test_memory_authored_writeback_writes_global_memory_without_persona_root(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    global_root = tmp_path / "global-memory"
+    payload = {
+        "schema_version": 1,
+        "memory_id": "codex-global-writeback-safe-marker",
+        "memory_type": "procedural",
+        "importance": 8,
+        "memory_payload": {
+            "decisions": [
+                {"what": "Codex global authored writeback safe marker is retrievable."}
+            ],
+            "entities": {"projects": ["ChimeraMemory"], "topics": ["writeback discipline"]},
+        },
+        "source_refs": [{"kind": "test", "uri": "global-authored-write"}],
+        "provenance": {
+            "default_status": "user_confirmed",
+            "confidence": 1.0,
+            "requires_review": False,
+        },
+        "review_status": "confirmed",
+    }
+
+    result = memory_authored_writeback(
+        conn,
+        tmp_path / "missing-personas",
+        persona="global",
+        payload=payload,
+        write=True,
+        enqueue=False,
+        memory_scope="global",
+        global_root=global_root,
+    )
+
+    assert result["ok"] is True
+    assert result["written"] is True
+    target = Path(result["path"])
+    assert target.exists()
+    frontmatter = yaml.safe_load(target.read_text(encoding="utf-8").split("---", 2)[1])
+    assert frontmatter["memory_scope"] == "global"
+    assert "project_id" not in frontmatter
+
+    row = conn.execute(
+        "SELECT persona, memory_scope, project_id FROM memory_files WHERE id = ?",
+        (result["file_id"],),
+    ).fetchone()
+    assert row == ("global", "global", None)
+    assert result["enrichment_job"]["enqueued"] is False
+
+    rows = memory_search(conn, "safe marker", scope="global", limit=5)
+    assert [item["relative_path"] for item in rows] == [result["relative_path"]]
 
 
 def test_memory_authored_writeback_blocks_unsafe_payload(tmp_path: Path) -> None:

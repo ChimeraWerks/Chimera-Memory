@@ -17,6 +17,7 @@ from chimera_memory.memory import (
     memory_entity_connections,
     memory_entity_query,
 )
+from chimera_memory.memory_enhancement_queue import safe_enhancement_receipt
 
 
 def _index_memory(conn: sqlite3.Connection, tmp_path: Path, name: str = "target.md") -> None:
@@ -63,6 +64,25 @@ def test_memory_enhancement_enqueue_builds_pending_job(tmp_path: Path) -> None:
     events = memory_audit_query(conn, event_type="memory_enhancement_enqueued", persona="asa")
     assert len(events) == 1
     assert events[0]["payload"]["job_id"] == job["job_id"]
+
+
+def test_safe_enhancement_receipt_redacts_body_and_raw_paths(tmp_path: Path) -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_memory(conn, tmp_path)
+
+    result = memory_enhancement_enqueue(conn, file_path="target.md")
+    safe = safe_enhancement_receipt(result)
+    serialized = str(safe).replace("\\", "/")
+
+    assert result["job"]["path"].replace("\\", "/").startswith(str(tmp_path).replace("\\", "/"))
+    assert "Sidecar queue target body." in result["job"]["request_payload"]["wrapped_content"]
+    assert str(tmp_path).replace("\\", "/") not in serialized
+    assert "Sidecar queue target body." not in serialized
+    assert safe["job"]["path"] == "target.md"
+    assert safe["job"]["path_fingerprint"]
+    assert safe["job"]["request_payload"]["task"] == "extract_memory_metadata"
+    assert "wrapped_content" in safe["job"]["request_payload"]["redacted_fields"]
 
 
 def test_memory_enhancement_enqueue_dedupes_active_job(tmp_path: Path) -> None:

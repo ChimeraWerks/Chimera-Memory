@@ -32,12 +32,13 @@ PERSONA_TRANSCRIPT_TOOLS = frozenset(
 
 PERSONA_TOOLS = PERSONA_MEMORY_TOOLS | PERSONA_TRANSCRIPT_TOOLS
 
-CODEX_DESKTOP_TOOLS = PERSONA_TOOLS | frozenset(
+CODEX_DESKTOP_TOOLS = (PERSONA_MEMORY_TOOLS - {"memory_promote_snapshot", "memory_review"}) | frozenset(
     {
         "memory_search",
         "memory_query",
         "memory_stats",
         "memory_whereami",
+        "memory_live_retrieval_check",
     }
 )
 
