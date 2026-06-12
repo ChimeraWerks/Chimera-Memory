@@ -61,19 +61,11 @@ tests, public surfaces, or validation behavior move.
 
 ## Known Drift
 
-- `README.md` still lists GitHub Actions CI as future, but CI exists.
-- `README.md` lists HTTP/SSE service-mode as future while streamable HTTP is
-  implemented. The unresolved part is resident service ownership, not local HTTP
-  transport itself.
-- Some docs retain "future" language for CLI worker, sidecar runner, or provider
-  pieces that now have implemented baseline slices.
-- `docs/agents/repo-map.md` says no `.github` or `scripts` directory existed at
-  audit time. That is stale; both now exist.
-- `README.md` lists `networkx` as a dependency, but package metadata does not
-  require it and code handles graph support as optional.
-- `pyproject.toml` package description still mentions only Claude Code session
-  transcripts, which is narrower than current Claude Code, Codex, and Hermes
-  support.
+- `docs/OB1_COMPARISON.md` still says CM is stdio-only in its historical OB1
+  comparison, which is stale for streamable HTTP.
+- Some provider/sidecar docs intentionally mix implemented status with future
+  plans. Read the status paragraph and current code before treating a section as
+  either shipped or pending.
 
 ## How To Use
 

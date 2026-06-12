@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "chimera-memory"
 version = "0.1.0"
-description = "Index Claude Code session transcripts into queryable SQLite. Perfect recall for coding agents."
+description = "Index local agent transcripts and curated memories into queryable SQLite for Claude Code, Codex, Hermes, and MCP users."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Chimera Agency" },
 ]
-keywords = ["claude", "claude-code", "memory", "transcript", "sqlite", "mcp"]
+keywords = ["claude", "claude-code", "codex", "hermes", "memory", "transcript", "sqlite", "mcp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

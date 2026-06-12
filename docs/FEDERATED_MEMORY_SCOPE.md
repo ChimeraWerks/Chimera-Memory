@@ -182,7 +182,7 @@ V1 is closed when the running MCP process proves these surfaces live:
 - project promotion preview resolves through `CHIMERA_MEMORY_PROJECT_ROOTS`
 - write attempts still require explicit `approved_by`
 - promotion attempts write audit rows
-- transcript outbound capture can see current Codex Discord posts
+- transcript outbound capture can see current harness-originated posts
 
 Asa-side live smoke passed after restart on 2026-05-18:
 
@@ -191,7 +191,8 @@ Asa-side live smoke passed after restart on 2026-05-18:
 - `memory_promote_snapshot(destination_scope="project", project_id="PersonifyAgents", write=false)` previewed successfully.
 - `memory_promote_snapshot(..., write=true)` without `approved_by` failed with the approval-required gate.
 - Audit query showed `memory_promote_snapshot_planned` and `memory_promote_snapshot_approval_required`.
-- `discord_recall_index(direction="outbound")` found the current Asa Discord post.
+- The legacy `discord_recall_index(direction="outbound")` compatibility path
+  found the current Asa outbound post in the historical transcript store.
 
 Still deliberately outside v1:
 

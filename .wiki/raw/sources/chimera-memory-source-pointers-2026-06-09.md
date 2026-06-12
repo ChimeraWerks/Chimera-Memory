@@ -44,17 +44,8 @@ At collection time, `git status --short --branch` reported a clean worktree on
 
 ## Noted Drift
 
-- `README.md` roadmap still says GitHub Actions CI is future even though
-  `.github/workflows/ci.yml` exists.
-- `README.md` roadmap still lists HTTP/SSE service-mode as future, while the
-  CLI/server currently support `streamable-http`; broader service-mode ownership
-  remains a separate unresolved architecture decision.
-- Some docs still call CLI worker or provider runner pieces future while
-  shipped slices exist.
-- `docs/agents/repo-map.md` says no `.github` or `scripts` directory existed at
-  the agent setup audit, but both exist now.
-- `README.md` lists `networkx` in compatibility/dependencies text, while
-  `pyproject.toml` and `uv.lock` do not make it a required dependency; current
-  code treats graph analysis support as optional.
-- `pyproject.toml` still describes only Claude Code transcript indexing even
-  though current docs and code support Claude Code, Codex, and Hermes.
+- `docs/OB1_COMPARISON.md` still says CM is stdio-only in its historical OB1
+  comparison, which is stale for streamable HTTP.
+- Some provider/sidecar docs intentionally mix implemented status with future
+  plans. Read the status paragraph and current code before treating a section as
+  either shipped or pending.

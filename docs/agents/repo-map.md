@@ -13,6 +13,8 @@ Codex, Hermes, standalone users, and a PersonifyAgents vendor copy.
 - `docs/` - architecture, OB1 comparison, sidecar, worker, migration, scope, and harness docs
 - `docs/agents/` - coding-agent navigation and playbooks
 - `.githooks/` - repository git hooks
+- `.github/` - GitHub Actions workflows
+- `scripts/` - Windows/bootstrap/startup helper scripts
 - `.chimera-memory/` - local runtime state; ignored and not for commits
 - `.venv/` - local virtual environment; ignored and not for commits
 - `README.md` - human-facing overview, setup, MCP tools, CLI, config, schema, roadmap
@@ -22,8 +24,8 @@ Codex, Hermes, standalone users, and a PersonifyAgents vendor copy.
 - `AGENTS.md` - canonical agent instructions and routing hub
 - `CLAUDE.md` - thin Claude Code pointer to `AGENTS.md`
 
-No `.github` or `scripts` directory existed at the agent setup audit. Do not
-invent CI commands that are not present.
+Use the commands that exist in `.github/`, `scripts/`, `pyproject.toml`, and
+the focused docs. Do not invent CI or service commands that are not present.
 
 ## Runtime Entry Points
 
@@ -69,7 +71,8 @@ then broaden:
 
 - `docs/MODULE_LAYOUT.md` is the deepest current map of module ownership and test mapping.
 - `docs/MEMORY_ENHANCEMENT_SIDECAR.md` defines the sidecar contract, threat model, writeback policy, provider boundaries, and failure categories.
-- `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md` defines the future persistent CLI-worker transport.
+- `docs/MEMORY_ENHANCEMENT_CLI_WORKER.md` defines the CLI-worker transport and
+  current Codex/Claude/Antigravity supervisor slices.
 - `docs/MIGRATION_PIPELINE.md` describes legacy memory migration and hard stops.
 - `docs/FEDERATED_MEMORY_SCOPE.md` describes federated memory storage and query policy.
 - `docs/ACTIVE_HARNESS_LEASE.md` describes warning-only active harness lease behavior.

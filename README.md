@@ -412,6 +412,11 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 
 ### Transcript Layer (everything the harness wrote)
 
+Codex Desktop/CLI, Claude Code, and Hermes are first-class transcript sources.
+The `discord_*` tools below are legacy compatibility helpers for Discord-shaped
+transcript rows and older imports; they are not required for Codex Desktop/CLI
+operation and do not imply that a Discord runtime is active.
+
 | Tool | What it does |
 |------|-------------|
 | `discord_recall_index` | Compact search index (~100 tokens/result). **Use this first.** Returns ID, timestamp, author, 80-char preview. |
@@ -423,10 +428,15 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 | `transcript_backfill` | Index all historical JSONL files. Safe to re-run (skips unchanged via MD5). |
 | `embed_transcripts` | Generate embeddings for entries that don't have them. Useful for manual catch-up; `serve` also runs a bounded local embedding worker by default. |
 
-**Recommended recall workflow** (3-10x token savings vs direct recall):
+**Recommended legacy Discord-row recall workflow** (3-10x token savings vs direct recall):
 1. `discord_recall_index(search="topic")` — scan previews
 2. Pick relevant IDs
 3. `discord_detail(ids=[...])` — get full content only for those
+
+For current Codex Desktop/CLI work, prefer scoped curated-memory tools
+(`memory_context_pack`, `memory_search`, `memory_query`, `memory_recall`) and
+`semantic_search` / `session_list` for transcript history when exposed by the
+selected MCP surface.
 
 ### Curated Memory Layer (markdown files you write)
 
@@ -556,10 +566,10 @@ Set `CHIMERA_MEMORY_ENHANCEMENT_AUTO_ENQUEUE=true` and `CHIMERA_MEMORY_ENHANCEME
 
 When the enhancement system uses cloud providers, six clauses govern credential handling:
 
-1. **Credential discovery can be automatic; credential consumption must be explicit.** Auto-detect of existing credentials is fine; auto-use without confirmation is not.
-2. **Pilot/local: reuse is acceptable after explicit consent + provenance.** Borrowed credentials need a confirmation step plus recorded `credential_source=...` metadata.
+1. **Credential discovery can be automatic; credential consumption must be configured and auditable.** Auto-detect of existing credentials is fine; unattended use is allowed only after a credential reference, OAuth import, or provider affinity is explicitly configured and recorded.
+2. **Pilot/local: reuse is acceptable after explicit configuration + provenance.** Borrowed credentials need recorded `credential_source=...` metadata; they do not need a runtime prompt once configured.
 3. **Daemon/default-on: purpose-specific credential unless ToS + scopes are clean.** Long-running automation uses its own credential, not a borrowed one.
-4. **Silent import dies.** Auto-consume-without-prompt is not allowed.
+4. **Silent implicit import dies.** Do not copy or consume newly discovered credentials without an explicit config/import step; already configured refs may run unattended.
 5. **Local provenance is forensic, not isolating.** Recording the credential source helps debugging but doesn't isolate ... provider-side logs still collapse under one auth identity.
 6. **Borrowed auth must be revocable without damaging the source tool, or it stays pilot-only.** Test for graduation: can you kill the borrowed-auth consumer without breaking the source?
 
@@ -1179,8 +1189,9 @@ memory_fts (content)
 - [x] Pyramid summaries for long imported memories
 - [x] Import pipelines: ChatGPT / Obsidian / Gmail / Perplexity / Grok / Twitter / Instagram / Google Activity / Atom-Blogger
 
-### Phase 7 — Future
-- [ ] GitHub Actions CI workflow for CM (currently local `pytest` green; no remote CI configured — known Day 60 follow-up)
+### Phase 7 — Open Follow-ups
+- [x] GitHub Actions CI workflow for CM
+- [x] Streamable HTTP MCP transport for local/shared Codex sidecar use
 - [ ] Stage 2 enhancement writeback (gated on rename normalization + single-slot variance work)
 - [ ] Type-aware summary contract (per-type budget rules + sentence-aware truncation)
 - [ ] Claim extraction + contradiction detection
@@ -1188,7 +1199,7 @@ memory_fts (content)
 - [ ] Encryption at rest
 - [ ] Export (markdown / JSON / CSV)
 - [ ] Conversation branch detection (harness rewinds)
-- [ ] HTTP/SSE MCP transport for service-mode (single owner-process per persona DB)
+- [ ] Resident service-mode owner process per persona DB
 
 ## Compatibility
 

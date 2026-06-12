@@ -496,9 +496,9 @@ The validator rejects any output that:
 
 - Is not valid JSON.
 - Adds fields outside the schema.
-- Sets `can_use_as_instruction=true` unless provenance is `user_confirmed`.
-  Imported/generated output stays review-gated evidence until human review
-  promotes it.
+- Sets `can_use_as_instruction=true` unless provenance is `user_confirmed` or
+  `auto_confirmed`. Imported/generated output stays review-gated evidence until
+  manual review or a trusted automated promotion policy promotes it.
 - Emits raw secrets or credential-looking strings.
 - Exceeds configured list sizes.
 - Marks restricted content as standard when deterministic guards identify a

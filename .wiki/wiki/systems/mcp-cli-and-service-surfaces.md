@@ -119,7 +119,8 @@ readable.
 
 ## Recommended Tool Routing
 
-For transcript recall, prefer compact progressive disclosure:
+For transcript recall on full/persona surfaces with legacy Discord-shaped rows,
+prefer compact progressive disclosure:
 
 1. `discord_recall_index`
 2. `discord_detail`

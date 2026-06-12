@@ -64,8 +64,12 @@ This document is the runbook for re-running the pipeline against additional file
 
 **5. AR cycle.**
 - Author reviews the preview payload OR a co-AR persona reviews.
-- Author-greenlight via Discord message naming the file + payload accuracy + body-preservation check.
-- Capture the Discord message ID as the `review_notes` field on the eventual write.
+- Author-greenlight via a durable review note naming the file + payload accuracy
+  + body-preservation check. Historical runs used Discord messages; current
+  Codex Desktop/CLI work can use a Codex thread, CLI log, or markdown review
+  note instead.
+- Capture the review note/thread/message ID as the `review_notes` field on the
+  eventual write when one exists.
 
 **6. Apply retrofit via `memory_legacy_frontmatter_retrofit`.**
 - Writer reads source file, verifies body sha256 matches the previewed hash (refuses to write if mismatch).

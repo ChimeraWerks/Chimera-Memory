@@ -8,8 +8,9 @@ not a replacement for the deeper docs.
 
 ChimeraMemory has two memory layers behind one CLI/MCP server:
 
-- Transcript layer: Claude Code, Codex, Hermes, and Discord session JSONL gets
-  parsed, sanitized, indexed into SQLite/FTS5, and optionally embedded.
+- Transcript layer: Claude Code, Codex, Hermes, and legacy Discord-shaped
+  session JSONL gets parsed, sanitized, indexed into SQLite/FTS5, and
+  optionally embedded.
 - Curated memory layer: markdown plus YAML frontmatter memories get indexed,
   scored, zoned, reviewed, traced, and queried through the same server.
 
@@ -59,7 +60,11 @@ The authoritative MCP tool registration is `chimera_memory/server.py`. The
 surface filter is `chimera_memory/mcp_surface.py`. The README is the public
 reference for what the tools do.
 
-For transcript recall, prefer the compact index flow:
+For transcript recall, prefer surface-appropriate compact flows. On current
+Codex Desktop/CLI project surfaces, transcript fallback is opt-in through the
+Codex wrapper/harness path; generic transcript recall tools are not exposed by
+default. On full/persona surfaces with legacy Discord-shaped transcript rows,
+use the compact compatibility flow:
 
 1. `discord_recall_index(search="...")` to scan small previews.
 2. Pick relevant IDs.
@@ -192,7 +197,8 @@ retrieval/indexing contracts.
 ## Do Not Waste Tokens On
 
 - Reading all docs when one routed doc is enough.
-- Calling `discord_recall` before trying `discord_recall_index` plus `discord_detail`.
+- Calling direct full-content transcript recall before trying the compact
+  surface-appropriate flow.
 - Dumping raw transcripts, DB rows, provider errors, or local paths into browser/client surfaces.
 - Treating generated or imported memory as instruction before review.
 - Adding new logic to `memory.py` when a focused module owns the behavior.

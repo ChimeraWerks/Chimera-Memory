@@ -1184,3 +1184,16 @@
 - Added context-pack regression coverage and verified the live global corpus
   returns both default-available instruction-grade cards through context, FTS
   search, structured query, and semantic recall.
+
+## [2026-06-12] docs | post-goal drift cleanup
+
+- Clarified that Discord-named transcript tools are legacy compatibility
+  helpers and that current Codex Desktop/CLI work should use scoped
+  curated-memory tools plus transcript search where exposed.
+- Updated credential governance so configured OAuth/credential refs can run
+  unattended with audit provenance instead of implying runtime confirmation is
+  required.
+- Updated enhancement, migration, README roadmap, repo-map, package metadata,
+  and wiki drift notes to reflect trusted automated promotion, Spark/OAuth
+  sidecar operation, existing GitHub Actions, existing scripts, streamable HTTP,
+  and current Codex/Hermes support.
