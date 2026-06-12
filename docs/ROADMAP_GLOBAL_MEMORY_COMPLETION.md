@@ -110,14 +110,31 @@ and live provider smoke succeeded with `openai/gpt-5.3-codex-spark`.
 
 ## 8. Shipping Boundary
 
-- [ ] Separate current dirty worktree into coherent commits or a clear handoff.
+- [x] Separate current dirty worktree into coherent commits or a clear handoff.
 - [x] Run focused tests for changed areas.
 - [x] Run full `python -m pytest`.
 - [x] Run wiki lint.
 - [x] Run `git diff --check`.
-- [ ] Sync into PersonifyAgents vendor copy if this runtime behavior must ship
+- [x] Sync into PersonifyAgents vendor copy if this runtime behavior must ship
   there.
-- [ ] Run PA vendor/runtime checks if synced.
+- [x] Run PA vendor/runtime checks if synced.
+
+Receipts:
+
+- CM branch `codex/chimera-memory-global-operation` committed
+  `d37dc4049348835fbd3421712ca0150ac2ab8cf3` and pushed to origin.
+- PA branch `codex/sync-chimera-memory-global-operation` synced the vendor copy
+  from the committed CM SHA with `source_dirty=false`, portable source hint
+  `../Chimera-Memory`, and vendor hash
+  `35bf3dfbab175da059488083c53c1343ecb9a20f33077bb8f49dae21539ab8b4`.
+- PA sync checks passed: `python scripts\sync-chimera-memory.py --check`,
+  `python scripts\sync-chimera-memory.py --check --strict --source ...`, and
+  `python -m pytest tests\test_sync_chimera_memory.py -q`.
+- A narrow PA sync-script fix made the sync command Windows-console safe and
+  stopped recording a machine-specific absolute source path or local username in
+  `.sync-source.json`.
+- This roadmap update is the final CM follow-up commit and is re-synced into PA
+  before closure.
 
 ## 9. Final Acceptance
 
@@ -126,5 +143,10 @@ and live provider smoke succeeded with `openai/gpt-5.3-codex-spark`.
 - [x] Fresh real Codex exec receipt proves global memory prompt injection.
 - [x] Global corpus has useful default-available memory.
 - [x] No persona-specific memory work was performed.
-- [ ] Final handoff lists receipts, risks, changed files, and exact recovery
+- [x] Final handoff lists receipts, risks, changed files, and exact recovery
   commands.
+
+Final handoff status: prepared in this roadmap and the closing Codex response.
+Residual risks are limited to intentionally fake secret/path fixtures in tests
+that may trip aggressive scanners. Generated `.wiki/exports/` packets are
+ignored and should stay out of commits unless deliberately scrubbed.

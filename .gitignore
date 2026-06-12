@@ -18,6 +18,9 @@ build/
 venv/
 .chimera-memory/
 
+# Generated wiki exports
+.wiki/exports/
+
 # IDE
 .vscode/
 .idea/
