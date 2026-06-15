@@ -41,6 +41,12 @@ Updated: 2026-06-12
 4. Read `wiki/sources/chimera-memory-source-manifest-2026-06-09.md`.
 5. Open only task-relevant wiki pages, routed docs, code, and tests.
 
+Baseline: `python -m pytest -q` should be **841 passed**. The 150-finding audit
+(Critical → Low) is fully remediated — see `docs/AUDIT_REMEDIATION_2026-06-14.md`
+and the "Audit / Quality Status" section of
+`wiki/synthesis/current-repo-state.md`. The only deferred audit item is smr-09
+(documented); everything else is fixed or documented won't-fix.
+
 ## High-Risk Assumptions
 
 - Do not cross persona or project memory boundaries silently.

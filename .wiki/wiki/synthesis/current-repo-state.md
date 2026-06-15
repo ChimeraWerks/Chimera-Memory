@@ -6,13 +6,14 @@ kind: synthesis
 status: active
 trust: high
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-15
 sources:
   - raw/sources/chimera-memory-source-pointers-2026-06-09.md
   - README.md
   - AGENTS.md
   - docs/agents/repo-map.md
   - docs/CODEX_DESKTOP_SCOPE_AND_CODE_AUDIT.md
+  - docs/AUDIT_REMEDIATION_2026-06-14.md
   - .github/workflows/ci.yml
 ---
 
@@ -25,8 +26,26 @@ agent transcript JSONL and curated markdown memories into SQLite, exposes recall
 and memory tools over MCP, and provides CLI helpers for setup, indexing,
 embedding, enhancement, and Codex configuration.
 
-The repo is clean at initial wiki creation. It has active CI on Ubuntu and
-Windows for Python 3.10 and 3.12.
+The repo is clean. It has active CI on Ubuntu and Windows for Python 3.10 and
+3.12.
+
+## Audit / Quality Status (2026-06-15)
+
+The full 150-finding multi-agent audit (Critical → Low) is **closed**. The
+Critical, all 16 High, and the Medium findings landed earlier; the Low-severity
+pass is now complete: of 85 Low findings, 71 fixed (16 tested per-file batches),
+4 already-fixed by the Medium batch, and 10 documented won't-fix/deferred with
+rationale. Full per-finding tracker: `docs/AUDIT_REMEDIATION_2026-06-14.md`. Test
+suite is at **841 passing** (787 baseline + 54 regression tests).
+
+What's next (none are blockers): the one genuinely-deferred item is **smr-09**
+(startup-worker persona labeling drift) — left undone because harmonizing it would
+change the transcript indexer's authoritative config-vs-env persona scoping, which
+is disproportionate for a labeling-only low finding; revisit only alongside a
+broader single-identity-resolution refactor. The other residuals are the 9
+documented won't-fix items (rationale in the remediation doc). A standalone
+formatting pass remains an open decision and should stay separate from behavior
+changes.
 
 ## Active Capabilities
 
