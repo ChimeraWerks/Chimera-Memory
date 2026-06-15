@@ -305,7 +305,10 @@ def memory_enhancement_enqueue(
     request_payload = build_memory_enhancement_request(
         content=body,
         persona=str(memory_row[2] or ""),
-        source_path=str(memory_row[3] or memory_row[1]),
+        # Prefer the root-relative path; fall back to the bare filename, never the
+        # absolute disk path — source_path is serialized into the prompt sent to
+        # external providers (pc-05).
+        source_path=str(memory_row[3] or Path(str(memory_row[1])).name),
         existing_frontmatter=frontmatter,
     )
     job_id = str(uuid.uuid4())

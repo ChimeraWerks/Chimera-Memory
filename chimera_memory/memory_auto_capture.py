@@ -166,7 +166,14 @@ def build_auto_capture_plan(
         capture_id=capture_id,
         source_session_id=_clean_text(source_session_id),
     )
-    findings, blocking_findings = _safe_findings(body)
+    # Blocking must scan the RAW inputs: the body is built from sanitized text,
+    # so credential patterns are already redacted and the credential gate would
+    # never fire (wcp-04). Display findings still come from the stored body.
+    raw_guard_source = "\n".join(
+        str(part) for part in (title, summary, session_text, act_now_text) if part
+    )
+    _, blocking_findings = _safe_findings(raw_guard_source)
+    findings, _ = _safe_findings(body)
     return {
         "ok": True,
         "schema_version": AUTO_CAPTURE_SCHEMA_VERSION,

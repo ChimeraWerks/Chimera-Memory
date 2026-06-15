@@ -103,3 +103,19 @@ def test_auto_capture_write_creates_review_gated_memory(tmp_path: Path) -> None:
     events = memory_audit_query(conn, event_type="memory_auto_capture_written", persona="asa")
     assert len(events) == 1
     assert events[0]["payload"]["file_id"] == result["file_id"]
+
+
+def test_auto_capture_blocks_credential_in_raw_input():
+    """The credential gate must scan raw inputs, not the pre-sanitized body (wcp-04)."""
+    from chimera_memory.memory_auto_capture import build_auto_capture_plan
+
+    plan = build_auto_capture_plan(
+        persona="asa",
+        title="Session close",
+        summary="leaked key sk-ant-abcdefghijklmnopqrstuvwxyz0123 in notes",
+        importance=6,
+    )
+    assert plan["ok"] is True
+    assert any(f.get("type") == "credential" for f in plan["blocking_findings"])
+    # ...while the stored body is still sanitized (no raw secret persisted).
+    assert "sk-ant-abcdefghijklmnopqrstuvwxyz0123" not in plan["body"]

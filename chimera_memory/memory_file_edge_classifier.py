@@ -422,7 +422,22 @@ def _nullable_date(value: object) -> str | None:
     text = str(value or "").strip()
     if not text or text.lower() == "null":
         return None
-    return text[:32]
+    # Normalize to canonical ISO so temporal edge filtering (valid_until
+    # comparisons) compares real datetimes, not LLM free-text; drop anything
+    # unparseable rather than storing a string that sorts arbitrarily (cm-ent-006).
+    import datetime as _dt
+
+    candidate = text[:32].replace("Z", "+00:00")
+    for parser in (
+        lambda s: _dt.datetime.fromisoformat(s),
+        lambda s: _dt.datetime.fromisoformat(s + "T00:00:00"),
+        lambda s: _dt.datetime.strptime(s, "%Y-%m-%d"),
+    ):
+        try:
+            return parser(candidate).isoformat()
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 class StaticMemoryFileEdgeClassifierClient:

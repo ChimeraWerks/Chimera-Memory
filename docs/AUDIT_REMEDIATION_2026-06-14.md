@@ -72,6 +72,11 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 - [x] se-01: hybrid_search FTS channel honors entry_types.
 - [x] ec-02: worker submit validates status (no raw ValueError leak).
 - [x] pc-02: provider credential-ref regex aligned with the resolver.
+- [x] ec-04: dry_run short-circuits the provider sidecar (no network on the floor).
+- [x] cm-ent-006: edge dates normalized to ISO before temporal comparison.
+- [x] pc-05: enhancement request never egresses an absolute source path.
+- [x] wcp-04: auto-capture credential gate scans raw inputs (regression test).
+- [x] imp-03: ChatGPT import credential gate scans the raw conversation.
 
 ## Remaining (Medium/Low) — tracked follow-up
 

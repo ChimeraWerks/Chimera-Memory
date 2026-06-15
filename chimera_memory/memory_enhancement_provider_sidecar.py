@@ -111,6 +111,13 @@ class ResolvingMemoryEnhancementProviderClient:
         deadline = _deadline_from_invocation(invocation)
         provider = _provider(invocation)
         provider_id = provider["provider_id"]
+        if provider_id == "dry_run":
+            # dry_run is the no-provider local floor: never resolve credentials or
+            # make a network call from the provider sidecar (ec-04). Mirrors the
+            # model client's local short-circuit.
+            from .memory_enhancement_sidecar import build_dry_run_sidecar_response
+
+            return build_dry_run_sidecar_response(invocation)["metadata"]
         credential_ref = _credential_ref(provider)
         if not credential_ref:
             return _invoke_api_key_client_with_deadline(

@@ -174,7 +174,12 @@ def build_chatgpt_import_plans(
             created=created,
             messages=messages,
         )
-        findings, blocking_findings = _safe_findings(body)
+        # Scan the RAW conversation for the blocking decision: the rendered body
+        # is built from sanitized messages, so credential patterns are already
+        # redacted and the credential gate would never fire (imp-03). Display
+        # findings still come from the stored (sanitized) body.
+        _, blocking_findings = _safe_findings(json.dumps(conversation, ensure_ascii=False))
+        findings, _ = _safe_findings(body)
         slug = _slugify(title)
         date_prefix = created[:10].replace("-", "")
         id_suffix = uuid.uuid5(uuid.NAMESPACE_URL, conversation_id).hex[:10]
