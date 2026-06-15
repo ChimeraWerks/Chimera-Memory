@@ -299,46 +299,110 @@ def upsert_memory_entity_edge(
     decay_weight: float | None = None,
     classifier_version: str = "",
     metadata: object | None = None,
+    evidence_key: object | None = None,
     commit: bool = True,
 ) -> dict:
-    """Create or reinforce a typed relation between two entities."""
+    """Create or reinforce a typed relation between two entities.
+
+    When ``evidence_key`` is supplied (e.g. a file id) the edge becomes
+    idempotent per contributor: support_count is the number of DISTINCT keys and
+    metadata is merged, not overwritten. Without it, every call bumps
+    support_count (legacy behavior). This stops co-occurrence support_count from
+    inflating and losing provenance on re-enhancement (cm-ent-002).
+    """
     if source_entity_id == target_entity_id:
         raise ValueError("source and target entities must differ")
     clean_relation = normalize_entity_name(relation_type or "related_to").replace(" ", "_")
     clean_confidence = float(confidence if confidence is not None else 1.0)
     clean_decay = float(decay_weight if decay_weight is not None else 1.0)
     edge_id = str(uuid.uuid4())
-    conn.execute(
-        """
-        INSERT INTO memory_entity_edges (
-            edge_id, source_entity_id, target_entity_id, relation_type,
-            confidence, support_count, valid_from, valid_until,
-            decay_weight, classifier_version, metadata
-        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-        ON CONFLICT(source_entity_id, target_entity_id, relation_type) DO UPDATE SET
-            confidence = MAX(COALESCE(confidence, 0), excluded.confidence),
-            support_count = support_count + 1,
-            valid_until = CASE
-                WHEN excluded.valid_until IS NULL OR excluded.valid_until = '' THEN valid_until
-                ELSE excluded.valid_until
-            END,
-            decay_weight = excluded.decay_weight,
-            classifier_version = excluded.classifier_version,
-            metadata = excluded.metadata
-        """,
-        (
-            edge_id,
-            source_entity_id,
-            target_entity_id,
-            clean_relation,
-            clean_confidence,
-            valid_from or "",
-            valid_until or "",
-            clean_decay,
-            classifier_version or "",
-            _json_text(metadata),
-        ),
-    )
+    if evidence_key is not None:
+        existing = conn.execute(
+            "SELECT metadata FROM memory_entity_edges "
+            "WHERE source_entity_id = ? AND target_entity_id = ? AND relation_type = ?",
+            (source_entity_id, target_entity_id, clean_relation),
+        ).fetchone()
+        merged_meta: dict = dict(metadata) if isinstance(metadata, dict) else {}
+        contributors: set[str] = set()
+        if existing is not None:
+            try:
+                prev_meta = json.loads(existing[0] or "{}")
+            except (TypeError, ValueError):
+                prev_meta = {}
+            if isinstance(prev_meta, dict):
+                for key, value in prev_meta.items():
+                    merged_meta.setdefault(key, value)
+                prev_keys = prev_meta.get("evidence_keys")
+                if isinstance(prev_keys, list):
+                    contributors = {str(k) for k in prev_keys}
+        contributors.add(str(evidence_key))
+        merged_meta["evidence_keys"] = sorted(contributors)
+        merged_meta.pop("file_id", None)  # superseded by evidence_keys
+        new_support = len(contributors)
+        conn.execute(
+            """
+            INSERT INTO memory_entity_edges (
+                edge_id, source_entity_id, target_entity_id, relation_type,
+                confidence, support_count, valid_from, valid_until,
+                decay_weight, classifier_version, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_entity_id, target_entity_id, relation_type) DO UPDATE SET
+                confidence = MAX(COALESCE(confidence, 0), excluded.confidence),
+                support_count = excluded.support_count,
+                valid_until = CASE
+                    WHEN excluded.valid_until IS NULL OR excluded.valid_until = '' THEN valid_until
+                    ELSE excluded.valid_until
+                END,
+                decay_weight = excluded.decay_weight,
+                classifier_version = excluded.classifier_version,
+                metadata = excluded.metadata
+            """,
+            (
+                edge_id,
+                source_entity_id,
+                target_entity_id,
+                clean_relation,
+                clean_confidence,
+                new_support,
+                valid_from or "",
+                valid_until or "",
+                clean_decay,
+                classifier_version or "",
+                _json_text(merged_meta),
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO memory_entity_edges (
+                edge_id, source_entity_id, target_entity_id, relation_type,
+                confidence, support_count, valid_from, valid_until,
+                decay_weight, classifier_version, metadata
+            ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_entity_id, target_entity_id, relation_type) DO UPDATE SET
+                confidence = MAX(COALESCE(confidence, 0), excluded.confidence),
+                support_count = support_count + 1,
+                valid_until = CASE
+                    WHEN excluded.valid_until IS NULL OR excluded.valid_until = '' THEN valid_until
+                    ELSE excluded.valid_until
+                END,
+                decay_weight = excluded.decay_weight,
+                classifier_version = excluded.classifier_version,
+                metadata = excluded.metadata
+            """,
+            (
+                edge_id,
+                source_entity_id,
+                target_entity_id,
+                clean_relation,
+                clean_confidence,
+                valid_from or "",
+                valid_until or "",
+                clean_decay,
+                classifier_version or "",
+                _json_text(metadata),
+            ),
+        )
     if commit:
         conn.commit()
     row = conn.execute(
@@ -871,7 +935,10 @@ def apply_enhancement_entities(
             relation_type="co_occurs_with",
             confidence=confidence_value,
             classifier_version="memory_enhancement.v2",
-            metadata={"file_id": file_id, "source": source},
+            metadata={"source": source},
+            # Idempotent per source file: re-enhancement must not inflate
+            # support_count or drop prior contributors (cm-ent-002).
+            evidence_key=file_id,
             commit=False,
         )
         edge_count += 1

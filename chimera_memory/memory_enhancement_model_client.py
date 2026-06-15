@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -44,6 +46,8 @@ class ProviderModelMemoryEnhancementClient:
     """Invoke the selected provider and return normalized metadata."""
 
     _CALL_COUNT = 0
+    _WINDOW_START = 0.0
+    _CALL_LOCK = threading.Lock()
 
     def __init__(
         self,
@@ -78,7 +82,9 @@ class ProviderModelMemoryEnhancementClient:
     @classmethod
     def reset_call_count(cls) -> None:
         """Reset the process-local call counter for tests and one-shot harnesses."""
-        cls._CALL_COUNT = 0
+        with cls._CALL_LOCK:
+            cls._CALL_COUNT = 0
+            cls._WINDOW_START = 0.0
 
     @classmethod
     def _max_calls(cls) -> int:
@@ -88,14 +94,40 @@ class ProviderModelMemoryEnhancementClient:
             return _DEFAULT_MAX_CALLS
 
     @classmethod
+    def _window_seconds(cls) -> float:
+        try:
+            return max(0.0, float(os.environ.get("CHIMERA_MEMORY_ENHANCEMENT_MAX_CALLS_WINDOW_SECONDS", "3600")))
+        except (TypeError, ValueError):
+            return 3600.0
+
+    @classmethod
+    def _maybe_reset_window(cls) -> None:
+        # The cap is a burst guard, not a lifetime limit. Reset the counter once
+        # the rolling window elapses so a long-lived serve process is not
+        # permanently locked out of enhancement after the first burst (pc-03).
+        window = cls._window_seconds()
+        if window <= 0:
+            return
+        now = time.monotonic()
+        if cls._WINDOW_START == 0.0 or (now - cls._WINDOW_START) >= window:
+            cls._WINDOW_START = now
+            cls._CALL_COUNT = 0
+
+    @classmethod
     def _check_call_cap(cls) -> None:
-        max_calls = cls._max_calls()
-        if cls._CALL_COUNT >= max_calls:
-            raise MemoryEnhancementCostCapError(f"memory enhancement cost cap reached: {cls._CALL_COUNT} calls")
+        with cls._CALL_LOCK:
+            cls._maybe_reset_window()
+            max_calls = cls._max_calls()
+            # max_calls == 0 means block all (matches historical semantics).
+            if cls._CALL_COUNT >= max_calls:
+                raise MemoryEnhancementCostCapError(f"memory enhancement cost cap reached: {cls._CALL_COUNT} calls")
 
     @classmethod
     def _increment_call_count(cls) -> None:
-        cls._CALL_COUNT += 1
+        with cls._CALL_LOCK:
+            if cls._WINDOW_START == 0.0:
+                cls._WINDOW_START = time.monotonic()
+            cls._CALL_COUNT += 1
 
     def _invoke_openai(self, invocation: Mapping[str, Any], provider: Mapping[str, str]) -> Mapping[str, Any]:
         _require_bearer_token(self.bearer_token)

@@ -269,3 +269,30 @@ def test_apply_enhancement_entities_links_typed_contract_entities(tmp_path: Path
     assert len(typed_edges) == 1
     assert typed_edges[0]["target"]["canonical_name"] == "Anthropic adapter"
     assert typed_edges[0]["confidence"] == 0.85
+
+
+def test_entity_edge_evidence_keyed_is_idempotent_per_contributor() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    a = upsert_memory_entity(conn, entity_type="project", canonical_name="Chimera")
+    b = upsert_memory_entity(conn, entity_type="tool", canonical_name="Codex")
+
+    # Same file re-enhanced twice must NOT inflate support_count (cm-ent-002).
+    e1 = upsert_memory_entity_edge(
+        conn, source_entity_id=int(a["id"]), target_entity_id=int(b["id"]),
+        relation_type="co_occurs_with", evidence_key=101,
+    )
+    e2 = upsert_memory_entity_edge(
+        conn, source_entity_id=int(a["id"]), target_entity_id=int(b["id"]),
+        relation_type="co_occurs_with", evidence_key=101,
+    )
+    assert e1["support_count"] == 1
+    assert e2["support_count"] == 1  # idempotent
+
+    # A different contributing file increments to 2 and preserves both.
+    e3 = upsert_memory_entity_edge(
+        conn, source_entity_id=int(a["id"]), target_entity_id=int(b["id"]),
+        relation_type="co_occurs_with", evidence_key=202,
+    )
+    assert e3["support_count"] == 2
+    assert set(e3["metadata"]["evidence_keys"]) == {"101", "202"}

@@ -968,6 +968,29 @@ def _discover_root_markdown_files(root: Path) -> list[tuple[str, Path]]:
     return sorted(files, key=lambda item: item[0])
 
 
+def _file_is_present_or_uncertain(path: Path) -> bool:
+    """Conservative presence check used to gate pruning.
+
+    Returns True if the file exists OR if we cannot confidently confirm it is
+    genuinely gone. Only a listable parent directory that does not contain the
+    file counts as a real absence; a missing/inaccessible parent (network blip,
+    permission hiccup) is transient and must NOT trigger a prune (gsr-11).
+    """
+    try:
+        if path.exists():
+            return True
+        parent = path.parent
+        if not parent.exists() or not parent.is_dir():
+            return True  # parent gone/inaccessible -> cannot confirm absence
+        try:
+            next(parent.iterdir(), None)  # parent is listable
+        except OSError:
+            return True  # parent not listable -> transient, keep
+        return False  # parent listable and file absent -> genuinely removed
+    except OSError:
+        return True  # any FS error -> conservative keep
+
+
 def _global_indexed_rows_under_root(db_path: Path, root: Path) -> list[dict[str, Any]]:
     if not db_path.exists():
         return []
@@ -999,7 +1022,9 @@ def _global_indexed_rows_under_root(db_path: Path, root: Path) -> list[dict[str,
                 "id": int(file_id),
                 "path": str(resolved),
                 "relative_path": root_relative,
-                "exists": resolved.exists(),
+                # Conservative: only confidently-absent files are prune
+                # candidates; transiently-missing ones are kept (gsr-11).
+                "exists": _file_is_present_or_uncertain(resolved),
             }
         )
     return sorted(result, key=lambda row: str(row["relative_path"]))
