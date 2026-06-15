@@ -167,12 +167,20 @@ def _clean_provider_id(value: object) -> str:
 
 def parse_provider_order(raw: str | None) -> tuple[str, ...]:
     """Parse provider order and drop unknown or duplicate entries."""
+    text = str(raw or "").strip()
     order: list[str] = []
-    for item in str(raw or "").split(","):
+    for item in text.split(","):
         provider_id = _clean_provider_id(item)
         if provider_id in PROVIDER_IDS and provider_id not in order:
             order.append(provider_id)
-    return tuple(order or DEFAULT_PROVIDER_ORDER)
+    if order:
+        return tuple(order)
+    if not text:
+        return DEFAULT_PROVIDER_ORDER
+    # A non-empty order that resolves to zero known providers (all typos/
+    # unaliased ids) must not silently revert to the network-first default, which
+    # contradicts local-first intent; fall back to local-only order (pc-10).
+    return tuple(pid for pid in DEFAULT_PROVIDER_ORDER if pid in LOCAL_PROVIDERS)
 
 
 def _provider_affinity(env: Mapping[str, str]) -> str:

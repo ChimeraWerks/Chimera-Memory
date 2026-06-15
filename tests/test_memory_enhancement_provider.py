@@ -24,6 +24,14 @@ def test_parse_provider_order_keeps_known_unique_order() -> None:
     assert parse_provider_order("") == DEFAULT_PROVIDER_ORDER
 
 
+def test_parse_provider_order_all_invalid_falls_back_local_only() -> None:
+    # pc-10: a non-empty order resolving to zero known providers must not revert
+    # to the network-first default; it falls back to local-only (dry_run last).
+    result = parse_provider_order("ollamaa,local-only,typo")
+    assert result == ("ollama", "lmstudio", "dry_run")
+    assert "openai" not in result
+
+
 def test_resolve_provider_plan_selects_first_configured_credential_ref() -> None:
     plan = resolve_enhancement_provider_plan(
         {

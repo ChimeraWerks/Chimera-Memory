@@ -180,6 +180,27 @@ def test_http_client_rejects_non_ok_response_with_code_only() -> None:
     assert "captured content" not in message
 
 
+def test_http_client_non_ok_response_normalizes_hostile_code() -> None:
+    # pc-07: a 200-status non-ok body whose code carries arbitrary text (path
+    # fragment) must be normalized to unknown_error, not interpolated raw.
+    opener = _FakeOpener(
+        {
+            "schema_version": ENHANCEMENT_SCHEMA_VERSION,
+            "status": "error",
+            "metadata": {},
+            "error": {"code": "C:/Users/charl/secret leaked here"},
+        }
+    )
+    client = MemoryEnhancementHttpClient("http://127.0.0.1:8944/enhance", opener=opener)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client.invoke({"request": {"wrapped_content": "x"}})
+
+    message = str(exc_info.value)
+    assert "unknown_error" in message
+    assert "C:/Users/charl" not in message
+
+
 def test_http_client_rejects_missing_metadata() -> None:
     client = MemoryEnhancementHttpClient(
         "http://127.0.0.1:8944/enhance",

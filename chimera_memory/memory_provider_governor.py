@@ -46,7 +46,16 @@ def provider_governor_check(
     transport: str = "",
     worker_id: str = "",
 ) -> dict:
-    """Check whether a provider-backed memory call is currently allowed."""
+    """Check whether a provider-backed memory call is currently allowed.
+
+    Hard-cap enforcement (monthly_hard_call_cap) assumes a single concurrent
+    runner/thread per provider. This check and the matching insert in
+    provider_usage_record are separate operations with no spanning transaction or
+    reservation row, so concurrent runners can each read a sub-cap count and both
+    record, overshooting the cap by up to the number of concurrent callers.
+    Overshoot is bounded and the defaults are large (100k/month); serialize
+    provider calls through a single runner if a strict cap is required (pc-09).
+    """
     provider = _clean(provider, max_chars=80)
     transport = _clean(transport, max_chars=80)
     worker_id = _clean(worker_id)

@@ -17,7 +17,8 @@ from typing import Any
 
 from .memory_enhancement import ENHANCEMENT_SCHEMA_VERSION
 
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Include TAB/LF/CR so CR/LF can't reach request headers (pc-06).
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _STATUS_OK = {"ok", "partial"}
 
 
@@ -108,7 +109,12 @@ def _metadata_from_response(raw_body: bytes) -> Mapping[str, Any]:
     status = str(payload.get("status") or "").strip().lower()
     if status not in _STATUS_OK:
         error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
-        code = str(error.get("code") or "unknown_error").strip()[:80]
+        # Validate the code with the same strict regex as the HTTPError path so a
+        # buggy/hostile sidecar can't inject up to 80 chars of arbitrary text
+        # (path fragment, provider stderr) into the raised message (pc-07).
+        code = str(error.get("code") or "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", code):
+            code = "unknown_error"
         raise RuntimeError(f"memory enhancement sidecar rejected request: {code}")
 
     metadata = payload.get("metadata")

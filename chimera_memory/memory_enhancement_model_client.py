@@ -30,7 +30,8 @@ OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/comple
 OLLAMA_DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
 LMSTUDIO_DEFAULT_ENDPOINT = "http://127.0.0.1:1234/v1"
 
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Include TAB/LF/CR so CR/LF can't reach request headers (pc-06).
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(?P<body>.*?)\s*```\s*$", re.IGNORECASE | re.DOTALL)
 _ANY_FENCE_RE = re.compile(r"```(?:json)?\s*(?P<body>.*?)\s*```", re.IGNORECASE | re.DOTALL)
 _LEADING_THINK_RE = re.compile(r"^\s*<think>.*?</think>\s*", re.IGNORECASE | re.DOTALL)

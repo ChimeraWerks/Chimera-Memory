@@ -86,3 +86,13 @@ def test_resolved_credential_validates_before_safe_serialization():
 
     with pytest.raises(ProtocolValidationError, match="control"):
         resolved.to_safe_dict()
+
+
+def test_resolved_credential_rejects_crlf_value():
+    # pc-06: CR/LF/TAB in a credential value must be rejected so it can't reach
+    # Authorization/x-api-key headers and raise an unfiltered http.client error.
+    ref = parse_memory_enhancement_credential_ref("secret:memory_sidecar")
+    resolved = ResolvedMemoryEnhancementCredential(ref=ref, value="abc\r\ndef", source="test")
+
+    with pytest.raises(ProtocolValidationError, match="control"):
+        resolved.to_safe_dict()

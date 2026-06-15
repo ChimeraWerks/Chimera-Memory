@@ -18,7 +18,10 @@ MAX_CREDENTIAL_VALUE_CHARS = 16_384
 
 _CREDENTIAL_REF_RE = re.compile(r"^(?P<scheme>oauth|secret|env):(?P<name>[A-Za-z_][A-Za-z0-9_.:\-]{0,119})$")
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,119}$")
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Reject ALL C0 control chars plus DEL, including TAB/LF/CR — a credential/bearer
+# value carrying CR/LF would otherwise reach Authorization/x-api-key headers and
+# raise an unfiltered http.client ValueError (pc-06).
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class ProtocolValidationError(_ProtocolValidationBase):

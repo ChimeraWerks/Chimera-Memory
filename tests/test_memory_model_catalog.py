@@ -6,6 +6,8 @@ from pathlib import Path
 
 from chimera_memory.memory_enhancement_provider import resolve_enhancement_provider_plan
 from chimera_memory.memory_model_catalog import (
+    DISK_CACHE_TTL_SECONDS,
+    _load_bundled_snapshot,
     default_memory_enhancement_model,
     load_model_catalog,
     provider_info,
@@ -141,6 +143,23 @@ def test_load_model_catalog_uses_fresh_disk_without_network(tmp_path: Path) -> N
     )
 
     assert provider_info("openai", catalog=data).model_count == 5
+
+
+def test_load_model_catalog_stale_disk_serves_bundled_snapshot(tmp_path: Path) -> None:
+    # pc-04: a disk cache older than DISK_CACHE_TTL_SECONDS must NOT be served as
+    # if fresh after a failed fetch; it falls through to the bundled snapshot.
+    reset_model_catalog_cache()
+    cache_path = tmp_path / "models-dev.json"
+    cache_path.write_text(json.dumps(_catalog()), encoding="utf-8")
+    os.utime(cache_path, (1000.0, 1000.0))
+
+    data = load_model_catalog(
+        cache_path=cache_path,
+        fetcher=lambda: None,  # failed/invalid network fetch
+        now=1000.0 + DISK_CACHE_TTL_SECONDS + 10,
+    )
+
+    assert data == _load_bundled_snapshot()
 
 
 def test_recommended_models_filter_for_memory_enhancement() -> None:

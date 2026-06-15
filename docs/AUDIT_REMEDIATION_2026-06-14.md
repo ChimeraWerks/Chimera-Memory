@@ -226,6 +226,15 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       to paste mode (single flow-state write); Gemini callback handler is per-flow
       (no shared class-state race). Tests: `test_memory_enhancement_oauth_flow.py`.
       (oauth-02, oauth-08, oauth-11 won't-fix above.)
+- [x] pc-04, pc-06, pc-07, pc-09, pc-10 — model-catalog stale-beyond-24h disk
+      cache now falls through to the bundled snapshot (dead TTL branch removed);
+      credential/bearer control-char validators reject TAB/LF/CR across all three
+      provider modules; the sidecar 200-status non-ok error code is regex-validated
+      (no raw text injection); the governor's TOCTOU concurrency assumption is
+      documented; an all-invalid provider-order config falls back to local-only
+      instead of the network-first default. Tests: `test_memory_model_catalog.py`,
+      `test_memory_enhancement_{provider,http_client,credentials}.py`.
+      (pc-08 already-fixed above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

@@ -164,12 +164,11 @@ def load_model_catalog(
         _MODEL_CATALOG_CACHE_TIME = current_time
         return data
 
+    # Stale-beyond-TTL disk caches fall through to the bundled snapshot rather
+    # than being served as if fresh; this bounds offline drift to
+    # DISK_CACHE_TTL_SECONDS. The second branch used to be byte-identical to the
+    # first, making the 24h bound a no-op (pc-04).
     if disk_data is not None and disk_within_ttl:
-        _MODEL_CATALOG_CACHE = disk_data
-        _MODEL_CATALOG_CACHE_TIME = current_time
-        return disk_data
-
-    if disk_data is not None:
         _MODEL_CATALOG_CACHE = disk_data
         _MODEL_CATALOG_CACHE_TIME = current_time
         return disk_data
