@@ -83,9 +83,9 @@ def _load_conversations_json(export_path: Path) -> list[dict]:
             if not names:
                 raise ValueError("zip export does not contain conversations.json")
             with archive.open(names[0]) as handle:
-                payload = json.loads(handle.read().decode("utf-8"))
+                payload = json.loads(handle.read().decode("utf-8", errors="replace"))
     else:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     if not isinstance(payload, list):
         raise ValueError("conversations.json must contain a list")
     return [item for item in payload if isinstance(item, dict)]

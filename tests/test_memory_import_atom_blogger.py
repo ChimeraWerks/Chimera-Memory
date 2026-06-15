@@ -33,6 +33,25 @@ def _personas_dir(tmp_path: Path) -> Path:
     return personas
 
 
+def test_atom_blogger_import_skips_doctype_bearing_xml(tmp_path: Path) -> None:
+    # imp-08: a DTD-bearing export (billion-laughs vector) is dropped like a
+    # parse error instead of being parsed by stdlib expat.
+    bomb = (
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE feed [<!ENTITY a "AAAA"><!ENTITY b "&a;&a;&a;">]>\n'
+        '<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>&b;</title>'
+        "<content>&b;</content></entry></feed>\n"
+    )
+    export_file = tmp_path / "bomb.xml"
+    export_file.write_text(bomb, encoding="utf-8")
+
+    result = build_atom_blogger_import_plans(export_file, persona="asa")
+
+    assert result["ok"] is True
+    assert result["document_count"] == 0
+    assert result["plan_count"] == 0
+
+
 def test_atom_blogger_import_plans_from_xml_file(tmp_path: Path) -> None:
     export_file = tmp_path / "blog.xml"
     export_file.write_text(ATOM_EXPORT, encoding="utf-8")

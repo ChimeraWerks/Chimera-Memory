@@ -255,7 +255,7 @@ def _iter_twitter_documents(import_path: Path) -> list[dict]:
             if any(part in _SKIP_DIRS or part.startswith(".") for part in rel.split("/")):
                 continue
             documents.extend(_documents_from_raw(rel, file_path.read_text(encoding="utf-8", errors="replace"), _created_from_mtime(file_path)))
-    elif path.is_file() and path.suffix.lower() in _SUPPORTED_SUFFIXES:
+    elif path.is_file() and path.suffix.lower() in _SUPPORTED_SUFFIXES and _looks_like_tweet_export(path.name):
         documents.extend(_documents_from_raw(path.name, path.read_text(encoding="utf-8", errors="replace"), _created_from_mtime(path)))
     else:
         raise ValueError("X/Twitter import path must be a supported file, directory, or zip export")

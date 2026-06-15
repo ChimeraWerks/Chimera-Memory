@@ -203,10 +203,20 @@ def build_obsidian_import_plans(
             continue
         title = _title_from_note(source_rel, frontmatter, body)
         tags = _json_list(frontmatter.get("tags"))
+        # Prefer authored frontmatter dates over filesystem mtime/zip stamps:
+        # copying/syncing a vault resets mtime, and zip date_time is naive local
+        # time mis-stamped as UTC, so the mtime fallback produces wrong chronology
+        # (imp-10). Mirrors memory_import_grok.py's created-resolution order.
+        created = str(
+            frontmatter.get("created")
+            or frontmatter.get("date")
+            or note.get("created")
+            or _utc_now()
+        ).strip()
         rendered = render_obsidian_import_markdown(
             title=title,
             source_rel=source_rel,
-            created=str(note.get("created") or _utc_now()),
+            created=created,
             tags=tags,
             body=body,
         )
@@ -222,7 +232,7 @@ def build_obsidian_import_plans(
                 "source_path": source_rel,
                 "source_id": source_hash,
                 "title": title,
-                "created": str(note.get("created") or ""),
+                "created": created,
                 "relative_path": relative_path,
                 "tags": tags,
                 "guard_findings": findings,

@@ -201,6 +201,13 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       fresh account can't stall the worker ~60s. Tests: new
       `test_hermes_cloudcode_adapter.py`, `test_hermes_code_assist.py`,
       `test_memory_enhancement_oauth_flow.py`.
+- [x] imp-07, imp-08, imp-09, imp-10, imp-12 — Twitter single-file mode gates on
+      the tweet-shape filter (no mis-importing a stray `.txt`); Atom/Blogger skips
+      DTD-bearing XML (stdlib DOCTYPE guard, no `defusedxml` dep) to avoid
+      entity-expansion; ChatGPT decodes with `errors='replace'` (parity with the
+      other importers); Obsidian prefers authored frontmatter dates over mtime;
+      Instagram thread `source_id` hashes the full body (no 1000-char collision).
+      Tests across `test_memory_import_{twitter,atom_blogger,obsidian,instagram}.py`.
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

@@ -40,6 +40,24 @@ def _write_vault(tmp_path: Path) -> Path:
     return vault
 
 
+def test_obsidian_import_prefers_frontmatter_created_over_mtime(tmp_path: Path) -> None:
+    # imp-10: an authored frontmatter date wins over the filesystem mtime, which
+    # is reset by vault copy/sync and would mis-date the memory.
+    vault = tmp_path / "vault"
+    (vault / "Notes").mkdir(parents=True)
+    (vault / "Notes" / "Dated.md").write_text(
+        "\n".join(
+            ["---", 'created: "2024-01-02T03:04:05Z"', "tags: [memory]", "---", "Dated note body."]
+        ),
+        encoding="utf-8",
+    )
+
+    result = build_obsidian_import_plans(vault, persona="asa")
+
+    assert result["ok"] is True
+    assert result["plans"][0]["created"] == "2024-01-02T03:04:05Z"
+
+
 def test_obsidian_import_plans_from_vault_directory(tmp_path: Path) -> None:
     vault = _write_vault(tmp_path)
 

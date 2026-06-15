@@ -135,7 +135,7 @@ def _message_thread_document(source_rel: str, value: dict, created: str) -> dict
         title = "Instagram conversation with " + ", ".join(participants[:3])
     return {
         "source_path": source_rel,
-        "source_id": _hash_text(f"{source_rel}\n{body[:1000]}"),
+        "source_id": _hash_text(f"{source_rel}\n{body}"),
         "title": title,
         "created": first_created,
         "body": body,

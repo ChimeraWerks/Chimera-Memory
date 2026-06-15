@@ -22,6 +22,7 @@ ATOM_BLOGGER_TEXT_CHAR_LIMIT = 30000
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_DOCTYPE_RE = re.compile(r"<!DOCTYPE", re.IGNORECASE)
 _BLOCKING_FINDING_TYPES = {"credential"}
 _SUPPORTED_SUFFIXES = {".xml", ".atom"}
 _SKIP_DIRS = {".git", "__pycache__", "node_modules"}
@@ -160,6 +161,12 @@ def _entry_to_document(source_rel: str, entry: ElementTree.Element, ordinal: int
 
 
 def _documents_from_raw(source_rel: str, raw: str, created: str) -> list[dict]:
+    # Skip any DTD-bearing export: internal entity declarations enable
+    # billion-laughs expansion via stdlib expat, and legitimate Atom/Blogger
+    # exports never carry a DOCTYPE. Drop it like a ParseError rather than add a
+    # defusedxml dependency, since these files can come from untrusted zips (imp-08).
+    if _DOCTYPE_RE.search(raw):
+        return []
     try:
         root = ElementTree.fromstring(raw)
     except ElementTree.ParseError:

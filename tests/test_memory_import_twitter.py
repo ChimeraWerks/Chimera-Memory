@@ -49,6 +49,17 @@ def _write_export_dir(tmp_path: Path) -> Path:
     return root
 
 
+def test_twitter_import_rejects_stray_non_tweet_file(tmp_path: Path) -> None:
+    # imp-07: a single file whose name doesn't look like a tweet export must not
+    # be ingested as a tweet (parity with the zip/dir tweet-shape gating).
+    notes = tmp_path / "notes.txt"
+    notes.write_text("unrelated notes, nothing to do with tweets", encoding="utf-8")
+
+    result = build_twitter_import_plans(notes, persona="asa")
+
+    assert result["ok"] is False
+
+
 def test_twitter_import_plans_from_archive_directory(tmp_path: Path) -> None:
     export_dir = _write_export_dir(tmp_path)
 

@@ -9,7 +9,27 @@ from chimera_memory.memory import (
     memory_import_instagram_export,
     memory_pyramid_summary_query,
 )
-from chimera_memory.memory_import_instagram import build_instagram_import_plans
+from chimera_memory.memory_import_instagram import build_instagram_import_plans, _message_thread_document
+
+
+def test_instagram_thread_source_id_uses_full_body() -> None:
+    # imp-12: two threads under the same source path whose bodies match for the
+    # first 1000 chars but diverge after must get distinct source_ids (the old
+    # body[:1000] hash collided them).
+    def _value(tail: str) -> dict:
+        return {
+            "participants": [{"name": "Charles"}, {"name": "Asa"}],
+            "messages": [
+                {"sender_name": "Charles", "timestamp_ms": 1_778_800_000_000, "content": "X" * 1100},
+                {"sender_name": "Asa", "timestamp_ms": 1_778_800_001_000, "content": tail},
+            ],
+        }
+
+    src = "inbox/thread_1/message_1.json"
+    a = _message_thread_document(src, _value("ALPHA tail"), "2026-01-01T00:00:00Z")
+    b = _message_thread_document(src, _value("BETA tail"), "2026-01-01T00:00:00Z")
+
+    assert a["source_id"] != b["source_id"]
 
 
 def _personas_dir(tmp_path: Path) -> Path:
