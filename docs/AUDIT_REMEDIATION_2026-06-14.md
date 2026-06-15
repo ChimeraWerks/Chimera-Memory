@@ -173,6 +173,10 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       empty-provider worker budget gate resolves the configured provider (ec-09);
       file_id-less authored enqueue dedupes on fingerprint (ec-10). Tests in
       `test_memory_enhancement_{queue,runner}.py` (5 new + 1 updated).
+- [x] cm-ent-004, cm-ent-005, cm-ent-007 — `memory_entity_edge_query` excludes
+      expired edges by default (`current_only`); override map no longer renames a
+      person whose name matches a short override key (person 'Pa' stays 'Pa');
+      orphan-entity GC drops co-occurrence-only ghosts. Tests: `test_memory_entities.py`.
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

@@ -14,6 +14,7 @@ from chimera_memory.memory import (
     upsert_memory_entity,
     upsert_memory_entity_edge,
 )
+from chimera_memory.memory_entities import _canonical_index_entity
 
 
 def _write_memory(path: Path, frontmatter: list[str], body: str) -> None:
@@ -296,3 +297,56 @@ def test_entity_edge_evidence_keyed_is_idempotent_per_contributor() -> None:
     )
     assert e3["support_count"] == 2
     assert set(e3["metadata"]["evidence_keys"]) == {"101", "202"}
+
+
+def test_canonical_index_entity_keeps_person_named_like_override_key() -> None:
+    # cm-ent-005: a person literally named 'Pa' must not be renamed to the
+    # PersonifyAgents project canonical; the raw name is kept.
+    assert _canonical_index_entity("person", "Pa") == ("person", "Pa")
+    # The bare legacy tag path (topic) still canonicalizes to the project.
+    assert _canonical_index_entity("topic", "pa") == ("project", "PersonifyAgents")
+
+
+def test_entity_edge_query_excludes_expired_edges_by_default() -> None:
+    # cm-ent-004: an edge with a non-empty valid_until is excluded unless the
+    # caller asks for all edges via current_only=False.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    source = upsert_memory_entity(conn, entity_type="project", canonical_name="Chimera")
+    target = upsert_memory_entity(conn, entity_type="tool", canonical_name="Codex")
+    edge = upsert_memory_entity_edge(
+        conn,
+        source_entity_id=int(source["id"]),
+        target_entity_id=int(target["id"]),
+        relation_type="uses",
+        valid_until="2000-01-01T00:00:00Z",
+    )
+
+    assert memory_entity_edge_query(conn, entity_name="Chimera") == []
+    all_edges = memory_entity_edge_query(conn, entity_name="Chimera", current_only=False)
+    assert [e["edge_id"] for e in all_edges] == [edge["edge_id"]]
+
+
+def test_entity_index_gcs_ghost_anchored_only_by_co_occurrence() -> None:
+    # cm-ent-007: an entity with no file links must not stay alive solely via a
+    # stale co_occurs_with edge; the edge and both ghosts are GC'd.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    a = upsert_memory_entity(conn, entity_type="project", canonical_name="GhostA")
+    b = upsert_memory_entity(conn, entity_type="tool", canonical_name="GhostB")
+    upsert_memory_entity_edge(
+        conn,
+        source_entity_id=int(a["id"]),
+        target_entity_id=int(b["id"]),
+        relation_type="co_occurs_with",
+        evidence_key=1,
+    )
+
+    memory_entity_index(conn)
+
+    remaining = conn.execute("SELECT COUNT(*) FROM memory_entities").fetchone()[0]
+    edges = conn.execute(
+        "SELECT COUNT(*) FROM memory_entity_edges WHERE relation_type = 'co_occurs_with'"
+    ).fetchone()[0]
+    assert remaining == 0
+    assert edges == 0

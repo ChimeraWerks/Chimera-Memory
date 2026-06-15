@@ -458,7 +458,10 @@ def _canonical_index_entity(entity_type: str, name: str) -> tuple[str, str]:
     override_type, canonical = override
     if clean_type in {"topic", "unknown", "entity"} or clean_type == override_type:
         return override_type, canonical
-    return clean_type, canonical
+    # Override type disagrees with the detected concrete type (e.g. a person
+    # literally named 'Pa'): keep the raw name, do not borrow the override's
+    # canonical, which would mislabel the person as the project (cm-ent-005).
+    return clean_type, raw_name
 
 
 def _path_entity_name(relative_path: str) -> str:
@@ -616,6 +619,19 @@ def memory_entity_index(
     for file_id in file_ids:
         link_count += len(index_entities_for_memory_file(conn, file_id))
 
+    # co_occurs_with edges from prior enhancement are never temporally swept
+    # (cm-ent-004); without this, an entity that lost all file links stays
+    # anchored by stale co-occurrence and survives GC as a file_count=0 ghost
+    # (cm-ent-007). Drop co-occurrence edges whose endpoints are both unlinked
+    # first, then GC; self-contained so it does not rely on FK cascade.
+    conn.execute(
+        """
+        DELETE FROM memory_entity_edges
+        WHERE relation_type = 'co_occurs_with'
+          AND source_entity_id NOT IN (SELECT DISTINCT entity_id FROM memory_file_entities)
+          AND target_entity_id NOT IN (SELECT DISTINCT entity_id FROM memory_file_entities)
+        """
+    )
     conn.execute(
         """
         DELETE FROM memory_entities
@@ -749,10 +765,18 @@ def memory_entity_edge_query(
     *,
     entity_name: str | None = None,
     relation_type: str | None = None,
+    current_only: bool = True,
     limit: int = 50,
 ) -> list[dict]:
-    """Query explicit typed entity edges."""
+    """Query explicit typed entity edges.
+
+    current_only excludes edges with a non-empty valid_until, matching the
+    temporal contract honored by _gather_typed_edges and the
+    idx_memory_entity_edges_current partial index (cm-ent-004).
+    """
     conditions, params = [], []
+    if current_only:
+        conditions.append("(edge.valid_until IS NULL OR edge.valid_until = '')")
     if entity_name:
         normalized = normalize_entity_name(entity_name)
         conditions.append(
