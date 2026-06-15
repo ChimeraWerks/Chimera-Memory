@@ -77,14 +77,26 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 - [x] pc-05: enhancement request never egresses an absolute source path.
 - [x] wcp-04: auto-capture credential gate scans raw inputs (regression test).
 - [x] imp-03: ChatGPT import credential gate scans the raw conversation.
+- [x] ghh-04: memory_diagnose(health) no longer writes (repair) on a read.
+- [x] hermes-002: Gemini cloudcode adapter honors the caller timeout (post+stream).
 
 ## Remaining (Medium/Low) — tracked follow-up
 
-The remaining confirmed Medium/Low findings are in `.claude/audit-findings.json`,
-organized by the synthesis themes (data integrity: gsr-04/05/11, cm-ent-002;
-retrieval ranking: se-02, mfr-04; remaining codex-setup: codex-setup-2;
-concurrency/connection hygiene: cli-07, schema-db-01, hc-05, pc-03; dead-code/
-false-assurance gates: imp-03, wcp-04, se-03, ec-04; importer portability;
-UX/perf polish: ghh-04, se-06, smr-05, wsm-04). The Critical + all 16 High +
-13 Medium findings plus the full harness identification work are complete and
-tested (full suite green).
+The Critical + all 16 High + ~25 Medium findings plus the full harness
+identification work are complete and tested (full suite green). The remaining
+confirmed findings are in `.claude/audit-findings.json`, grouped by theme.
+
+Notable RISKY Mediums deferred (need new tests / careful restructure):
+- Data integrity: gsr-04/05/11 (global seed/review rollback + prune confirmation),
+  cm-ent-002 (co_occurs_with idempotency), schema-db-06 (NULL-content dedup),
+  mfr-04 (recall fingerprint dedup), schema-db-02 follow-ups.
+- Concurrency/connection hygiene: cli-07, schema-db-01 (db_split close),
+  hc-05/smr-07 (cached memory_conn cross-thread), pc-03 (per-process call cap).
+- Retrieval ranking: se-02 (_rerank discards RRF), mfr-03 (per-result commits).
+- Config/portability: codex-setup-2 (stale snake_case mcp_servers), gsr-03
+  (symlink escape), imp-05/06 (importer resource), oauth-04 (pool overwrite).
+- UX/perf taxonomy: se-06 (health 'not_built' state), smr-05/wsm-04 (prewarm),
+  ghh-* remaining redactions.
+
+se-03 (dead `consolidate_old_entries`): left in place — unreferenced, no runtime
+impact; flagged for deliberate removal in a dedicated cleanup, not bundled here.

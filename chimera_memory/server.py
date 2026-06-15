@@ -3714,6 +3714,9 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
                 collect_cm_health(
                     _get_memory_conn(),
                     persona=current_persona,
+                    # A diagnose read must not mutate the DB; the startup health
+                    # worker still repairs rollups on its own pass (ghh-04).
+                    repair_session_rollups=False,
                 )
             )
         if normalized_mode in {"consolidation", "consolidation_report"}:

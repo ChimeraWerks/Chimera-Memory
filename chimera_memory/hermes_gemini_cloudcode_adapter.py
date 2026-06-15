@@ -706,10 +706,15 @@ class GeminiCloudCodeClient:
         headers.update(self._default_headers)
 
         if stream:
-            return self._stream_completion(model=model, wrapped=wrapped, headers=headers)
+            return self._stream_completion(
+                model=model, wrapped=wrapped, headers=headers, timeout=timeout
+            )
 
         url = f"{CODE_ASSIST_ENDPOINT}/v1internal:generateContent"
-        response = self._http.post(url, json=wrapped, headers=headers)
+        # Honor the caller's deadline; omit the kwarg when None so httpx keeps its
+        # client default rather than disabling the timeout entirely (hermes-002).
+        timeout_kwargs = {} if timeout is None else {"timeout": timeout}
+        response = self._http.post(url, json=wrapped, headers=headers, **timeout_kwargs)
         if response.status_code != 200:
             raise _gemini_http_error(response)
         try:
@@ -727,15 +732,20 @@ class GeminiCloudCodeClient:
         model: str,
         wrapped: Dict[str, Any],
         headers: Dict[str, str],
+        timeout: Any = None,
     ) -> Iterator[_GeminiStreamChunk]:
         """Generator that yields OpenAI-shaped streaming chunks."""
         url = f"{CODE_ASSIST_ENDPOINT}/v1internal:streamGenerateContent?alt=sse"
         stream_headers = dict(headers)
         stream_headers["Accept"] = "text/event-stream"
+        # Omit when None so httpx keeps its client default (hermes-002).
+        timeout_kwargs = {} if timeout is None else {"timeout": timeout}
 
         def _generator() -> Iterator[_GeminiStreamChunk]:
             try:
-                with self._http.stream("POST", url, json=wrapped, headers=stream_headers) as response:
+                with self._http.stream(
+                    "POST", url, json=wrapped, headers=stream_headers, **timeout_kwargs
+                ) as response:
                     if response.status_code != 200:
                         # Materialize error body for better diagnostics
                         response.read()
