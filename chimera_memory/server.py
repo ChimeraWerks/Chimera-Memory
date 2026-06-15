@@ -433,10 +433,28 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
                 "",
                 lambda: super(ChimeraMemoryMCP, self).list_tools(),
             )
+            self._capture_mcp_client_hint()
             ready_callback = getattr(self, "_chimera_memory_ready_callback", None)
             if callable(ready_callback):
                 ready_callback()
             return tools
+
+        def _capture_mcp_client_hint(self):
+            # Feed the MCP client's self-reported name into harness detection as a
+            # weak signal below explicit env. Best-effort: the initialize handshake
+            # has happened by tools/list, but the accessor shape is version-bound,
+            # so never let a failure here disturb the request.
+            try:
+                from .harness import set_mcp_client_hint
+
+                ctx = self.get_context()
+                client_params = getattr(ctx.session, "client_params", None)
+                client_info = getattr(client_params, "clientInfo", None)
+                name = getattr(client_info, "name", None)
+                if name:
+                    set_mcp_client_hint(name)
+            except Exception:  # pragma: no cover - best-effort optional signal
+                pass
 
         async def call_tool(self, name, arguments):
             try:
