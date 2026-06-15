@@ -1214,3 +1214,8 @@
 - Notable durable changes: removed the dead Google CloudCode discovery/onboarding cluster from the provider sidecar (ec-05); the global review guard now always scans + records injection findings (gsr-06); generated-provenance authored memory can't self-assert `review_status='confirmed'` (wcp-10); the Gemini OAuth callback handler is per-flow (no shared class-state race, oauth-12); flow-state secret residue is swept (oauth-05).
 - Full suite 787 → 841 passing (54 new regression tests). Tracker: `docs/AUDIT_REMEDIATION_2026-06-14.md`. The entire 150-finding audit (Critical → Low) is now closed.
 - Propagated the audit-closed state to the front-door pages so future agents see it on boot: `.wiki/repo-brief.md` (Agent Boot now names the 841-pass baseline + audit closure) and `.wiki/wiki/synthesis/current-repo-state.md` (new "Audit / Quality Status" section with the one deferred item, smr-09).
+
+## 2026-06-15 — doc-drift cleanup (post-audit)
+
+- Reconciled four stale `[ ]` checkboxes in `docs/AUDIT_REMEDIATION_2026-06-14.md` that contradicted its own "audit closed" conclusion (smr-04/T1.3, hc-08/T1.5 were done in the Medium batch; the two T2.*/T3.* catch-alls now cite the findings that closed them). Tracker is now internally consistent.
+- Cleared the `docs/OB1_COMPARISON.md` "stdio-only today" drift (item 11): CM already ships `serve --transport {stdio,sse,streamable-http}` (`cli.py:41`); the still-open piece of that OB1 item is only the access-key/CORS/Accept-header auth layer, not the transport. Removed the resolved bullet from the drift page's Current Documentation Drift list.

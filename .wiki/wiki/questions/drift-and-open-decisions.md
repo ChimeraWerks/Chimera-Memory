@@ -20,8 +20,6 @@ sources:
 
 ## Current Documentation Drift
 
-- `docs/OB1_COMPARISON.md` says CM is stdio-only in the OB1 comparison, which is
-  stale for streamable HTTP.
 - Some provider/sidecar docs intentionally mix implemented status with future
   plans. Read the status paragraph and current code before treating a section as
   either shipped or pending.

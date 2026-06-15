@@ -72,7 +72,7 @@ The lift path was developed jointly across two days of pair-research between Per
 
 ### Third tier (after governance + sidecar exist)
 
-11. **HTTP/SSE MCP server with CORS + access-key auth:** OB1's Deno + Hono + StreamableHTTPTransport with `MCP_ACCESS_KEY` via header OR URL `?key=`, CORS, Claude Desktop Accept-header patch. CM is stdio-only today. (OB1 ref: `server/index.ts:507-548`)
+11. **HTTP/SSE MCP server with CORS + access-key auth:** OB1's Deno + Hono + StreamableHTTPTransport with `MCP_ACCESS_KEY` via header OR URL `?key=`, CORS, Claude Desktop Accept-header patch. CM already ships the transport (`chimera-memory serve --transport {stdio,sse,streamable-http} --host --port`, `cli.py:41`); the still-open piece this item proposes is the access-key/CORS/Accept-header auth layer on top of it, not the transport itself. (OB1 ref: `server/index.ts:507-548`)
 
 12. **REST API surface alongside MCP:** `POST /recall`, `POST /writeback`, `PATCH /memories/:id/review`, health endpoint. (OB1 ref: `integrations/agent-memory-api/README.md:11-19`)
 
