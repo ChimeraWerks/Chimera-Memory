@@ -6,13 +6,14 @@ kind: question
 status: active
 trust: medium
 created: 2026-06-09
-updated: 2026-06-12
+updated: 2026-06-15
 sources:
   - raw/sources/chimera-memory-source-pointers-2026-06-09.md
   - README.md
   - docs/OB1_COMPARISON.md
   - docs/MEMORY_ENHANCEMENT_CLI_WORKER.md
   - docs/CODEX_DESKTOP_SCOPE_AND_CODE_AUDIT.md
+  - docs/AUDIT_REMEDIATION_2026-06-14.md
 ---
 
 # Drift And Open Decisions
@@ -75,6 +76,18 @@ sources:
 - `docs/agents/repo-map.md` now lists `.github/`, `scripts/`, and the current
   CLI-worker supervisor slices.
 - Package metadata now names Claude Code, Codex, Hermes, and MCP users.
+- Multi-agent audit fully remediated (2026-06-15): the 150-finding audit
+  (Critical → Low) is closed. All 85 Low findings were re-verified against HEAD,
+  then 71 fixed in 16 tested per-file batches, 4 confirmed already-fixed by the
+  Medium batch, and 10 documented won't-fix/deferred with rationale. Durable
+  contract reinforcements worth noting: the global review guard now always runs
+  `scan_for_injection` and records findings (block stays coupled to
+  default-availability, so restrict/reject remediation still writes but its
+  findings are persisted, gsr-06); generated-provenance authored memory can no
+  longer self-assert `review_status='confirmed'` (clamped to pending, wcp-10); the
+  dead Google CloudCode discovery/onboarding cluster was removed from the provider
+  sidecar (ec-05). Full tracker: `docs/AUDIT_REMEDIATION_2026-06-14.md`. Suite at
+  841 passing (787 baseline + 54 regression tests).
 
 ## Guidance Until Resolved
 

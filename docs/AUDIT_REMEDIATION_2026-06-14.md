@@ -282,4 +282,12 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full
-suite green). The Low-severity polish pass is tracked above.
+suite green).
+
+**The Low-severity pass is now complete.** All 85 low findings are dispositioned:
+4 already fixed by the Medium batch, **71 fixed** across 16 tested per-file
+batches (each `pytest -q` green before commit), and 10 documented as won't-fix or
+deferred with rationale (codex-setup-4, se-08, hc-12, mfr-09, mfr-10, oauth-02,
+oauth-08, oauth-11, schema-db-05, smr-09). The full suite grew from the 787
+baseline to **841 passing** (54 new regression tests). No remaining open audit
+items — the entire 150-finding audit (Critical → Low) is closed.
