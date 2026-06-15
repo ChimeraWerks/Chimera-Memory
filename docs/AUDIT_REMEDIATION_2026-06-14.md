@@ -117,7 +117,48 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 - [x] se-03 (dead `consolidate_old_entries`): deleted — it was unreferenced and
       carried latent f-string-SQL / string-date-comparison bugs that never ran.
 
+## Low severity — batch L (2026-06-15)
+
+All 85 low findings were re-verified against current HEAD first (a 44-agent
+verification pass): **4 already fixed by the Medium batch, the rest triaged into
+fixes vs. documented won't-fix**. Fixes land in tested per-file batches with full
+`pytest -q` green after each.
+
+### Already fixed by earlier batches (verified no-op)
+
+- [x] schema-db-03 — `bulk_connection` WAL checkpoint is now in `finally`.
+- [x] schema-db-10 — `db_split._connect` sets `busy_timeout=10000` on both paths.
+- [x] pc-08 — model-client call counter now guarded by `_CALL_LOCK`.
+- [x] wcp-11 — audit-path leak closed centrally in `memory_observability`
+      (`_safe_audit_text`/`_safe_audit_payload`); `memory_audit_query` sanitizes.
+
+### Won't-fix (low severity, fix disproportionate/unsafe — rationale recorded)
+
+- [x] codex-setup-4 — context smoke needs the full DB clone for the FTS+vector
+      pipeline; "copy only memory_files" would break it. Overhead only.
+- [x] se-08 — embedding-progress file is display-only (rows safe via INSERT OR
+      IGNORE); pid/lock/heartbeat contract expansion not warranted.
+- [x] hc-12 — switching persona-root cwd match from exact to under-root would
+      widen a privacy boundary (AGENTS.md); case is already handled.
+- [x] mfr-09 — correct fix (UNINDEXED FTS columns) lives in schema and needs a
+      destructive FTS rebuild on existing DBs; gate already re-checks coverage.
+- [x] mfr-10 — exhaustive in-Python cosine is the documented local-first vector
+      path (identical in recall); changing only this site diverges it.
+- [x] oauth-08 — duplicated Anthropic OAuth in hermes copy; `print(exc)` is an
+      interactive CLI login path (not MCP), and dedup is risky drift surgery.
+- [x] oauth-11 — JWT `exp` fallback only fires when both expires_at_ms and
+      expires_in are absent (rare); stale token still caught by 401.
+- [x] oauth-02 — orphaned loopback child is self-healing (reaped on first
+      callback; bounded to the 15-min flow TTL).
+- [x] schema-db-05 — additive migration is idempotent (re-run completes any
+      half-applied state); explicit-transaction wrap is disproportionate.
+
+### Fixes (per batch)
+
+- [x] cli-08, cli-09 — embed `--limit` rejects negatives / treats 0 as no-cap;
+      stdin buffered once so `codex context/exec` can't double-read `-`.
+      Tests: `test_codex_context.py` (`_read_cli_text_arg` share, neg-limit).
+
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full
-suite green). Remaining open items are Low-severity polish catalogued in
-`.claude/audit-findings.json`.
+suite green). The Low-severity polish pass is tracked above.

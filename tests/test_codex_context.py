@@ -1328,3 +1328,28 @@ def test_cli_codex_exec_can_include_raw_output_when_explicitly_requested(
     assert payload["stdout"] == "codex ok\n"
     assert payload["stderr"] == "codex warning\n"
     assert payload["output"]["raw_output_included"] is True
+
+
+def test_read_cli_text_arg_shares_stdin_across_reads(monkeypatch) -> None:
+    # cli-09: two CLI text args pointing at '-' must both see stdin content,
+    # not '' on the second read after the stream drains.
+    cli_module._read_stdin_once.cache_clear()
+    monkeypatch.setattr(sys, "stdin", io.StringIO("piped prompt text"))
+
+    first = cli_module._read_cli_text_arg(file_path="-", inline_text="", default_stdin=True)
+    second = cli_module._read_cli_text_arg(file_path="-", inline_text="", default_stdin=False)
+
+    assert first == "piped prompt text"
+    assert second == "piped prompt text"
+    cli_module._read_stdin_once.cache_clear()
+
+
+def test_embed_rejects_negative_limit(monkeypatch) -> None:
+    # cli-08: a negative --limit must error at parse time, not silently clamp to
+    # 0 and print a misleading "already have embeddings" success line.
+    monkeypatch.setattr(sys, "argv", ["chimera-memory", "embed", "--limit", "-1"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        main()
+
+    assert excinfo.value.code == 2

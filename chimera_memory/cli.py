@@ -1,6 +1,7 @@
 """CLI entry point for chimera-memory."""
 
 import argparse
+import functools
 import json
 import os
 import subprocess
@@ -8,6 +9,22 @@ import sys
 from pathlib import Path
 
 from .codex_runtime import codex_executable_for_subprocess
+
+
+def _non_negative_int(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or a positive integer")
+    return value
+
+
+@functools.lru_cache(maxsize=1)
+def _read_stdin_once() -> str:
+    # Multiple CLI text args may each request stdin ('-'); read the stream once
+    # and share it so the second consumer doesn't get '' after the first drains
+    # it. Scar (cli-09): codex context/exec accept both --prompt-file - and
+    # --previous-context-file -, which would otherwise read stdin twice.
+    return sys.stdin.read()
 
 
 def main():
@@ -43,7 +60,11 @@ def main():
     # embed: generate transcript embeddings with visible progress
     sub_embed = subparsers.add_parser("embed", help="Generate transcript embeddings with progress")
     sub_embed.add_argument("--db", help="Path to transcript.db")
-    sub_embed.add_argument("--limit", type=int, help="Maximum entries to embed in this run")
+    sub_embed.add_argument(
+        "--limit",
+        type=_non_negative_int,
+        help="Maximum entries to embed in this run; 0 means no cap",
+    )
     sub_embed.add_argument("--batch-size", type=int, default=64, help="FastEmbed batch size")
     sub_embed.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
@@ -577,7 +598,9 @@ def _run_embed(args):
     batch_size = max(1, args.batch_size)
     with db.connection() as conn:
         pending = count_unembedded_transcript_entries(conn)
-        limit = None if args.limit is None else max(0, args.limit)
+        # 0 means "no cap" (embed all pending); negatives are rejected at parse
+        # time by _non_negative_int, so a clamped-to-0 silent no-op can't happen.
+        limit = None if not args.limit else args.limit
         total_to_embed = pending if limit is None else min(pending, limit)
         runtime = embedding_runtime_status()
         if args.json:
@@ -1552,14 +1575,14 @@ def _read_cli_text_arg(*, file_path: str, inline_text: str, default_stdin: bool)
     selected_file = str(file_path or "").strip()
     if selected_file:
         if selected_file == "-":
-            return sys.stdin.read()
+            return _read_stdin_once()
         try:
             return Path(selected_file).read_text(encoding="utf-8-sig")
         except OSError as exc:
             print(f"Unable to read text file: {exc}", file=sys.stderr)
             sys.exit(2)
     if default_stdin and inline_text == "-":
-        return sys.stdin.read()
+        return _read_stdin_once()
     return str(inline_text or "")
 
 
