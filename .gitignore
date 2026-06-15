@@ -21,6 +21,9 @@ venv/
 # Generated wiki exports
 .wiki/exports/
 
+# Agent/session scratch (workflow scripts, audit findings, handoff bodies)
+.claude/
+
 # IDE
 .vscode/
 .idea/
