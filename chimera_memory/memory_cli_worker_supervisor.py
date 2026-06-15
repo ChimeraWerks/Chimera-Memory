@@ -6,6 +6,7 @@ queue, budget, validation, and database writes through the worker MCP surface.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -235,7 +236,12 @@ def _should_launch_worker_pass(config: _LaunchGateConfig, *, log: logging.Logger
     )
 
     try:
-        with sqlite3.connect(config.db_path) as conn:
+        # busy_timeout matches the rest of the codebase so the launch gate waits
+        # briefly under WAL contention instead of failing closed (wsm-02);
+        # contextlib.closing closes the handle deterministically in the long-lived
+        # supervisor loop (the `as conn ... , conn` keeps the transaction) (wsm-03).
+        with contextlib.closing(sqlite3.connect(config.db_path, timeout=10)) as conn, conn:
+            conn.execute("PRAGMA busy_timeout=10000")
             has_work = memory_worker_has_pending_job(
                 conn,
                 persona=config.persona or None,
@@ -701,6 +707,20 @@ def agy_worker_mcp_config(config: AgyCliWorkerConfig) -> dict[str, Any]:
     )
 
 
+def _credential_needs_refresh(src: Path, dst: Path) -> bool:
+    # Avoid rewriting the live credential into the isolated worker home on every
+    # ~30s pass: copy only when the target is missing or stale (size/mtime
+    # mismatch), reducing duplicate-secret churn (wsm-06).
+    try:
+        if not dst.exists():
+            return True
+        src_stat = src.stat()
+        dst_stat = dst.stat()
+    except OSError:
+        return True
+    return src_stat.st_size != dst_stat.st_size or src_stat.st_mtime != dst_stat.st_mtime
+
+
 def ensure_codex_worker_files(config: CodexCliWorkerConfig) -> dict[str, str]:
     """Create worker-local AGENTS.md and Codex MCP config."""
     config.worker_root.mkdir(parents=True, exist_ok=True)
@@ -729,7 +749,7 @@ def ensure_codex_worker_files(config: CodexCliWorkerConfig) -> dict[str, str]:
             same_file = config.codex_auth_path.resolve() == auth_path.resolve()
         except OSError:
             same_file = False
-        if not same_file:
+        if not same_file and _credential_needs_refresh(config.codex_auth_path, auth_path):
             shutil.copy2(config.codex_auth_path, auth_path)
 
     return {
@@ -763,7 +783,13 @@ def ensure_claude_worker_files(config: ClaudeCliWorkerConfig) -> dict[str, str]:
     credentials_target = claude_config_dir / ".credentials.json"
     if config.claude_credentials_path and config.claude_credentials_path.exists():
         source = config.claude_credentials_path
-        if source.resolve() != credentials_target.resolve():
+        # Guard resolve() with OSError like the codex path (UNC/locked/long paths
+        # on Windows) (wsm-09), and skip the copy when unchanged (wsm-06).
+        try:
+            same_file = source.resolve() == credentials_target.resolve()
+        except OSError:
+            same_file = False
+        if not same_file and _credential_needs_refresh(source, credentials_target):
             shutil.copy2(source, credentials_target)
 
     return {
@@ -929,6 +955,11 @@ def codex_worker_command(config: CodexCliWorkerConfig, session: Mapping[str, Any
             "resume",
             "--json",
             "--skip-git-repo-check",
+            # Anchor workspace/AGENTS.md discovery on --cd like the create path,
+            # not only on the Popen cwd, so a resumed pass can't run against the
+            # wrong workspace if a codex version keys discovery on --cd (wsm-10).
+            "--cd",
+            str(config.worker_root),
         ]
     else:
         command = [
@@ -1155,8 +1186,14 @@ def start_codex_cli_worker_once(
         out.close()
         err.close()
     if process.stdin is not None:
-        process.stdin.write(codex_worker_prompt(config))
-        process.stdin.close()
+        try:
+            process.stdin.write(codex_worker_prompt(config))
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            # Child exited during arg-parse before reading the prompt; still
+            # return the handle so the poll/_record_cli_worker_pass path reaps it
+            # instead of the supervisor counting a launch_error and orphaning it (wsm-07).
+            pass
     return CodexCliWorkerHandle(
         process=process,
         stdout_log=stdout_log,
@@ -1213,8 +1250,13 @@ def start_claude_cli_worker_once(
         out.close()
         err.close()
     if process.stdin is not None:
-        process.stdin.write(claude_worker_prompt(config))
-        process.stdin.close()
+        try:
+            process.stdin.write(claude_worker_prompt(config))
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            # Child exited before reading the prompt; still return the handle so it
+            # is reaped via the normal pass path rather than orphaned (wsm-07).
+            pass
     return CodexCliWorkerHandle(
         process=process,
         stdout_log=stdout_log,
@@ -1270,8 +1312,13 @@ def start_agy_cli_worker_once(
         out.close()
         err.close()
     if process.stdin is not None:
-        process.stdin.write(agy_worker_prompt(config))
-        process.stdin.close()
+        try:
+            process.stdin.write(agy_worker_prompt(config))
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            # Child exited before reading the prompt; still return the handle so it
+            # is reaped via the normal pass path rather than orphaned (wsm-07).
+            pass
     return CodexCliWorkerHandle(
         process=process,
         stdout_log=stdout_log,
@@ -1406,7 +1453,9 @@ def _record_cli_worker_pass(
     status = "succeeded" if returncode in (0, None) else "failed"
     session_id = handle.session_id or str(metrics.get("session_id") or "")
     try:
-        with sqlite3.connect(config.db_path) as conn:
+        # busy_timeout + deterministic close, matching the launch gate (wsm-02/03).
+        with contextlib.closing(sqlite3.connect(config.db_path, timeout=10)) as conn, conn:
+            conn.execute("PRAGMA busy_timeout=10000")
             jobs = _worker_job_counts(conn, worker_id=config.worker_id, since_iso=handle.started_at_iso)
             conn.execute(
                 """

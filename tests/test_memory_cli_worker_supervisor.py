@@ -8,6 +8,7 @@ from chimera_memory.memory_cli_worker_supervisor import (
     AgyCliWorkerConfig,
     ClaudeCliWorkerConfig,
     CodexCliWorkerConfig,
+    _credential_needs_refresh,
     agy_worker_command,
     agy_worker_mcp_config,
     agy_worker_prompt,
@@ -535,6 +536,8 @@ def test_codex_worker_command_resumes_daily_session(tmp_path: Path) -> None:
     assert "--ephemeral" not in command
     assert "session-123" in command
     assert command[-1] == "-"
+    # wsm-10: the resume path anchors the workspace with --cd like the create path.
+    assert "--cd" in command
 
 
 def test_codex_worker_command_can_disable_bypass_for_future_codex_versions(tmp_path: Path) -> None:
@@ -1103,3 +1106,45 @@ def test_inspect_cli_worker_setup_can_initialize_agy_files(tmp_path: Path, monke
     assert receipt["files"]["mcp_config"]["exists"] is True
     assert "command_preview" not in receipt
     assert receipt["command_profile"]["sandbox_enabled"] is True
+
+
+def test_credential_needs_refresh_skips_unchanged(tmp_path: Path) -> None:
+    # wsm-06: copy only when the target is missing or stale (size/mtime), so the
+    # live credential isn't rewritten into the worker home every pass.
+    src = tmp_path / "auth.json"
+    dst = tmp_path / "worker" / "auth.json"
+    dst.parent.mkdir(parents=True)
+    src.write_text("creds", encoding="utf-8")
+
+    assert _credential_needs_refresh(src, dst) is True  # dst missing
+
+    import shutil
+
+    shutil.copy2(src, dst)
+    assert _credential_needs_refresh(src, dst) is False  # identical size + mtime
+
+    src.write_text("creds-changed-bigger", encoding="utf-8")
+    assert _credential_needs_refresh(src, dst) is True  # size differs
+
+
+def test_start_codex_cli_worker_once_survives_broken_stdin(tmp_path: Path) -> None:
+    # wsm-07: a child that exits before reading the prompt (BrokenPipeError on the
+    # stdin write) must still yield a handle so it's reaped via the pass path,
+    # not counted as a launch error and orphaned.
+    config = _config(tmp_path)
+
+    class _BrokenStdin:
+        def write(self, _text: str) -> None:
+            raise BrokenPipeError("child gone")
+
+        def close(self) -> None:
+            pass
+
+    class _BrokenProcess(_FakeProcess):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stdin = _BrokenStdin()
+
+    handle = start_codex_cli_worker_once(config, popen_factory=lambda args, **kwargs: _BrokenProcess())
+
+    assert handle is not None

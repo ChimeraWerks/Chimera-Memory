@@ -263,6 +263,13 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       health re-evaluates `memory_file_watcher` per tick (no frozen healthy-by-
       default); the worker MCP surface no longer registers an active-harness lease.
       Tests: `test_server_startup.py`. (smr-09 documented-deferred above.)
+- [x] wsm-02, wsm-03, wsm-06, wsm-07, wsm-09, wsm-10 — supervisor SQLite
+      connections set `busy_timeout` and close deterministically (`contextlib.closing`);
+      credentials are copied into the worker home only when missing/stale
+      (`_credential_needs_refresh`) and the Claude resolve() is OSError-guarded like
+      Codex; the stdin prompt write is BrokenPipeError-guarded so a fast-failing
+      child still returns a handle (reaped, not mislabeled as a launch error); the
+      Codex resume command passes `--cd`. Tests: `test_memory_cli_worker_supervisor.py`.
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full
