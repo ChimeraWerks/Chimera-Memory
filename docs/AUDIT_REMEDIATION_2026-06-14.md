@@ -192,6 +192,15 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       leak-safe class-name reason for runtime/provider profile faults and folds
       them into overall status (degraded, not silent ok) (ghh-12). Tests:
       `test_identity.py`, `test_memory_health.py`. (hc-12 won't-fix above.)
+- [x] hermes-004, hermes-005, hermes-008, hermes-011 — Gemini OAuth goes paste-
+      mode whenever headless (not binding an unreachable loopback listener);
+      `_iter_sse_events` flushes a final un-newline-terminated `data:` line;
+      a generic Code Assist 404 gets a distinct non-retryable code so the sidecar
+      doesn't fan out across all models (only a model-named 404 retries); the
+      onboarding LRO poll is deadline-aware (threaded adapter→code_assist) so a
+      fresh account can't stall the worker ~60s. Tests: new
+      `test_hermes_cloudcode_adapter.py`, `test_hermes_code_assist.py`,
+      `test_memory_enhancement_oauth_flow.py`.
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

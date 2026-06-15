@@ -288,6 +288,7 @@ def onboard_user(
     tier_id: str,
     project_id: str = "",
     user_agent_model: str = "",
+    deadline_monotonic: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Call ``POST /v1internal:onboardUser`` to provision the user.
 
@@ -321,6 +322,12 @@ def onboard_user(
         if not op_name:
             return resp
         for attempt in range(_ONBOARDING_POLL_ATTEMPTS):
+            # Abort onboarding polls once the caller's wall-clock budget is spent
+            # so a fresh un-onboarded account cannot stall an enhancement worker
+            # for the full 60s (hermes-011: no deadline was threaded here).
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                logger.warning("Onboarding aborted: caller deadline exceeded after %d attempts", attempt)
+                return resp
             time.sleep(_ONBOARDING_POLL_INTERVAL_SECONDS)
             poll_url = f"{endpoint}/v1internal/{op_name}"
             try:
@@ -395,6 +402,7 @@ def resolve_project_context(
     configured_project_id: str = "",
     env_project_id: str = "",
     user_agent_model: str = "",
+    deadline_monotonic: Optional[float] = None,
 ) -> ProjectContext:
     """Figure out what project id + tier to use for requests.
 
@@ -431,6 +439,7 @@ def resolve_project_context(
             tier_id=FREE_TIER_ID,
             project_id="",
             user_agent_model=user_agent_model,
+            deadline_monotonic=deadline_monotonic,
         )
         # Re-parse from the onboard response
         response_body = onboard_resp.get("response") or {}

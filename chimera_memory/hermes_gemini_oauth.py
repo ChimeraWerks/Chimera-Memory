@@ -859,8 +859,13 @@ def start_oauth_flow(
     verifier, challenge = _generate_pkce_pair()
     state = secrets.token_urlsafe(16)
 
-    # If headless, skip the listener and go straight to paste mode
-    if _is_headless() and open_browser:
+    # If headless, skip the localhost listener (no browser can ever redirect to
+    # it) and go straight to paste mode — regardless of open_browser. The old
+    # `and open_browser` let a headless + open_browser=False run fall through and
+    # bind an unreachable callback server, blocking for callback_wait_seconds
+    # before falling back (hermes-004). On a non-headless host open_browser=False
+    # still uses the loopback listener (the user opens the printed URL manually).
+    if _is_headless():
         logger.info("Headless environment detected; using paste-mode OAuth fallback.")
         return _paste_mode_login(verifier, challenge, state, client_id, client_secret, project_id)
 

@@ -384,6 +384,26 @@ def test_hermes_google_oauth_uses_loopback_before_paste_for_non_headless(monkeyp
     assert any(call.startswith("wait:") for call in calls)
 
 
+def test_hermes_google_oauth_headless_uses_paste_even_without_browser(monkeypatch):
+    # hermes-004: a headless host must go straight to paste mode even when
+    # open_browser=False, instead of binding an unreachable loopback listener.
+    def _fail_bind(_port):
+        raise AssertionError("loopback listener must not be bound when headless")
+
+    monkeypatch.setattr(hermes_gemini_oauth, "_is_headless", lambda: True)
+    monkeypatch.setattr(hermes_gemini_oauth, "_require_client_id", lambda: "test-client.apps.googleusercontent.com")
+    monkeypatch.setattr(hermes_gemini_oauth, "_get_client_secret", lambda: "")
+    monkeypatch.setattr(hermes_gemini_oauth, "_generate_pkce_pair", lambda: ("verifier", "challenge"))
+    monkeypatch.setattr(hermes_gemini_oauth.secrets, "token_urlsafe", lambda _n: "state-test")
+    monkeypatch.setattr(hermes_gemini_oauth, "_bind_callback_server", _fail_bind)
+    sentinel = object()
+    monkeypatch.setattr(hermes_gemini_oauth, "_paste_mode_login", lambda *args, **kwargs: sentinel)
+
+    result = hermes_gemini_oauth.start_oauth_flow(force_relogin=True, open_browser=False)
+
+    assert result is sentinel
+
+
 def _flow_state(tmp_path: Path, flow_id: str):
     return json.loads((tmp_path / "oauth-flows" / f"{flow_id}.json").read_text(encoding="utf-8"))
 

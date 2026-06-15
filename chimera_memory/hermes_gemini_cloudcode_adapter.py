@@ -498,6 +498,18 @@ def _iter_sse_events(response: httpx.Response) -> Iterator[Dict[str, Any]]:
                     yield json.loads(data)
                 except json.JSONDecodeError:
                     logger.debug("Non-JSON SSE line: %s", data[:200])
+    # Flush a final data line left without a trailing newline. Code Assist can
+    # close the stream right after the last `data: {...}` without a blank line or
+    # [DONE], which would otherwise drop the closing chunk (trailing text +
+    # finishReason) and trigger a spurious 'invalid JSON' retry (hermes-005).
+    line = buffer.strip().rstrip("\r")
+    if line.startswith("data: "):
+        data = line[6:]
+        if data != "[DONE]":
+            try:
+                yield json.loads(data)
+            except json.JSONDecodeError:
+                logger.debug("Non-JSON SSE line: %s", data[:200])
 
 
 def _translate_stream_event(
@@ -621,7 +633,9 @@ class GeminiCloudCodeClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def _ensure_project_context(self, access_token: str, model: str) -> ProjectContext:
+    def _ensure_project_context(
+        self, access_token: str, model: str, *, deadline_monotonic: Optional[float] = None
+    ) -> ProjectContext:
         """Lazily resolve and cache the project context for this client."""
         if self._project_context is not None:
             return self._project_context
@@ -645,6 +659,7 @@ class GeminiCloudCodeClient:
             configured_project_id=self._configured_project_id,
             env_project_id=env_project,
             user_agent_model=model,
+            deadline_monotonic=deadline_monotonic,
         )
         # Persist discovered project back to the creds file so the next
         # session doesn't re-run the discovery.
@@ -673,7 +688,14 @@ class GeminiCloudCodeClient:
         **_: Any,
     ) -> Any:
         access_token = google_oauth.get_valid_access_token()
-        ctx = self._ensure_project_context(access_token, model)
+        # Bound first-call onboarding polls by the caller's timeout so a fresh
+        # un-onboarded Google account can't stall the enhancement worker (hermes-011).
+        onboarding_deadline = (
+            time.monotonic() + float(timeout)
+            if isinstance(timeout, (int, float)) and timeout > 0
+            else None
+        )
+        ctx = self._ensure_project_context(access_token, model, deadline_monotonic=onboarding_deadline)
 
         thinking_config = None
         if isinstance(extra_body, dict):
@@ -859,6 +881,18 @@ def _gemini_http_error(response: httpx.Response) -> CodeAssistError:
         code = "code_assist_rate_limited"
         if error_reason == "MODEL_CAPACITY_EXHAUSTED":
             code = "code_assist_capacity_exhausted"
+    elif status == 404:
+        # Only a body that names a retired/renamed model should fan out across
+        # model candidates (the sidecar substring-matches code_assist_http_404 as
+        # retryable). A generic 404 (misconfigured base_url, proxy glitch) whose
+        # body is just "Not Found" must fail fast, so require an explicit model
+        # signal and otherwise use a code the sidecar won't match (hermes-008).
+        _msg_l = (err_message or "").lower()
+        _is_model_404 = error_reason in ("MODEL_NOT_FOUND", "MODEL_NOT_AVAILABLE") or any(
+            sig in _msg_l for sig in ("model", "retired", "renamed")
+        )
+        if not _is_model_404:
+            code = "code_assist_endpoint_404"
 
     # Build a human-readable message.  Keep the status + a raw-body tail for
     # debugging, but lead with a friendlier summary when we recognize the
