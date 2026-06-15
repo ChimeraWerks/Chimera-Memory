@@ -9,6 +9,12 @@ Updated: 2026-06-12
 - ChimeraMemory is a local-first Python package and MCP server for indexing agent transcripts and curated markdown memories into SQLite.
 - The repo has two memory layers behind one interface: transcript recall and curated memory.
 - Scope is a privacy boundary: persona sessions use persona + current project + global; no-persona Codex project mode uses current project + global.
+- The active harness (Claude Code, Codex, standalone Hermes) is auto-identified by
+  `chimera_memory/harness.py` `detect_harness()` (explicit env > process-injected
+  running signals > session-dir signature > per-file content sniff > Claude
+  default), so the JSONL dir and parser resolve without per-launch config. Codex
+  rollouts and Claude logs are `*.jsonl`; standalone Hermes is per-persona
+  `session_*.json` with a native parser. `chimera-memory hermes` sets up Hermes.
 - No-persona Codex project discovery uses explicit `CHIMERA_MEMORY_PROJECT_ID`
   as the indexing identity for a single configured project root.
 - No-persona Codex MCP read tools fail closed without a resolved project id for

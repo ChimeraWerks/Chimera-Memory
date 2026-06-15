@@ -333,43 +333,25 @@ path via `--config`. They do not include secrets or OAuth tokens.
 
 ### Hermes Agent
 
-Hermes supports two integration modes simultaneously:
+Hermes has two transcript modes, both handled automatically:
 
-1. **As an MCP server** (same as Claude Code / Codex). Lives in `<HERMES_HOME>/config.yaml` under `mcp_servers.chimera-memory`.
-2. **As a native memory provider** via plugin filesystem symlink at `<HERMES_HOME>/plugins/chimera_memory` plus `memory.provider: chimera_memory` in `config.yaml`. This is Hermes's first-class memory backend — used during agent turns for live recall, replacing or supplementing Honcho.
+- **Hermes inside Claude Code** writes Claude-format JSONL under `~/.claude/projects/`. Auto-detected as `claude-code`; nothing to configure.
+- **The standalone Hermes agent** writes per-persona `~/.hermes/profiles/<persona>/sessions/session_*.json` (a JSON, not JSONL, format with its own native parser).
 
-The plugin path uses a filesystem **symlink** to the source repo, so source edits flow through. Different mechanism from Claude Code's pip-install pattern (Hermes scans a directory, Claude Code spawns a CLI), same outcome.
-
-### Via PersonifyAgents Installer (Automated)
-
-PA bundles three handlers that wire Chimera Memory into any of the three runtimes deterministically:
+Set up standalone-Hermes transcript indexing with the native CLI (persona-scoped — CM only ever reads that persona's sessions):
 
 ```bash
-# Wire CM as a Hermes memory provider (plugin symlink + config.yaml mutation)
-personifyagents install apply \
-  --runtime hermes \
-  --feature chimera_memory.hermes_provider \
-  --hermes-home /path/to/hermes-home \
-  --chimera-memory-repo <repo-root> \
-  --mode symlink \
-  --yes
-
-# Wire CM as an MCP server in any runtime's config
-personifyagents install apply \
-  --runtime claude_code \
-  --feature chimera_memory.mcp_server \
-  --runtime-home /path/to/claude-project \
-  --yes
-
-# Install a transcript backfill helper script (calls chimera-memory backfill on schedule)
-personifyagents install apply \
-  --runtime hermes \
-  --feature chimera_memory.transcript_backfill_helper \
-  --persona <persona-name> \
-  --yes
+chimera-memory hermes doctor   --persona <NAME>     # read-only: verify the setup
+chimera-memory hermes template --persona <NAME>     # print indexer env + paste-in MCP block
+chimera-memory hermes install  --persona <NAME> --write   # write per-persona indexer launchers
 ```
 
-Each PA apply writes a backup, a receipt, and updates the install-state ledger ... fully audited and reversible. PA assumes `chimera-memory` is already on PATH (it doesn't pip-install the binary itself; that's a separate concern).
+Hermes can also use CM as a memory **provider** / MCP server during agent turns:
+
+1. **As an MCP server** (same as Claude Code / Codex), under `mcp_servers.chimera-memory` in `<HERMES_HOME>/config.yaml`. `hermes template` prints a ready-to-paste block (least-privilege `persona_memory` surface).
+2. **As a native memory provider** via a plugin filesystem symlink at `<HERMES_HOME>/plugins/chimera_memory` plus `memory.provider: chimera_memory` in `config.yaml` — Hermes's first-class memory backend for live recall.
+
+> **Note:** The PersonifyAgents (`personifyagents install apply ...`) automated installer is **deprecated**. Use the native `chimera-memory hermes` and `chimera-memory codex` commands above. This repo is the single source of truth.
 
 ## Architecture
 

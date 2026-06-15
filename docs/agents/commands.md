@@ -44,6 +44,7 @@ chimera-memory serve --transport streamable-http --host 127.0.0.1 --port 8765
 chimera-memory backfill
 chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client claude
 chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client codex
+chimera-memory backfill --jsonl-dir <DIR> --persona <NAME> --client hermes
 chimera-memory embed
 chimera-memory embed --limit 500 --batch-size 64
 chimera-memory stats
@@ -55,6 +56,45 @@ Use module form when the editable console script is unavailable:
 ```powershell
 python -m chimera_memory.cli stats
 ```
+
+## Harness Auto-Detection
+
+`chimera_memory/harness.py` `detect_harness()` resolves the active harness so the
+transcript JSONL directory and parser are chosen without per-launch config.
+Precedence (each step only fills what the previous left unset; explicit env always
+wins): explicit `CHIMERA_CLIENT` / `TRANSCRIPT_JSONL_DIR` (the dir shape is
+recognized for `.codex/sessions`, `.claude/projects`, and
+`.hermes/profiles/<persona>/sessions`) → process-injected running-harness signals
+(`CLAUDECODE` → Claude Code, `CODEX_SANDBOX` → Codex; install-location vars like
+`HERMES_HOME` / `CODEX_HOME` are deliberately NOT used because they persist in
+every shell) → on-disk Codex sessions-dir signature → per-file JSONL content
+sniffing at index time → Claude-Code default. Discovery is parser-aware:
+Claude/Codex use `*.jsonl`, Hermes uses `session_*.json`. So a Codex rollout is
+never silently parsed as Claude even if the label is wrong.
+
+## Hermes Setup Helpers
+
+Standalone Hermes is persona-scoped: a persona is required so CM reads only
+`~/.hermes/profiles/<persona>/sessions`, never across personas. Hermes running
+inside Claude Code writes Claude-format JSONL and is handled as `claude-code`
+automatically; these helpers are for the standalone Hermes agent's native
+`session_*.json` store.
+
+```powershell
+chimera-memory hermes template --persona <NAME>
+chimera-memory hermes template --persona <NAME> --json
+chimera-memory hermes doctor --persona <NAME>
+chimera-memory hermes doctor --persona <NAME> --json
+chimera-memory hermes install --persona <NAME>
+chimera-memory hermes install --persona <NAME> --write
+```
+
+`template` prints (output-only) the persona-scoped indexer env/command plus a
+paste-in Hermes `config.yaml` `mcp_servers` block (least-privilege
+`persona_memory` surface). `doctor` is read-only: it checks the Hermes home, the
+persona session store, runs a parse smoke, and confirms harness resolution.
+`install` is dry-run by default and writes per-persona launcher scripts under
+`~/.chimera-memory/hermes/`; it never mutates Hermes's `config.yaml`.
 
 ## Codex Setup Helpers
 
@@ -594,6 +634,11 @@ Common env/config keys:
 - `CHIMERA_PERSONAS_DIR`
 - `CHIMERA_SHARED_ROOT`
 - `CHIMERA_MEMORY_PERSONA_DB_ROOT`
+- `CHIMERA_MEMORY_PROJECT_ROOTS` (multi-root watch + Codex cwd-scoped indexing)
+- `CHIMERA_MEMORY_PREWARM_EMBEDDINGS` (override embedding model prewarm)
+- `CHIMERA_MEMORY_PROFILE_EXPORT_ROOT` (allowed root for profile export writes)
+- `CHIMERA_MEMORY_ENHANCEMENT_MAX_CALLS` / `CHIMERA_MEMORY_ENHANCEMENT_MAX_CALLS_WINDOW_SECONDS`
+  (provider cost-cap burst count + rolling window)
 - `CHIMERA_MEMORY_EMBEDDING_PROVIDER`
 - `CHIMERA_MEMORY_FASTEMBED_CUDA`
 - `CHIMERA_MEMORY_FASTEMBED_DEVICE_IDS`
@@ -605,7 +650,7 @@ Common env/config keys:
 Config is generated under `~/.chimera-memory/config.yaml`. Runtime DBs and auth
 stores belong under user runtime directories, not in this repo.
 
-## Git and Vendor Sync
+## Git
 
 Before finalizing code changes:
 
@@ -614,6 +659,5 @@ git diff
 git status --short
 ```
 
-When runtime CM changes need PersonifyAgents sync and `../PersonifyAgents`
-exists, follow the workflow in `AGENTS.md` after this repo is committed and
-pushed.
+The PersonifyAgents vendor copy is deprecated; do not run a PA vendor sync unless
+Charles explicitly asks. This repo is the single source of truth.

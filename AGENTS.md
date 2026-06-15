@@ -26,8 +26,7 @@ Read in this order for normal repo work:
 4. `.wiki/repo-brief.md`
 5. `.wiki/wiki/sources/chimera-memory-source-manifest-2026-06-09.md`
 6. `docs/agents/token-efficient-usage.md`
-7. Only the task-relevant wiki page, `docs/agents/*` page, source files, and
-   tests
+7. Only the task-relevant wiki page, `docs/agents/*` page, and source files
 
 Use `README.md` as the public product/tool reference, not a default read-through.
 Use `docs/MODULE_LAYOUT.md` when deciding where code belongs.
@@ -36,7 +35,7 @@ Use `docs/MODULE_LAYOUT.md` when deciding where code belongs.
 
 `.wiki/` is the repo-local compiled LDD for agents. It organizes current memory
 architecture, scope policy, module ownership, MCP/CLI surfaces, enhancement
-boundaries, validation, vendor sync, and known doc drift.
+boundaries, vendor sync, and known doc drift.
 
 Current front-door pages:
 
@@ -47,11 +46,10 @@ Current front-door pages:
 - `.wiki/wiki/systems/mcp-cli-and-service-surfaces.md`
 - `.wiki/wiki/systems/federated-scope-and-memory-governance.md`
 - `.wiki/wiki/systems/enhancement-workers-and-provider-boundaries.md`
-- `.wiki/wiki/operations/validation-and-vendor-sync.md`
 - `.wiki/wiki/questions/drift-and-open-decisions.md`
 
 Treat wiki pages as synthesis, not sole truth. Behavior-changing claims must be
-checked against current code, tests, `AGENTS.md`, `README.md`, and routed docs.
+checked against current code, `AGENTS.md`, `README.md`, and routed docs.
 
 Update `.wiki/` when work changes durable project understanding:
 
@@ -62,12 +60,11 @@ Update `.wiki/` when work changes durable project understanding:
 - enhancement sidecar, worker, provider, OAuth, queue, or budget boundaries
 - importer, auto-capture, authored writeback, review, profile export, or
   generated metadata policy
-- validation, CI, service-mode, startup worker, or PersonifyAgents vendor-sync
-  policy
+- service-mode, startup worker, or PersonifyAgents vendor-sync policy
 - contradictions found or resolved
 
-Do not update `.wiki/` for trivial edits, temporary experiments, raw validation
-logs, local DB state, transcript contents, secrets, or generated caches.
+Do not update `.wiki/` for trivial edits, temporary experiments, local DB state,
+transcript contents, secrets, or generated caches.
 
 When updating `.wiki/`:
 
@@ -78,11 +75,6 @@ When updating `.wiki/`:
 4. Update `.wiki/index.md` when adding, removing, renaming, or archiving pages.
 5. Update `.wiki/repo-brief.md` when boot assumptions change.
 6. Append `.wiki/log.md`.
-7. Run:
-
-```powershell
-python "$env:USERPROFILE\.codex\skills\chimera-wiki\scripts\chimera_wiki.py" lint --root .
-```
 
 If a local page has cross-repo value, export a packet:
 
@@ -97,12 +89,10 @@ for hub work.
 
 Canonical order:
 
-1. Current code, tests, scripts, package metadata, and CI for implemented
-   behavior.
+1. Current code, scripts, and package metadata for implemented behavior.
 2. `AGENTS.md` for hard agent routing and safety rules.
 3. `docs/agents/token-efficient-usage.md`, `docs/agents/boundaries.md`,
-   `docs/agents/security.md`, and `docs/agents/validation.md` for active
-   operating policy.
+   and `docs/agents/security.md` for active operating policy.
 4. `.wiki/` for compiled synthesis, current-state navigation, and drift
    tracking.
 5. `README.md` for the public user-facing reference.
@@ -112,8 +102,8 @@ Canonical order:
    stores, and installed/vendor copies as noncanonical outputs unless a task
    explicitly says otherwise.
 
-When docs disagree, prefer current code/tests/CI for implemented behavior and
-record meaningful drift in `.wiki/wiki/questions/drift-and-open-decisions.md`.
+When docs disagree, prefer current code for implemented behavior and record
+meaningful drift in `.wiki/wiki/questions/drift-and-open-decisions.md`.
 
 ## Hard Architecture Rules
 
@@ -130,8 +120,8 @@ record meaningful drift in `.wiki/wiki/questions/drift-and-open-decisions.md`.
   promotes it.
 - Browser/client/MCP/user-facing output must not leak raw paths, raw commands,
   secrets, tokens, auth file contents, provider stderr, or unfiltered exceptions.
-- Runtime-critical operational comments must include why, scar, source, and
-  test. If you cannot name the scar, do not add the comment.
+- Runtime-critical operational comments must include why, scar, and source. If
+  you cannot name the scar, do not add the comment.
 - Never commit runtime DBs, session transcripts, tokens, `.env`, local auth
   files, generated worker homes, or generated caches.
 
@@ -172,54 +162,13 @@ modules.
 - CLI workers must use the worker-only MCP surface and return results through
   worker submit tools, not free-form stdout scraping.
 
-## Dual-Source Rule
+## Source Of Truth (PersonifyAgents Deprecated)
 
-This repo is the source of truth. When runtime CM code changes, land and verify
-the change here first, then mirror into PersonifyAgents if `../PersonifyAgents`
-exists and the change affects the vendor copy:
-
-1. Edit, test, commit, and push in this repo.
-2. From `../PersonifyAgents`, run `python scripts/sync-chimera-memory.py`.
-3. Stage `vendor/chimera-memory/` and commit as `vendor: sync CM <sha>`.
-4. Run PA vendor tests plus PA runtime/PWA tests.
-5. Push PA and verify CI when runtime behavior changed.
-
-Docs-only agent setup changes do not need the PA vendor sync unless Charles asks
-for the agent docs to be mirrored.
-
-## Validation
-
-Run the smallest relevant checks and report pass, fail, or not-run honestly.
-
-For docs/wiki-only changes:
-
-```powershell
-python "$env:USERPROFILE\.codex\skills\chimera-wiki\scripts\chimera_wiki.py" lint --root .
-git diff -- AGENTS.md CLAUDE.md docs/agents .wiki
-git status --short
-```
-
-For runtime module changes:
-
-```powershell
-python -m py_compile chimera_memory/<module>.py
-python -m pytest tests/test_<area>.py
-```
-
-When touching indexing/search/parser/memory core, also run:
-
-```powershell
-python tests/test_persona_scope.py
-python tests/test_memory_watcher.py
-python tests/test_indexer.py
-python tests/test_search.py
-python tests/test_parser.py
-```
-
-Run `python -m pytest` when behavior touches shared code, public surfaces, or
-core retrieval/indexing contracts.
+This repo is the single source of truth. The PersonifyAgents vendor copy and its
+`scripts/sync-chimera-memory.py` flow are **deprecated** — do not run a PA vendor
+sync unless Charles explicitly asks. Land all runtime CM changes here; there is
+no required downstream mirror.
 
 ## Final Response
 
-Include what changed, key files, validation run, assumptions, risks or skipped
-checks, and useful next steps. Never bury failed validation.
+Include what changed, key files, assumptions, risks, and useful next steps.

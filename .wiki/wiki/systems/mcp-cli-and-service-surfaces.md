@@ -564,6 +564,34 @@ patterns, or samples.
 Default-retrieval review checks use the same `exclude_from_default_search` key
 as indexing and context retrieval.
 
+## Harness Detection
+
+`chimera_memory/harness.py` `detect_harness()` chooses the transcript JSONL dir
+and parser for the active harness. Precedence (explicit env always wins; each
+later step only fills unset fields): explicit `CHIMERA_CLIENT` /
+`TRANSCRIPT_JSONL_DIR` (dir shapes recognized for `.codex/sessions`,
+`.claude/projects`, `.hermes/profiles/<persona>/sessions`) > process-injected
+running signals (`CLAUDECODE` -> Claude Code, `CODEX_SANDBOX` -> Codex; install
+vars `HERMES_HOME`/`CODEX_HOME` are deliberately ignored) > on-disk Codex
+sessions signature > per-file JSONL content sniff > Claude-Code default.
+Discovery is parser-aware via `BaseParser.session_glob` (`*.jsonl` for
+Claude/Codex, `session_*.json` for Hermes), and per-file content sniffing means a
+Codex rollout is never silently parsed as Claude. The persona transcript DB path
+resolves identically across the MCP query tools, the maintenance lock, and the
+five startup workers via `server._resolve_transcript_db_path()`.
+
+## Hermes Setup
+
+`chimera-memory hermes {template|doctor|install} --persona <NAME>` configures
+standalone-Hermes transcript indexing (owned by `hermes_setup.py`). Standalone
+Hermes is persona-scoped: CM reads only `~/.hermes/profiles/<persona>/sessions`.
+`template` is output-only (indexer env + paste-in `mcp_servers` block,
+least-privilege `persona_memory` surface); `doctor` is read-only and path-safe;
+`install` writes per-persona launcher scripts under `~/.chimera-memory/hermes/`
+(dry-run by default) and never mutates Hermes's `config.yaml`. Hermes running
+inside Claude Code (Claude-format JSONL under `~/.claude/projects`) is handled as
+`claude-code` with no setup. The PersonifyAgents installer is deprecated.
+
 ## Service-Mode Boundary
 
 Local streamable HTTP exists. A broader resident service architecture with a

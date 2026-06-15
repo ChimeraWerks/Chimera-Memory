@@ -66,6 +66,16 @@ that owns it, then re-export only if compatibility requires it.
 - `memory_scope.py`: global/project/persona scope normalization, project-root
   resolution, and SQL scope filters. Explicit `CHIMERA_MEMORY_PROJECT_ID`
   controls single-project indexing; folder-derived ids are fallback.
+- `harness.py`: active-harness identification (Claude Code / Codex / standalone
+  Hermes) for transcript indexing. Near-stdlib, never raises, never leaks paths.
+  Explicit env wins; otherwise process-injected running signals
+  (`CLAUDECODE`/`CODEX_SANDBOX`, not install vars) > session-dir signature >
+  per-file content sniff > Claude default. Consulted by
+  `server.get_default_jsonl_dir`, `indexer` parser selection, and the
+  active-harness lease.
+- `hermes_setup.py`: standalone Hermes setup helpers (template/doctor/install).
+  Never mutates Hermes `config.yaml`; persona-scoped and path-safe; `install`
+  writes per-persona launcher scripts and defaults to dry-run.
 - `memory.py`: compatibility facade plus low-level discovery/index/watch glue.
   Full-reindex and watcher discovery skip hidden/cache/auth/symlink child paths
   under managed roots without rejecting configured hidden roots themselves.

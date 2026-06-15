@@ -71,6 +71,31 @@ Rules:
   as `.chimera-memory` itself.
 - Operator-wide all-memory reads must be explicit.
 
+### `harness.py`
+
+Owns active-harness identification for transcript indexing (Claude Code, Codex,
+Hermes):
+
+- `detect_harness()` -> `HarnessProfile` (name, parser client, jsonl_dir,
+  recursive, source, confidence)
+- precedence: explicit `CHIMERA_CLIENT`/`TRANSCRIPT_JSONL_DIR` -> process-injected
+  running-harness env signals -> on-disk session-dir signature -> per-file content
+  sniff -> Claude-Code default
+- `sniff_jsonl_format()` content disambiguation (Codex `session_meta`/`payload`
+  vs Claude `sessionId`/chat types)
+- per-harness default session dirs (Claude projects, `~/.codex/sessions`,
+  persona-scoped `~/.hermes/profiles/<persona>/sessions`)
+
+Rules:
+
+- Near-stdlib: import only the standard library; no behavior-module imports.
+- Never raise; never emit raw filesystem paths into user/MCP-facing strings.
+- Use process-injected "currently running" signals (`CLAUDECODE`/`CODEX_SANDBOX`),
+  never install-location vars (`HERMES_HOME`/`CODEX_HOME`) that persist in every
+  shell and would mislabel.
+- Explicit env always wins; detection only fills unset fields; the default branch
+  is byte-for-byte the historical Claude behavior.
+
 ### `memory_global_seed.py`
 
 Owns dry-run-first global corpus seeding:
@@ -497,6 +522,26 @@ Rules:
   transcript session belongs to the current project workspace.
 - Keep mechanical injection outside MCP setup; this helper is for hooks,
   wrappers, and harnesses.
+
+### `hermes_setup.py`
+
+Owns standalone Hermes Agent setup helpers (parity with `codex_setup.py`, but
+narrower and safer):
+
+- `render_hermes_template()` (output-only indexer env/command + paste-in Hermes
+  `mcp_servers` block)
+- `inspect_hermes_setup()` read-only doctor (Hermes home, persona session store,
+  parse smoke, harness resolution)
+- `install_hermes_indexer()` writes per-persona launcher scripts under
+  `~/.chimera-memory/hermes/`; dry-run by default
+- `build_hermes_indexer_env()` / `hermes_sessions_dir()` persona-scoped resolution
+
+Rules:
+
+- Never mutate Hermes's comment-rich `config.yaml` (same clobbering risk class as
+  the Codex TOML installer); print the paste-in block instead.
+- Persona is required and sanitized against traversal; never scan across personas.
+- `doctor` is read-only and path-safe; `install` defaults to dry-run.
 
 ### `memory_retrieval_trace_analysis.py`
 
