@@ -412,13 +412,16 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 
 ### Transcript Layer (everything the harness wrote)
 
-Codex Desktop/CLI and Claude Code are first-class transcript sources with native
-parsers. The active harness is auto-identified (see Harness Detection below), so
-Codex `~/.codex/sessions` rollouts and Claude `~/.claude/projects` logs are picked
-up and parsed correctly without per-launch `CHIMERA_CLIENT`/`TRANSCRIPT_JSONL_DIR`.
-Hermes runs inside Claude Code and writes Claude-format JSONL, so its transcripts
-are indexed via the Claude parser (a native Hermes line schema is not yet a
-separate parser); Hermes also integrates as an MCP server and memory provider.
+Claude Code, Codex Desktop/CLI, and Hermes Agent are first-class transcript
+sources with native parsers. The active harness is auto-identified (see Harness
+Detection below), so Claude `~/.claude/projects` logs, Codex `~/.codex/sessions`
+rollouts, and Hermes `~/.hermes/profiles/<persona>/sessions/session_*.json` files
+are each discovered and parsed correctly without per-launch wiring. Two Hermes
+modes are supported: Hermes running *inside* Claude Code writes Claude-format
+JSONL (indexed via the Claude parser, auto-detected as `claude-code`), and the
+standalone Hermes agent writes per-persona `session_*.json` files (indexed via the
+native Hermes parser when `CHIMERA_CLIENT=hermes` and a persona are set). Hermes
+also integrates as an MCP server and memory provider.
 
 The `discord_*` tools below are legacy compatibility helpers for Discord-shaped
 transcript rows and older imports; they are not required for Codex Desktop/CLI
@@ -430,7 +433,9 @@ ChimeraMemory identifies the active harness so indexing finds the right session
 directory and parser. Precedence (each step only fills what the previous left
 unset; explicit overrides always win):
 
-1. Explicit `CHIMERA_CLIENT` / `TRANSCRIPT_JSONL_DIR`.
+1. Explicit `CHIMERA_CLIENT` (`claude`/`codex`/`hermes`) / `TRANSCRIPT_JSONL_DIR`
+   (the dir shape is recognized: `.codex/sessions`, `.claude/projects`,
+   `.hermes/profiles/<persona>/sessions`).
 2. Process-injected "currently running" env signals (`CLAUDECODE` → Claude Code,
    `CODEX_SANDBOX` → Codex). Install-location vars like `HERMES_HOME`/`CODEX_HOME`
    are deliberately **not** used — they persist in every shell and would mislabel.
@@ -438,6 +443,11 @@ unset; explicit overrides always win):
 4. Per-file JSONL content sniffing at index time, so a Codex rollout is never
    silently parsed as Claude (and vice-versa) even if the label is wrong.
 5. Default: Claude Code (historical behavior).
+
+Discovery is parser-aware: Claude/Codex use `*.jsonl`, Hermes uses
+`session_*.json`. Standalone Hermes is **persona-scoped** — set `CHIMERA_CLIENT=hermes`
+plus a persona (`CHIMERA_PERSONA_NAME`/`TRANSCRIPT_PERSONA`) so CM reads only that
+persona's `~/.hermes/profiles/<persona>/sessions`, never across personas.
 
 | Tool | What it does |
 |------|-------------|

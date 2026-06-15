@@ -54,6 +54,15 @@ class BaseParser(ABC):
         """Whether the source root should be scanned/watched recursively."""
         return False
 
+    @property
+    def session_glob(self) -> str:
+        """Filename glob the indexer/watcher use to discover session files.
+
+        Defaults to ``*.jsonl`` (Claude Code / Codex). Formats that store one
+        whole file per session (e.g. Hermes ``session_*.json``) override this.
+        """
+        return "*.jsonl"
+
     @abstractmethod
     def parse_file(self, path: Path, start_offset: int = 0) -> Generator[dict, None, int]:
         """Parse a session file from a byte offset. Yields structured entry dicts.
@@ -104,6 +113,9 @@ def get_parser(format_or_ext: str) -> BaseParser:
         "codex": "codex",
         "openai-codex": "codex",
         "openai_codex": "codex",
+        "hermes": "hermes",
+        "hermes-agent": "hermes",
+        "hermes_agent": "hermes",
     }
     format_or_ext = aliases.get((format_or_ext or "").lower(), format_or_ext)
     cls = _registry.get(format_or_ext)
@@ -195,6 +207,40 @@ class CodexParser(BaseParser):
 
 
 register_parser(CodexParser)
+
+
+class HermesParser(BaseParser):
+    """Parser for Hermes Agent per-persona session files.
+
+    Hermes writes one pretty-printed JSON file per session under
+    ``~/.hermes/profiles/<persona>/sessions/session_*.json`` with a top-level
+    ``messages`` array of ``{role, content}``. Unlike Claude/Codex this is a
+    whole-file ``.json`` (not append-only ``.jsonl``), so it is re-read in full
+    whenever its content hash changes rather than tail-read by byte offset.
+    """
+
+    @property
+    def format_name(self) -> str:
+        return "hermes"
+
+    @property
+    def file_extensions(self) -> list[str]:
+        # Hermes uses .json, which the generic .json extension must not claim
+        # globally; it is selected by client name / session dir like Codex.
+        return []
+
+    @property
+    def session_glob(self) -> str:
+        return "session_*.json"
+
+    def parse_file(self, path: Path, start_offset: int = 0) -> Generator[dict, None, int]:
+        return parse_hermes_session_file(path, start_offset)
+
+    def extract_session_metadata(self, path: Path) -> dict:
+        return extract_hermes_session_metadata(path)
+
+
+register_parser(HermesParser)
 
 
 # ─── Parsing Implementation ──────────────────────────────────────────
@@ -460,6 +506,104 @@ def _parse_codex_discord_context(message: str) -> dict | None:
     if not data.get("content"):
         return None
     return data
+
+
+def _hermes_message_text(content: object) -> str:
+    """Flatten a Hermes message ``content`` (str, content-block list, or dict)."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part).strip()
+    if isinstance(content, dict):
+        text = content.get("text") or content.get("content")
+        if isinstance(text, str):
+            return text.strip()
+    return ""
+
+
+def parse_hermes_session_file(path: Path, start_offset: int = 0) -> Generator[dict, None, int]:
+    """Parse a Hermes per-persona session JSON file into transcript entries.
+
+    Whole-file format: start_offset is ignored and the file is re-read in full on
+    every change. Re-inserted messages are deduped by the transcript UNIQUE key,
+    so a grown session only adds its new messages.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(raw)
+    except (OSError, ValueError):
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
+    final_pos = len(raw.encode("utf-8", errors="replace"))
+    if not isinstance(data, dict):
+        return final_pos
+    session_id = str(data.get("session_id") or path.stem)
+    base_ts = str(data.get("session_start") or data.get("last_updated") or "")
+    messages = data.get("messages") if isinstance(data.get("messages"), list) else []
+    role_map = {
+        "user": "user_message",
+        "assistant": "assistant_message",
+        "system": "system",
+        "tool": "tool_result",
+    }
+    for idx, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "").strip().lower()
+        content = _hermes_message_text(message.get("content"))
+        if not content:
+            continue
+        yield _make_entry(
+            session_id=session_id,
+            entry_type=role_map.get(role, "message"),
+            timestamp=str(message.get("timestamp") or message.get("created_at") or base_ts),
+            content=content,
+            source="hermes",
+            author=role or "hermes",
+            metadata={"message_index": idx},
+        )
+    return final_pos
+
+
+def extract_hermes_session_metadata(path: Path) -> dict:
+    """Extract session-level metadata from a Hermes session JSON file."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    session_id = str(data.get("session_id") or path.stem)
+    messages = data.get("messages") if isinstance(data.get("messages"), list) else []
+    title = ""
+    for message in messages:
+        if isinstance(message, dict) and str(message.get("role") or "").lower() == "user":
+            title = _hermes_message_text(message.get("content"))[:80]
+            if title:
+                break
+    try:
+        exchange_count = int(data.get("message_count"))
+    except (TypeError, ValueError):
+        exchange_count = len(messages)
+    return {
+        "session_id": session_id,
+        "title": title,
+        "git_branch": None,
+        "cwd": str(data.get("workspace") or data.get("cwd") or ""),
+        "started_at": str(data.get("session_start") or ""),
+        "ended_at": str(data.get("last_updated") or ""),
+        "exchange_count": exchange_count,
+    }
 
 
 def _extract_codex_session_id(path: Path) -> str:

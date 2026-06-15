@@ -18,6 +18,8 @@ _HARNESS_ENV = (
     "CODEX_MANAGED_BY_NPM",
     "HERMES_HOME",
     "HERMES_INSTALL_DIR",
+    "CHIMERA_PERSONA_NAME",
+    "TRANSCRIPT_PERSONA",
 )
 
 
@@ -56,13 +58,24 @@ def test_explicit_client_claude(monkeypatch):
     assert profile.recursive is False
 
 
-def test_explicit_client_hermes_uses_claude_parser(monkeypatch):
+def test_explicit_client_hermes_uses_hermes_parser(monkeypatch):
     monkeypatch.setenv("CHIMERA_CLIENT", "hermes")
+    monkeypatch.setenv("CHIMERA_PERSONA_NAME", "asa")
     profile = harness.detect_harness()
     assert profile.name == harness.HERMES
-    # Hermes writes Claude-format JSONL today; parser key must be claude-code.
-    assert profile.client == harness.CLAUDE_CODE
+    assert profile.client == harness.HERMES
     assert profile.recursive is False
+    # Persona-scoped Hermes session dir, never a cross-persona root.
+    jd = str(profile.jsonl_dir).replace("\\", "/")
+    assert jd.endswith(".hermes/profiles/asa/sessions")
+
+
+def test_explicit_dir_infers_hermes(monkeypatch):
+    monkeypatch.setenv("TRANSCRIPT_JSONL_DIR", "~/.hermes/profiles/asa/sessions")
+    profile = harness.detect_harness()
+    assert profile.name == harness.HERMES
+    assert profile.client == harness.HERMES
+    assert profile.source == "jsonl_dir"
 
 
 def test_explicit_dir_infers_codex(monkeypatch):

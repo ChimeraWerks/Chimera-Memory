@@ -139,6 +139,21 @@ def codex_sessions_dir() -> Path:
     return Path.home().joinpath(*_CODEX_SESSIONS_SUBPATH)
 
 
+def hermes_sessions_dir() -> Path:
+    """Per-persona Hermes session dir: ~/.hermes/profiles/<persona>/sessions.
+
+    Persona-scoped on purpose: with no persona it points at the profiles root,
+    which a flat ``session_*.json`` glob never matches, so Hermes never scans
+    across personas (a privacy boundary). Set a persona to index Hermes.
+    """
+    persona = (
+        os.environ.get("CHIMERA_PERSONA_NAME", "").strip()
+        or os.environ.get("TRANSCRIPT_PERSONA", "").strip()
+    )
+    base = Path.home() / ".hermes" / "profiles"
+    return (base / persona / "sessions") if persona else base
+
+
 def _client_from_dir(dir_text: str) -> str | None:
     """Infer the harness from a configured JSONL directory path shape."""
     normalized = str(dir_text or "").strip().replace("\\", "/").lower().rstrip("/")
@@ -148,6 +163,8 @@ def _client_from_dir(dir_text: str) -> str | None:
         return CODEX
     if "/.claude/projects" in normalized:
         return CLAUDE_CODE
+    if "/.hermes/profiles" in normalized and "/sessions" in normalized:
+        return HERMES
     return None
 
 
@@ -233,20 +250,21 @@ def _profile_for_client(
 ) -> HarnessProfile:
     name = normalize_client(client) or CLAUDE_CODE
     recursive = name == CODEX
-    # Hermes writes Claude-format JSONL under ~/.claude/projects (it runs inside
-    # Claude Code today), so its parser key and default dir mirror Claude until a
-    # native Hermes line schema exists. Scar: README oversells a Hermes parser
-    # that does not exist; mapping hermes->claude here keeps indexing correct.
-    parser_client = CLAUDE_CODE if name == HERMES else name
+    # Note: Hermes ALSO runs inside Claude Code (writing Claude-format JSONL under
+    # ~/.claude/projects); that case is detected as claude-code via the CLAUDECODE
+    # env signal. The HERMES branch here is the standalone Hermes agent, whose
+    # native per-persona session_*.json files the HermesParser reads directly.
     if dir_override:
         jsonl_dir: Path | None = Path(dir_override).expanduser()
     elif name == CODEX:
         jsonl_dir = codex_sessions_dir()
+    elif name == HERMES:
+        jsonl_dir = hermes_sessions_dir()
     else:
         jsonl_dir = claude_projects_dir_for_cwd(cwd)
     return HarnessProfile(
         name=name,
-        client=parser_client,
+        client=name,
         jsonl_dir=jsonl_dir,
         recursive=recursive,
         source=source,

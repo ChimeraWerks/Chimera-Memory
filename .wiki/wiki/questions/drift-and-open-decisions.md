@@ -46,9 +46,20 @@ sources:
   (`CLAUDECODE`/`CODEX_SANDBOX`; install-location vars like `HERMES_HOME`/
   `CODEX_HOME` are intentionally ignored because they persist in every shell) →
   on-disk session-dir signature → per-file JSONL content sniff at index time →
-  Claude-Code default. Hermes writes Claude-format JSONL, so detected `hermes`
-  maps to the Claude parser; a native Hermes parser is still open. README harness
-  rows and the "first-class transcript source" claim were corrected to match.
+  Claude-Code default. README harness rows and the "first-class transcript source"
+  claim were corrected to match.
+- Native Hermes parser added (2026-06-14): Hermes has TWO transcript modes. (1)
+  Hermes running inside Claude Code writes Claude-format JSONL under
+  `~/.claude/projects` and is detected as `claude-code`. (2) The standalone Hermes
+  agent writes per-persona whole-file `~/.hermes/profiles/<persona>/sessions/
+  session_*.json` — now parsed by a real `HermesParser` (selected via
+  `CHIMERA_CLIENT=hermes` or that session-dir shape). Indexer file discovery and
+  the watchdog are now parser-aware (`session_glob`: `*.jsonl` for Claude/Codex,
+  `session_*.json` for Hermes); whole-file rewrites route through hash-based
+  reindex, deduped by the transcript UNIQUE key. Standalone Hermes is
+  persona-scoped (requires a persona; never scans across personas). Verified on
+  real `asa` data (248 entries from 5 sessions; was 0 before). Open: a
+  `chimera-memory hermes install` convenience flow (parity with `codex install`).
 - Persona transcript DB resolution unified (2026-06-14): the MCP query tools, the
   maintenance-lock path, and all five startup workers now share
   `server._resolve_transcript_db_path()`. Previously the workers ignored persona

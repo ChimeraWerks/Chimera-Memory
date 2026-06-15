@@ -140,8 +140,10 @@ class Indexer:
 
     def _session_files(self) -> list[Path]:
         globber = self.jsonl_dir.rglob if self.recursive else self.jsonl_dir.glob
+        # Parser-aware glob: Claude/Codex use *.jsonl, Hermes uses session_*.json.
+        pattern = getattr(self.parser, "session_glob", "*.jsonl")
         return sorted(
-            (path for path in globber("*.jsonl") if self._should_index_file(path)),
+            (path for path in globber(pattern) if self._should_index_file(path)),
             key=lambda p: p.stat().st_mtime,
         )
 
@@ -227,6 +229,11 @@ class Indexer:
         session. Sniffing is bounded (a few lines) and only overrides when the
         file's format is unambiguous and differs from the active parser.
         """
+        # Content sniffing only disambiguates the two .jsonl formats (Claude vs
+        # Codex). Whole-file formats like Hermes session_*.json keep the active
+        # parser selected by client/session-dir.
+        if path.suffix.lower() != ".jsonl":
+            return self.parser
         try:
             from .harness import sniff_jsonl_format
 
@@ -328,8 +335,18 @@ class Indexer:
 
         log.info("Indexed %s: %d entries (offset %d -> %d)", path.name, entries_seen, start_offset, final_pos)
 
+    def _watch_matches(self, path: Path) -> bool:
+        pattern = getattr(self.parser, "session_glob", "*.jsonl")
+        return fnmatch.fnmatch(path.name.lower(), pattern.lower())
+
     def tail_file(self, path: Path):
-        """Tail-read new content from an active JSONL file."""
+        """Tail-read new content from an active session file."""
+        # Whole-file formats (e.g. Hermes session_*.json) are rewritten in place,
+        # so the size may not grow; route them through hash-based reindexing.
+        if path.suffix.lower() != ".jsonl":
+            self.index_file(path)
+            return
+
         file_path_str = str(path.resolve())
 
         with self.db.connection() as conn:
@@ -375,7 +392,7 @@ class Indexer:
                     if event.is_directory:
                         return
                     path = Path(event.src_path)
-                    if path.suffix == ".jsonl":
+                    if self.indexer._watch_matches(path):
                         try:
                             self.indexer.tail_file(path)
                         except Exception:
@@ -385,7 +402,7 @@ class Indexer:
                     if event.is_directory:
                         return
                     path = Path(event.src_path)
-                    if path.suffix == ".jsonl":
+                    if self.indexer._watch_matches(path):
                         try:
                             self.indexer.index_file(path)
                         except Exception:
