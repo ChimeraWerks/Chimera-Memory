@@ -152,6 +152,12 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       callback; bounded to the 15-min flow TTL).
 - [x] schema-db-05 — additive migration is idempotent (re-run completes any
       half-applied state); explicit-transaction wrap is disproportionate.
+- [x] smr-09 — startup-worker persona labeling drift (only manifests when
+      multiple persona env vars disagree). Shares its root cause with the
+      already-landed smr-01 (the high-impact db_path split-brain); harmonizing the
+      remaining three workers would change the transcript indexer's authoritative
+      config-vs-env persona scoping (beyond labeling), which is disproportionate
+      risk for an observability-label-only low finding. Left as documented drift.
 
 ### Fixes (per batch)
 
@@ -251,6 +257,12 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       on empty output and `_semantic_candidates` degrades to FTS-only rather than
       crashing the per-turn pack. Tests: `test_cognitive.py`, `test_embeddings.py`.
       (se-08 won't-fix above.)
+- [x] smr-06, smr-07, smr-08, smr-10, smr-11 — `main()` joins the bootstrap thread
+      (bounded) before teardown and closes the cached transcript DB (exposed via
+      `server._chimera_state`); discord/semantic timestamp slices are null-tolerant;
+      health re-evaluates `memory_file_watcher` per tick (no frozen healthy-by-
+      default); the worker MCP surface no longer registers an active-harness lease.
+      Tests: `test_server_startup.py`. (smr-09 documented-deferred above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

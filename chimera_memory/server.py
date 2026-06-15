@@ -706,7 +706,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
         # Format as readable conversation
         lines = []
         for msg in results:
-            ts = msg.get("timestamp", "?")[:19]
+            ts = (msg.get("timestamp") or "?")[:19]
             author_name = msg.get("author", "unknown")
             entry_type = msg.get("entry_type", "")
             content = msg.get("content", "")
@@ -833,7 +833,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
 
         lines = []
         for msg in results:
-            ts = msg.get("timestamp", "?")[:19]
+            ts = (msg.get("timestamp") or "?")[:19]
             author_name = msg.get("author", "unknown")
             entry_type = msg.get("entry_type", "")
             content = msg.get("content", "")
@@ -967,7 +967,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
 
         lines = []
         for msg in results:
-            ts = msg.get("timestamp", "?")[:19]
+            ts = (msg.get("timestamp") or "?")[:19]
             author_name = msg.get("author", "unknown")
             entry_type = msg.get("entry_type", "")
             content = msg.get("content", "")
@@ -1091,7 +1091,11 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             conn = db._connect()
             init_memory_tables(conn)
             _memory_conn_local.conn = conn
-        _refresh_active_harness_lease(conn, _get_db())
+        # The worker surface is a constrained, supervised process; registering it
+        # as an active harness pollutes the active-harness reports operators use
+        # to reason about who is driving a persona DB (smr-11).
+        if _mcp_surface != "worker":
+            _refresh_active_harness_lease(conn, _get_db())
         return conn
 
     def _ensure_memory_indexed():
@@ -3740,6 +3744,10 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             "audit, harness, gaps, provider_plan, cli_worker, enhancement, health, context, consolidation, guard, or whereami."
         )
 
+    # Expose the cached-connection state so main() can close the transcript DB on
+    # shutdown (orderly -wal/-shm checkpoint) instead of leaving it to process
+    # teardown; per-thread memory connections can't be closed off-thread (smr-07).
+    server._chimera_state = _state
     return server
 
 
@@ -4161,6 +4169,14 @@ def _memory_file_watcher_expected() -> bool:
         return True
 
 
+def _memory_file_watcher_health() -> bool:
+    # Healthy if the watcher is running OR it is legitimately not expected (no
+    # memory roots yet). Recomputed per health tick so a watcher that becomes
+    # expected after roots appear (first memory_remember) stops being reported
+    # healthy-by-default off a value frozen at boot (smr-10).
+    return _memory_file_watcher_handle is not None or not _memory_file_watcher_expected()
+
+
 def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dict[str, object] | None:
     """Periodically persist CM health snapshots so silent drift is visible."""
     if not _env_bool("CHIMERA_MEMORY_HEALTH_WORKER", default=True):
@@ -4186,13 +4202,19 @@ def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dic
         from .db import TranscriptDB
         from .memory_health import record_cm_health_snapshot
 
+        # Re-evaluate the watcher each tick instead of freezing its boot value, so
+        # a watcher that becomes expected after roots appear is no longer reported
+        # healthy-by-default (smr-10).
+        states = dict(worker_states) if worker_states else None
+        if states is not None and "memory_file_watcher" in states:
+            states["memory_file_watcher"] = _memory_file_watcher_health()
         db_path = _resolve_transcript_db_path()
         db = TranscriptDB(db_path)
         with db.connection() as conn:
             snapshot = record_cm_health_snapshot(
                 conn,
                 persona=current_persona,
-                worker_states=worker_states,
+                worker_states=states,
             )
         log.info("CM health snapshot status=%s", snapshot.get("status"))
 
@@ -4417,8 +4439,7 @@ def _bootstrap_startup_services() -> object | None:
     _health_worker_handle = _start_cm_health_worker(
         {
             "transcript_indexer": indexer is not None,
-            "memory_file_watcher": _memory_file_watcher_handle is not None
-            or not memory_file_watcher_expected,
+            "memory_file_watcher": _memory_file_watcher_health(),
             "transcript_embedding_worker": _embedding_worker_handle is not None
             or not _env_bool("CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER", default=True),
             "memory_enhancement_worker": _enhancement_worker_handle is not None
@@ -4495,6 +4516,7 @@ def main(
     if os.environ.get("CHIMERA_MEMORY_MCP_SURFACE", "").strip().lower() == "worker":
         startup_mode = "disabled"
     startup_state: dict[str, object | None] = {"indexer": None, "thread": None}
+    server = None  # so the finally can reference it even if create_server() raises
     try:
         if host == "127.0.0.1" and port == 8000:
             server = create_server()
@@ -4533,6 +4555,13 @@ def main(
         logging.getLogger("chimera_memory").exception("server.run() crashed")
         raise
     finally:
+        bootstrap_thread = startup_state.get("thread")
+        if isinstance(bootstrap_thread, threading.Thread):
+            # Bounded join so a fast post_ready shutdown does not race the daemon
+            # bootstrap, which sets the _*_handle globals this finally stops; without
+            # it the stops no-op on still-None handles and the bootstrap starts
+            # watchers/workers after teardown intent (smr-06).
+            bootstrap_thread.join(timeout=5)
         indexer = startup_state.get("indexer")
         if indexer is not None:
             try:
@@ -4546,6 +4575,13 @@ def main(
         if _startup_maintenance_lease is not None:
             _startup_maintenance_lease.release()
             _startup_maintenance_lease = None
+        chimera_state = getattr(server, "_chimera_state", None)
+        db = chimera_state.get("db") if isinstance(chimera_state, dict) else None
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
         logging.getLogger("chimera_memory").info("server exiting (pid=%s)", os.getpid())
 
 

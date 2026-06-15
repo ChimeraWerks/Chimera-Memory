@@ -140,6 +140,9 @@ def test_main_defers_bootstrap_until_tools_list_by_default(monkeypatch):
         def start(self):
             calls.append(("thread.start", self.name, self.daemon))
 
+        def join(self, timeout=None):
+            pass
+
     class FakeServer:
         def run(self, *, transport):
             calls.append(("run", transport))
@@ -173,6 +176,9 @@ def test_main_can_start_bootstrap_in_background_immediately(monkeypatch):
 
         def start(self):
             calls.append(("thread.start", self.name, self.daemon))
+
+        def join(self, timeout=None):
+            pass
 
     class FakeServer:
         def run(self, *, transport):
@@ -479,6 +485,9 @@ def test_enhancement_worker_starts_dry_run_by_default(monkeypatch):
         def start(self):
             calls.append(("thread.start", self.name, self.daemon))
 
+        def join(self, timeout=None):
+            pass
+
     monkeypatch.delenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER", raising=False)
     monkeypatch.delenv("CHIMERA_MEMORY_ENHANCEMENT_WORKER_MODE", raising=False)
     monkeypatch.setattr(server.threading, "Thread", FakeThread)
@@ -628,6 +637,9 @@ def test_background_bootstrap_logs_failures(monkeypatch, caplog):
         def start(self):
             self.target()
 
+        def join(self, timeout=None):
+            pass
+
     def fail_bootstrap():
         raise RuntimeError("boom")
 
@@ -719,3 +731,19 @@ def test_start_transcript_indexer_can_skip_historical_import(monkeypatch, tmp_pa
 
     assert calls == ["mark_seen", "repair", "watch"]
     assert "Historical transcript import disabled" in caplog.text
+
+
+def test_memory_file_watcher_health_recomputes_expectation(monkeypatch):
+    # smr-10: watcher health is healthy when running OR not-expected, and unhealthy
+    # once it becomes expected (roots appeared) but is not running — re-evaluated
+    # live rather than frozen at boot.
+    monkeypatch.setattr(server, "_memory_file_watcher_handle", None, raising=False)
+
+    monkeypatch.setattr(server, "_memory_file_watcher_expected", lambda: False)
+    assert server._memory_file_watcher_health() is True
+
+    monkeypatch.setattr(server, "_memory_file_watcher_expected", lambda: True)
+    assert server._memory_file_watcher_health() is False
+
+    monkeypatch.setattr(server, "_memory_file_watcher_handle", object(), raising=False)
+    assert server._memory_file_watcher_health() is True
