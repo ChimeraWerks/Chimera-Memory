@@ -25,9 +25,10 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 
 - [x] T1.1/hc-01/smr-01 (CRITICAL): unified `server._resolve_transcript_db_path()`
       across `_get_db`, lock path, and the 5 startup workers. Test: test_db_resolution.py.
-- [ ] T1.3/smr-04: wire MCP `clientInfo.name` into `harness.set_mcp_client_hint`
-      (hook exists in harness.py; FastMCP initialize capture not yet wired).
-- [ ] T1.5/hc-08: scope Codex session indexing by cwd when no persona_root.
+- [x] T1.3/smr-04: wire MCP `clientInfo.name` into `harness.set_mcp_client_hint`
+      — landed in the Medium batch (Phase B); see `smr-04/T1.3` below.
+- [x] T1.5/hc-08: scope Codex session indexing by cwd when no persona_root
+      — landed in the Medium batch (Phase B); see `hc-08/T1.5` below.
 - [x] T1.6/F5: README harness rows + `.wiki` drift page updated.
 
 ## Theme 2 — Safety / path & secret leaks (hard-rule)
@@ -36,7 +37,8 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 - [x] smr-03: redact absolute paths from `memory_whereami` (MCP surface only).
 - [x] ghh-03: broaden OpenAI key regex (`sk-proj-`, `sk-svcacct-`).
 - [x] ghh-02: sanitize trace-analysis fields sent to provider.
-- [ ] (remaining T2.* path/secret redactions per synthesis plan — medium/low.)
+- [x] (remaining T2.* path/secret redactions — closed across the Medium/Low
+      batches below: hc-04, ec-01, pc-05, wcp-11, mfr-08, gsr-03, etc.)
 
 ## Theme 3 — Crash / raw-exception guards (mostly mechanical)
 
@@ -45,7 +47,8 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 - [x] mfr-01: live-retrieval `superseded` lifecycle filter.
 - [x] cli-01: CLI top-level exception handler.
 - [x] imp-01/imp-02: ChatGPT importer epoch + string-sort crash guards.
-- [ ] (remaining T3.* guards — medium/low: model-catalog, null-ts slices, etc.)
+- [x] (remaining T3.* guards — closed across the Medium/Low batches below:
+      pc-01 model-catalog, smr-07 null-ts slices, se-07 embed-empty, etc.)
 
 ## Theme 4+ — High-severity items landed
 
