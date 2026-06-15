@@ -96,13 +96,39 @@ def reinforce_on_access(conn: sqlite3.Connection, file_id: int):
 
     Called by search/recall functions (but NOT during maintenance/reindex).
     """
-    conn.execute("""
+    reinforce_on_access_batch(conn, [file_id])
+
+
+def reinforce_on_access_batch(conn: sqlite3.Connection, file_ids) -> int:
+    """Reinforce many accessed memories in one UPDATE + one commit.
+
+    Recall/search reinforce every returned row; a commit per row turned a read
+    into N writes (mfr-03). Also stores a full ISO timestamp instead of a
+    date-only value so salience decay has sub-day resolution.
+    """
+    ids: list[int] = []
+    seen: set[int] = set()
+    for fid in file_ids:
+        if fid is None:
+            continue
+        value = int(fid)
+        if value not in seen:
+            seen.add(value)
+            ids.append(value)
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(
+        f"""
         UPDATE memory_files SET
             fm_access_count = COALESCE(fm_access_count, 0) + 1,
-            fm_last_accessed = strftime('%Y-%m-%d', 'now')
-        WHERE id = ?
-    """, (file_id,))
+            fm_last_accessed = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        WHERE id IN ({placeholders})
+        """,
+        ids,
+    )
     conn.commit()
+    return len(ids)
 
 
 # ─── Surprise Scoring ────────────────────────────────────────────────

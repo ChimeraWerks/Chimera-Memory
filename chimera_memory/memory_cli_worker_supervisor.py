@@ -636,6 +636,10 @@ def _worker_mcp_config(*, db_path: str, sessions_dir: Path, persona: str, mcp_co
         "CHIMERA_MEMORY_TRANSCRIPT_EMBEDDING_WORKER": "false",
         "CHIMERA_MEMORY_HEALTH_WORKER": "false",
         "CHIMERA_MEMORY_IMPORT_HISTORY": "false",
+        # The worker never embeds; loading the embedding model on every worker
+        # serve is pure startup cost (wsm-04). The embedding worker is disabled
+        # above, so nothing else owns the model here either.
+        "CHIMERA_MEMORY_PREWARM_EMBEDDINGS": "false",
     }
     if persona:
         env["TRANSCRIPT_PERSONA"] = persona

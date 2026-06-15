@@ -11,7 +11,9 @@ from typing import Any
 from .embeddings import TRANSCRIPT_EMBEDDABLE_TYPES, init_embedding_table
 from .memory_observability import record_memory_audit_event
 
-_STATUS_RANK = {"ok": 0, "degraded": 1, "broken": 2}
+# not_built/disabled are informational (rank 0): a fresh or embeddings-off
+# install is not "broken" (corruption); they never escalate the overall status.
+_STATUS_RANK = {"not_built": 0, "disabled": 0, "ok": 0, "degraded": 1, "broken": 2}
 
 
 DEFAULT_THRESHOLDS = {
@@ -88,7 +90,9 @@ def _check_embeddings(conn: sqlite3.Connection, thresholds: dict[str, int], now:
 
     status = "ok"
     if eligible and not embedded:
-        status = "broken"
+        # No embeddings yet: the embed worker has not run (or was never run on a
+        # fresh install). That is not corruption — report 'not_built' (se-06).
+        status = "not_built"
     elif pending >= thresholds["unembedded_broken"]:
         status = "broken"
     elif pending >= thresholds["unembedded_degraded"]:

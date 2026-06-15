@@ -475,15 +475,20 @@ def hybrid_search(
     results.sort(key=lambda r: -rrf_scores.get(r.get("id", 0), 0))
 
     # Apply re-ranking
-    results = _rerank(results)
+    results = _rerank(results, rrf_scores)
 
     return results
 
 
-def _rerank(results: list[dict]) -> list[dict]:
+def _rerank(results: list[dict], rrf_scores: dict | None = None) -> list[dict]:
     """Post-RRF re-ranking with contextual signals.
 
+    The RRF fusion score is the dominant relevance signal; the contextual
+    multipliers only modulate it. Previously the base score was a flat 1.0, which
+    discarded RRF entirely so ranking was recency/richness only (se-02).
+
     Multiplicative scoring:
+    - Base: the RRF fusion score (FTS + vector)
     - Recency: 2^(-days/14), floor 0.1 (14-day half-life)
     - Session affinity: boost results from the most recent session
     - Observation richness: 1 + log1p(content_length) / 10
@@ -491,12 +496,15 @@ def _rerank(results: list[dict]) -> list[dict]:
     if not results:
         return results
 
+    rrf_scores = rrf_scores or {}
     now = datetime.now(timezone.utc)
     most_recent_session = results[0].get("session_id") if results else None
 
     scored = []
     for r in results:
-        score = 1.0
+        # Dominant relevance term; tiny floor so a row missing from the RRF map
+        # still orders by context rather than collapsing to zero.
+        score = rrf_scores.get(r.get("id", 0), 0.0) or 1e-9
 
         # Recency signal
         ts_str = r.get("timestamp", "")

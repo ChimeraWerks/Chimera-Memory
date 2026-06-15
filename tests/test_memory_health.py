@@ -38,14 +38,16 @@ def _write_memory(path, frontmatter: list[str]) -> None:
     )
 
 
-def test_health_marks_missing_embeddings_broken_then_ok() -> None:
+def test_health_marks_missing_embeddings_not_built_then_ok() -> None:
     conn = _conn()
     transcript_id = _insert_transcript(conn)
 
     snapshot = collect_cm_health(conn, persona="asa")
 
-    assert snapshot["status"] == "broken"
-    assert snapshot["checks"]["embeddings"]["status"] == "broken"
+    # A never-embedded install is 'not_built', not 'broken' (se-06): the embed
+    # worker simply has not run yet, so it must not escalate the overall status.
+    assert snapshot["status"] != "broken"
+    assert snapshot["checks"]["embeddings"]["status"] == "not_built"
     assert snapshot["checks"]["embeddings"]["eligible"] == 1
     assert snapshot["checks"]["embeddings"]["pending"] == 1
 

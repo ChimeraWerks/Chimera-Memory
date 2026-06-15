@@ -976,7 +976,7 @@ def memory_search(
     global_root: str | Path | None = None,
 ) -> list[dict]:
     """Full-text search across memory files."""
-    from .cognitive import reinforce_on_access
+    from .cognitive import reinforce_on_access_batch
     from .memory_relevance import quality_filter_candidates
 
     query_terms = query.split()
@@ -1044,8 +1044,7 @@ def memory_search(
     )
     results = filtered_candidates[:limit]
 
-    for item in results:
-        reinforce_on_access(conn, int(item["id"]))
+    reinforce_on_access_batch(conn, [item["id"] for item in results])
     record_memory_recall_trace(
         conn,
         tool_name="memory_search",
@@ -1502,7 +1501,8 @@ def memory_recall(
     rows = conn.execute(f"""
         SELECT f.id, f.path, f.persona, f.relative_path, f.fm_type,
                f.fm_importance, f.fm_status, f.fm_about, f.fm_tags, e.embedding,
-               f.memory_scope, f.project_id, substr(memory_fts.content, 1, 2000) AS match_text
+               f.memory_scope, f.project_id, substr(memory_fts.content, 1, 2000) AS match_text,
+               f.content_fingerprint
         FROM memory_files f
         JOIN memory_embeddings e ON e.file_id = f.id
         LEFT JOIN memory_fts ON memory_fts.rowid = f.id
@@ -1536,6 +1536,7 @@ def memory_recall(
             "match_text": "",
             "memory_scope": r[10],
             "project_id": r[11],
+            "content_fingerprint": r[13],
             "recall_source": "semantic",
         }))
 
@@ -1564,7 +1565,7 @@ def memory_recall(
                    f.memory_scope, f.project_id,
                    snippet(memory_fts, 3, '>>>', '<<<', '...', 32) AS snippet,
                    substr(memory_fts.content, 1, 2000) AS match_text,
-                   rank
+                   rank, f.content_fingerprint
             FROM memory_fts
             JOIN memory_files f ON f.id = memory_fts.rowid
             WHERE memory_fts MATCH ? AND {where}
@@ -1591,6 +1592,7 @@ def memory_recall(
                 "match_text": r[12] or "",
                 "memory_scope": r[9],
                 "project_id": r[10],
+                "content_fingerprint": r[14],
                 "recall_source": "fts_rescue",
                 "requires_strict_term_coverage": True,
             })
@@ -1653,11 +1655,23 @@ def memory_recall(
             ranked_candidates,
             query_terms=query_terms,
         )
-    top = filtered_candidates[:selected_limit]
 
-    from .cognitive import reinforce_on_access
-    for item in top:
-        reinforce_on_access(conn, item["id"])
+    # Collapse content-duplicate files (different ids, identical body) the way
+    # context_pack does, keeping the highest-ranked copy. Without this, shared and
+    # global overlap surfaced the same memory twice (mfr-04).
+    deduped_candidates: list[dict] = []
+    seen_fingerprints: set[str] = set()
+    for item in filtered_candidates:
+        fingerprint = str(item.get("content_fingerprint") or "").strip()
+        if fingerprint:
+            if fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
+        deduped_candidates.append(item)
+    top = deduped_candidates[:selected_limit]
+
+    from .cognitive import reinforce_on_access_batch
+    reinforce_on_access_batch(conn, [item["id"] for item in top])
 
     results = [
         {
