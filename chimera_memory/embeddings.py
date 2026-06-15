@@ -377,6 +377,12 @@ def embed_text(text: str) -> list[float]:
     """Embed a single text string. Returns a list of floats."""
     model = _get_model()
     results = list(model.embed([text]))
+    if not results:
+        # fastembed yields one vector per non-empty input today; an empty result
+        # would IndexError below and escape unwrapped through the
+        # memory_context_pack MCP path. Raise a clean error so callers degrade to
+        # FTS-only instead of leaking a raw exception (se-07).
+        raise RuntimeError("embedding produced no output")
     return results[0].tolist()
 
 

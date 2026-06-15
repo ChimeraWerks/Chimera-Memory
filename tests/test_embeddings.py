@@ -244,3 +244,18 @@ def test_get_model_is_single_flight(monkeypatch) -> None:
     assert len(calls) == 1
     assert len(results) == 2
     assert results[0] is results[1]
+
+
+def test_embed_text_raises_on_empty_model_output(monkeypatch) -> None:
+    # se-07: an empty embed result must raise a clean error (callers degrade to
+    # FTS-only) instead of IndexError escaping unwrapped through the MCP path.
+    import pytest
+
+    class _EmptyModel:
+        def embed(self, _texts):
+            return iter([])
+
+    monkeypatch.setattr(embeddings, "_get_model", lambda: _EmptyModel())
+
+    with pytest.raises(RuntimeError, match="no output"):
+        embeddings.embed_text("anything")

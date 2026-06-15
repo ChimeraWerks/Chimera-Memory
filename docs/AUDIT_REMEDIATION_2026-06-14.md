@@ -244,6 +244,13 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       (halves FTS work, no double-index). Tests: `test_memory_schema_hygiene.py`,
       `test_transcript_db.py`, `test_db_split.py`. (schema-db-03, schema-db-10
       already-fixed; schema-db-05 won't-fix above.)
+- [x] se-04, se-05, se-07 — salience/zone `_days_since` normalizes UTC-`Z` and
+      naive dates against a tz-aware UTC `now` (no offset bias / naive-aware
+      crash); `apply_salience_decay` docstring corrected to read-only report and
+      the dead `updates` accumulation dropped; `embed_text` raises a clean error
+      on empty output and `_semantic_candidates` degrades to FTS-only rather than
+      crashing the per-turn pack. Tests: `test_cognitive.py`, `test_embeddings.py`.
+      (se-08 won't-fix above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

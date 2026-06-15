@@ -227,7 +227,13 @@ def _semantic_candidates(
 
     from .embeddings import cosine_similarity, embed_text, unpack_embedding
 
-    query_emb = embed_text(query_text)
+    try:
+        query_emb = embed_text(query_text)
+    except Exception:
+        # Degrade to FTS-only rather than crashing the per-turn pack if embedding
+        # fails (e.g. embed_text raised on empty output) — keeps the MCP path from
+        # leaking a raw exception (se-07).
+        return [], {"enabled": False, "reason": "embedding_failed"}
     conditions, params, scope_policy = _memory_conditions(
         persona=persona,
         project_id=project_id,

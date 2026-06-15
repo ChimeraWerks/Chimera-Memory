@@ -7,7 +7,7 @@ and zone assignments based on access patterns, novelty, and time.
 import math
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 log = logging.getLogger(__name__)
@@ -37,10 +37,11 @@ def apply_salience_decay(conn: sqlite3.Connection, persona: Optional[str] = None
 
     Formula: effective_importance = importance * e^(-decay_rate * days_since_access)
 
-    Does NOT modify importance directly (that's the author's judgment).
-    Instead, stores a `decayed_importance` that search can use for ranking.
+    Does NOT modify importance directly (that's the author's judgment) and does
+    NOT persist anything: this is a read-only analytical report (surfaced by the
+    memory_decay_report MCP tool). No search/zone path reads a decayed value.
 
-    Returns summary of changes.
+    Returns a summary (total analyzed, count that would decay, per-type rates).
     """
     where = "WHERE persona = ?" if persona else ""
     params = [persona] if persona else []
@@ -50,12 +51,10 @@ def apply_salience_decay(conn: sqlite3.Connection, persona: Optional[str] = None
         FROM memory_files {where}
     """, params).fetchall()
 
-    now = datetime.now()
-    updates = []
+    now = datetime.now(timezone.utc)
     decayed_count = 0
 
     for r in rows:
-        file_id = r[0]
         fm_type = r[1] or "unknown"
         importance = r[2]
         last_accessed = r[3]
@@ -77,12 +76,6 @@ def apply_salience_decay(conn: sqlite3.Connection, persona: Optional[str] = None
 
         if decayed < importance:
             decayed_count += 1
-
-        updates.append((decayed, file_id))
-
-    # We don't modify fm_importance (author's judgment).
-    # Instead, we could store decayed values in a separate column.
-    # For now, return the report for the consolidation system to use.
 
     return {
         "total_analyzed": len(rows),
@@ -297,7 +290,7 @@ def compute_all_zones(conn: sqlite3.Connection, persona: Optional[str] = None) -
     """Compute zone assignments for all memories."""
     where = "WHERE persona = ?" if persona else ""
     params = [persona] if persona else []
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     rows = conn.execute(f"""
         SELECT id, relative_path, persona, fm_type, fm_importance,
@@ -344,9 +337,17 @@ def _days_since(last_accessed, created, now: datetime) -> float:
     """Calculate days since last access, falling back to creation date."""
     for date_str in (last_accessed, created):
         if date_str:
+            text = str(date_str)
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
             try:
-                dt = datetime.fromisoformat(str(date_str))
-                return max(0, (now - dt).total_seconds() / 86400)
+                dt = datetime.fromisoformat(text)
             except (ValueError, TypeError):
                 continue
+            # Stored fm_last_accessed is UTC ('...Z'); an author-supplied
+            # fm_created may be a naive date. Normalize naive to UTC so the
+            # subtraction is tz-consistent — `now` is tz-aware UTC (se-04).
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return max(0, (now - dt).total_seconds() / 86400)
     return 30.0  # default assumption
