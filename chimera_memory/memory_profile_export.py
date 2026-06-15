@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -337,7 +338,28 @@ def memory_profile_export(
 
     if not output_dir:
         return {"ok": False, "error": "output_dir required when write=true"}
-    target_dir = Path(output_dir)
+    # Containment: the export writes USER/SOUL/HEARTBEAT files, so require the
+    # target under the user's home (or CHIMERA_MEMORY_PROFILE_EXPORT_ROOT) rather
+    # than mkdir+write to any caller-supplied path (wcp-03).
+    try:
+        resolved_dir = Path(output_dir).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return {"ok": False, "error": "invalid output_dir"}
+    allowed_root_env = os.environ.get("CHIMERA_MEMORY_PROFILE_EXPORT_ROOT", "").strip()
+    try:
+        allowed_root = (
+            Path(allowed_root_env).expanduser().resolve()
+            if allowed_root_env
+            else Path.home().resolve()
+        )
+    except (OSError, RuntimeError):
+        allowed_root = Path.home()
+    if resolved_dir != allowed_root and allowed_root not in resolved_dir.parents:
+        return {
+            "ok": False,
+            "error": "output_dir must be under your home directory or CHIMERA_MEMORY_PROFILE_EXPORT_ROOT",
+        }
+    target_dir = resolved_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     written_files = []
     for name in PROFILE_EXPORT_FILES:

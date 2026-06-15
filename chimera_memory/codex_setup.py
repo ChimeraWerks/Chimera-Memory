@@ -261,6 +261,10 @@ def install_codex_mcp_config(
         if _is_toml_config(path):
             _write_codex_toml_server(path, configured_name, servers[configured_name])
         else:
+            # The new server lives under canonical `mcpServers`; drop any legacy
+            # snake_case `mcp_servers` so it can't shadow the freshly written
+            # entry in the JSON output (codex-setup-2).
+            data.pop("mcp_servers", None)
             path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     _runtime_values, runtime_fields = _resolve_codex_runtime(env)

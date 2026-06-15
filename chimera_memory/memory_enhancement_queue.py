@@ -669,7 +669,14 @@ def _worker_job_payload(job: dict) -> dict:
     task = str(request_payload.get("task") or "extract_memory_metadata")
     kind = "authored_memory_payload" if task == "enrich_authored_memory_payload" else "memory_file"
     source_id = str(job.get("file_id") or job.get("job_id") or "")
-    source_path = str(request_payload.get("source_path") or job.get("path") or "")
+    # source_path is surfaced to the worker session. Prefer the relative path the
+    # request carries (pc-05); never fall back to the absolute job path — collapse
+    # it to a bare filename so no local path reaches the worker (ec-01).
+    raw_source_path = str(request_payload.get("source_path") or "").strip()
+    if not raw_source_path:
+        job_path = str(job.get("path") or "").strip()
+        raw_source_path = Path(job_path).name if job_path else ""
+    source_path = raw_source_path
     return {
         "job_id": job.get("job_id"),
         "schema_version": "chimera-memory.worker.enhance.v1",

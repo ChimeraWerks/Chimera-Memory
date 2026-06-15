@@ -84,7 +84,10 @@ def test_profile_export_preview_uses_reviewed_memory_only(tmp_path: Path) -> Non
     assert events[0]["payload"]["selected_count"] == 2
 
 
-def test_profile_export_write_creates_portable_artifacts(tmp_path: Path) -> None:
+def test_profile_export_write_creates_portable_artifacts(tmp_path: Path, monkeypatch) -> None:
+    # Declare the allowed export root so the containment guard (wcp-03) permits
+    # writing under the test's tmp dir on every platform (incl. Linux /tmp).
+    monkeypatch.setenv("CHIMERA_MEMORY_PROFILE_EXPORT_ROOT", str(tmp_path))
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)
     memory_file = tmp_path / "persona.md"

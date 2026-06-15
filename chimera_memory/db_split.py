@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -29,14 +30,25 @@ class PersonaSplitResult:
         return asdict(self)
 
 
-def _connect(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
+@contextmanager
+def _connect(path: Path, *, readonly: bool = False):
+    # A plain `with sqlite3.connect(...)` commits/rolls back but never CLOSES the
+    # handle, so the source/target files stayed open and Windows refused to
+    # delete/replace them on a re-split (schema-db-01). This manager commits on
+    # success and always closes; busy_timeout avoids spurious locks (schema-db-10).
     if readonly:
         conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
     else:
         conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    try:
+        yield conn
+        if not readonly:
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
