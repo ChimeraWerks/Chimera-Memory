@@ -103,18 +103,21 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
       smr-05 (secondary-process prewarm), schema-db-06 (NULL-content dedup),
       hc-05/smr-07 (per-thread memory connection), cm-ent-003 (dead index migration).
 
-## Deliberately deferred (with reasons)
+## Previously deferred — now resolved (Charles-directed)
 
-- gsr-05 (seed rollback on index failure): a correct rollback needs
-  backup-before-overwrite (overwritten files have no backup to restore); the
-  failure is already surfaced (receipt non-OK) and self-heals on the next
-  reindex, so a partial rollback risks deleting wanted files. Needs a design pass.
-- oauth-04 (duplicate provider-login pool overwrite): genuine product decision —
-  overwrite-on-refresh vs pool-distinct-accounts vs error. Needs intent.
-- se-03 (dead `consolidate_old_entries`): unreferenced, zero runtime impact;
-  flagged for a dedicated dead-code removal, not bundled with behavior changes.
+- [x] gsr-05 (seed rollback): the seed now backs up overwritten files and tracks
+      new copies; ANY copy/stamp/index failure rolls back (new files removed,
+      overwritten files restored from backup) so a partial write is never left on
+      disk. Backups live only for the write and are discarded on success.
+      Regression tested (`test_global_seed_rolls_back_on_index_failure`).
+- [x] oauth-04 (duplicate provider-login): decision — re-logging the SAME account
+      overwrites (correct token refresh), so the overwrite behavior is kept but is
+      no longer SILENT: replacing an existing credential under a name logs a note
+      ("pass --name to keep both").
+- [x] se-03 (dead `consolidate_old_entries`): deleted — it was unreferenced and
+      carried latent f-string-SQL / string-date-comparison bugs that never ran.
 
-The Critical + all 16 High + the large majority of Medium findings plus the full
-harness identification work and the Hermes setup command are complete and tested
-(full suite green). Remaining items are the three deferred above plus Low-severity
-polish catalogued in `.claude/audit-findings.json`.
+The Critical + all 16 High + the Medium findings plus the full harness
+identification work and the Hermes setup command are complete and tested (full
+suite green). Remaining open items are Low-severity polish catalogued in
+`.claude/audit-findings.json`.

@@ -2388,3 +2388,35 @@ def test_global_inspect_cli_uses_env_root_by_default(tmp_path: Path, monkeypatch
     assert payload["global_root_provenance"] == "live"
     assert payload["filesystem"]["markdown_file_count"] == 1
     assert _normalized_path(target) not in _normalized_text(payload)
+
+
+def test_global_seed_rolls_back_on_index_failure(tmp_path: Path, monkeypatch) -> None:
+    """A failed index step undoes copies/overwrites, leaving no half-applied state (gsr-05)."""
+    from chimera_memory import memory_global_seed as seed_mod
+
+    source = tmp_path / "shared"
+    target = tmp_path / "global"
+    db_path = tmp_path / "transcript.db"
+    _write(source / "NEW.md", "---\ntype: procedural\n---\nbrand new\n")
+    _write(source / "EXISTING.md", "---\ntype: procedural\n---\nreplacement content\n")
+    _write(target / "EXISTING.md", "ORIGINAL CONTENT\n")  # will be overwritten then restored
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("index exploded")
+
+    monkeypatch.setattr(seed_mod, "_index_seeded_global_files", boom)
+
+    result = seed_mod.seed_global_memory_corpus(
+        source,
+        target_root=target,
+        db_path=db_path,
+        write=True,
+        overwrite=True,
+        index=True,
+        allow_mixed_source=True,
+    )
+
+    assert result["ok"] is False
+    assert "rolled_back" in result
+    assert not (target / "NEW.md").exists()  # new file removed
+    assert (target / "EXISTING.md").read_text(encoding="utf-8") == "ORIGINAL CONTENT\n"  # restored

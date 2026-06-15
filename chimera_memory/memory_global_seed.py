@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -722,49 +723,91 @@ def seed_global_memory_corpus(
     written: list[GlobalSeedCandidate] = []
     stamp_failed_relative_paths: set[str] = set()
     stamp_result = _empty_stamp_result(enabled=stamp_governance)
-    for candidate in candidates:
-        if candidate.action in {"copy", "overwrite"}:
-            candidate.target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(candidate.source_path, candidate.target_path)
-            written.append(candidate)
-        if candidate.action in {"copy", "overwrite", "unchanged"}:
-            stamped = _stamp_global_governance_file(
-                candidate.target_path,
-                relative_path=candidate.relative_path,
-                source_root=source,
-                root=target,
-                operation="global_seed",
-                result=stamp_result,
-                enabled=stamp_governance,
-            )
-            if not stamped:
-                stamp_failed_relative_paths.add(candidate.relative_path)
+    # Back up overwritten files and track new copies so a failure during the
+    # copy/stamp/index steps leaves NO half-applied state on disk (gsr-05): new
+    # files are removed and overwritten ones restored from backup. The backup
+    # dir lives only for the duration of the write so success discards it.
+    with tempfile.TemporaryDirectory(prefix="chimera-global-seed-bak-") as backup_dir:
+        backups: dict[Path, Path] = {}
+        try:
+            for candidate in candidates:
+                if candidate.action in {"copy", "overwrite"}:
+                    candidate.target_path.parent.mkdir(parents=True, exist_ok=True)
+                    if candidate.action == "overwrite" and candidate.target_path.exists():
+                        backup_path = Path(backup_dir) / f"{len(backups)}-{candidate.target_path.name}"
+                        shutil.copy2(candidate.target_path, backup_path)
+                        backups[candidate.target_path] = backup_path
+                    shutil.copy2(candidate.source_path, candidate.target_path)
+                    written.append(candidate)
+                if candidate.action in {"copy", "overwrite", "unchanged"}:
+                    stamped = _stamp_global_governance_file(
+                        candidate.target_path,
+                        relative_path=candidate.relative_path,
+                        source_root=source,
+                        root=target,
+                        operation="global_seed",
+                        result=stamp_result,
+                        enabled=stamp_governance,
+                    )
+                    if not stamped:
+                        stamp_failed_relative_paths.add(candidate.relative_path)
 
-    receipt["written_count"] = len(written)
-    receipt["governance_stamp"].update(stamp_result)
-    _mark_global_write_errors(receipt, operation="global memory seed")
-    if index:
-        receipt["index"] = _index_seeded_global_files(
-            target,
-            candidates,
-            db_path=db_path,
-            skip_relative_paths=stamp_failed_relative_paths,
-            audit_payload=_global_seed_audit_payload(
-                source=source,
-                target=target,
-                source_provenance="user_supplied",
-                target_provenance=target_provenance,
-                filters=receipt["filters"],
-                counts=receipt["counts"],
-                mixed_source_guard=receipt["mixed_source_guard"],
-                guard=receipt["guard"],
-                governance_stamp=receipt["governance_stamp"],
-                written=written,
-            ),
-        )
-        receipt["indexed"] = True
-        _mark_global_write_errors(receipt, operation="global memory seed")
+            receipt["written_count"] = len(written)
+            receipt["governance_stamp"].update(stamp_result)
+            _mark_global_write_errors(receipt, operation="global memory seed")
+            if index:
+                receipt["index"] = _index_seeded_global_files(
+                    target,
+                    candidates,
+                    db_path=db_path,
+                    skip_relative_paths=stamp_failed_relative_paths,
+                    audit_payload=_global_seed_audit_payload(
+                        source=source,
+                        target=target,
+                        source_provenance="user_supplied",
+                        target_provenance=target_provenance,
+                        filters=receipt["filters"],
+                        counts=receipt["counts"],
+                        mixed_source_guard=receipt["mixed_source_guard"],
+                        guard=receipt["guard"],
+                        governance_stamp=receipt["governance_stamp"],
+                        written=written,
+                    ),
+                )
+                receipt["indexed"] = True
+                _mark_global_write_errors(receipt, operation="global memory seed")
+        except Exception as exc:  # noqa: BLE001 - any write/index failure rolls back
+            receipt["rolled_back"] = _rollback_seed_writes(written, backups)
+            receipt["written_count"] = 0
+            receipt["ok"] = False
+            receipt["error"] = f"global memory seed failed and was rolled back ({type(exc).__name__})"
+            return receipt
     return receipt
+
+
+def _rollback_seed_writes(
+    written: list[GlobalSeedCandidate], backups: dict[Path, Path]
+) -> dict[str, int]:
+    """Undo seed copies/overwrites after a failed write/index step (gsr-05).
+
+    New files (action 'copy') are removed; overwritten files are restored from
+    their pre-seed backup. Source files are untouched, so a rolled-back run can be
+    safely retried.
+    """
+    restored = 0
+    removed = 0
+    for candidate in written:
+        target = candidate.target_path
+        try:
+            if candidate.action == "overwrite" and target in backups:
+                shutil.copy2(backups[target], target)
+                restored += 1
+            elif candidate.action == "copy":
+                target.unlink(missing_ok=True)
+                removed += 1
+        except OSError:
+            continue
+    return {"restored_overwrites": restored, "removed_new_files": removed}
 
 
 def reindex_global_memory_corpus(

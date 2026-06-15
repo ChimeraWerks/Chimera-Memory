@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from .memory_enhancement_credentials import MemoryEnhancementCredentialResolutionError, ProtocolValidationError
 from .memory_enhancement_oauth import (
@@ -53,6 +56,19 @@ def import_memory_enhancement_oauth_credential(
     else:
         raise ProtocolValidationError("memory enhancement oauth import provider unsupported")
     target_store = store or MemoryEnhancementOAuthStore()
+    # Re-importing the same account refreshes its login, so upsert overwrites the
+    # entry under this name by design. Log it so the replacement is not silent: a
+    # second import under a default name replaces the first (oauth-04). Pass an
+    # explicit `name=` to keep both as separate pool entries.
+    try:
+        existing = target_store.get_pooled(credential.name, provider_id=credential.provider_id)
+    except MemoryEnhancementCredentialResolutionError:
+        existing = None
+    if existing is not None:
+        log.info(
+            "replacing existing memory-enhancement credential %r (pass --name to keep both)",
+            credential.name,
+        )
     target_store.upsert(credential)
     return credential
 
