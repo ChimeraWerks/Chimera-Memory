@@ -21,6 +21,7 @@ import httpx
 from .memory_enhancement_credentials import MemoryEnhancementCredentialResolutionError, ProtocolValidationError
 from .memory_enhancement_oauth import (
     ANTHROPIC_OAUTH_CLIENT_ID,
+    ANTHROPIC_OAUTH_TOKEN_ENDPOINTS,
     GOOGLE_OAUTH_TOKEN_ENDPOINT,
     MemoryEnhancementOAuthCredential,
     MemoryEnhancementOAuthStore,
@@ -84,6 +85,7 @@ def start_memory_enhancement_oauth_flow(
     provider_id = _provider_id(provider_id)
     credential_name = _credential_name(provider_id, name)
     target_store = store or MemoryEnhancementOAuthStore()
+    _sweep_expired_flow_states(target_store)
     flow_id = _new_flow_id()
     now_ms = int(time.time() * 1000)
 
@@ -132,7 +134,18 @@ def start_memory_enhancement_oauth_flow(
         verifier, challenge = _pkce_pair()
         state = secrets.token_urlsafe(16)
         resolved_project_id = project_id.strip() or _google_project_id_from_env()
+        # Resolve the bound redirect_uri + callback_mode BEFORE the single save:
+        # on loopback bind/handshake failure, fall back to manual paste instead of
+        # hard-failing setup, and avoid the two-write stale-8085 window (oauth-10).
         redirect_uri = GOOGLE_OAUTH_REDIRECT_URI
+        callback_mode = "paste"
+        if start_callback_server:
+            try:
+                redirect_uri = _start_google_loopback_callback_server(target_store, flow_id)
+                callback_mode = "loopback"
+            except MemoryEnhancementCredentialResolutionError:
+                redirect_uri = GOOGLE_OAUTH_REDIRECT_URI
+                callback_mode = "paste"
         flow_state = {
             "provider_id": provider_id,
             "name": credential_name,
@@ -145,13 +158,9 @@ def start_memory_enhancement_oauth_flow(
             "project_id": resolved_project_id,
             "client_id": client_id,
             "client_secret": client_secret,
-            "callback_mode": "loopback" if start_callback_server else "paste",
+            "callback_mode": callback_mode,
         }
         _save_flow_state(target_store, flow_id, flow_state)
-        if start_callback_server:
-            redirect_uri = _start_google_loopback_callback_server(target_store, flow_id)
-            flow_state["redirect_uri"] = redirect_uri
-            _save_flow_state(target_store, flow_id, flow_state)
         authorization_url = GOOGLE_OAUTH_AUTHORIZE_URL + "?" + urllib.parse.urlencode(
             {
                 "client_id": client_id,
@@ -170,9 +179,9 @@ def start_memory_enhancement_oauth_flow(
             name=credential_name,
             flow_id=flow_id,
             authorization_url=authorization_url,
-            submit_mode="poll" if start_callback_server else "paste_redirect_url",
+            submit_mode="poll" if callback_mode == "loopback" else "paste_redirect_url",
             expires_at_ms=now_ms + OAUTH_FLOW_TTL_SECONDS * 1000,
-            poll_after_seconds=2 if start_callback_server else 0,
+            poll_after_seconds=2 if callback_mode == "loopback" else 0,
         )
 
     device_payload = _post_json(
@@ -223,7 +232,15 @@ def submit_memory_enhancement_oauth_flow(
 ) -> dict[str, Any]:
     target_store = store or MemoryEnhancementOAuthStore()
     state = _load_flow_state(target_store, flow_id)
-    _require_unexpired_flow(state)
+    try:
+        _require_unexpired_flow(state)
+    except MemoryEnhancementCredentialResolutionError:
+        # Unlink the expired flow's secret-bearing files immediately rather than
+        # leaving them until the next sweep (oauth-05).
+        _delete_flow_state(target_store, flow_id)
+        _delete_flow_callback(target_store, flow_id)
+        _delete_file(_flow_state_path(target_store, flow_id).with_suffix(".ready.json"))
+        raise
     provider_id = _provider_id(str(state.get("provider_id") or ""))
     if state.get("flow") != "pkce":
         raise ProtocolValidationError("memory enhancement oauth flow must be polled")
@@ -235,23 +252,37 @@ def submit_memory_enhancement_oauth_flow(
         raise ProtocolValidationError("memory enhancement oauth callback state mismatch")
 
     if provider_id == "anthropic":
-        payload = _post_json(
-            ANTHROPIC_OAUTH_TOKEN_ENDPOINT,
-            {
-                "grant_type": "authorization_code",
-                "client_id": ANTHROPIC_OAUTH_CLIENT_ID,
-                "code": code,
-                "state": callback_state or expected_state,
-                "redirect_uri": ANTHROPIC_OAUTH_REDIRECT_URI,
-                "code_verifier": str(state.get("code_verifier") or ""),
-            },
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": f"claude-cli/{_get_claude_code_version()} (external, cli)",
-            },
-            opener=opener,
-            timeout_seconds=20,
-        )
+        # Iterate platform.claude.com then console (mirrors _refresh_anthropic_oauth)
+        # so new-login onboarding survives a console-host migration the way refresh
+        # of stored credentials already does (oauth-03).
+        payload = None
+        last_error: Exception | None = None
+        for endpoint in ANTHROPIC_OAUTH_TOKEN_ENDPOINTS:
+            try:
+                payload = _post_json(
+                    endpoint,
+                    {
+                        "grant_type": "authorization_code",
+                        "client_id": ANTHROPIC_OAUTH_CLIENT_ID,
+                        "code": code,
+                        "state": callback_state or expected_state,
+                        "redirect_uri": ANTHROPIC_OAUTH_REDIRECT_URI,
+                        "code_verifier": str(state.get("code_verifier") or ""),
+                    },
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": f"claude-cli/{_get_claude_code_version()} (external, cli)",
+                    },
+                    opener=opener,
+                    timeout_seconds=20,
+                )
+                break
+            except MemoryEnhancementCredentialResolutionError as exc:
+                last_error = exc
+        if payload is None:
+            raise last_error or MemoryEnhancementCredentialResolutionError(
+                "memory enhancement anthropic oauth exchange failed"
+            )
         credential = _credential_from_authorization_payload(
             state,
             payload,
@@ -285,8 +316,10 @@ def submit_memory_enhancement_oauth_flow(
             transport="google_cloudcode",
             project_id=str(state.get("project_id") or ""),
             extra={
+                # Persist only the non-secret client_id; the public gemini-cli
+                # client_secret is re-derived from env/default at refresh time so
+                # it isn't spread into auth.json / copied exports (oauth-09).
                 "client_id": str(state.get("client_id") or ""),
-                "client_secret": str(state.get("client_secret") or ""),
             },
         )
     else:
@@ -306,7 +339,15 @@ def poll_memory_enhancement_oauth_flow(
 ) -> dict[str, Any]:
     target_store = store or MemoryEnhancementOAuthStore()
     state = _load_flow_state(target_store, flow_id)
-    _require_unexpired_flow(state)
+    try:
+        _require_unexpired_flow(state)
+    except MemoryEnhancementCredentialResolutionError:
+        # Unlink the expired flow's secret-bearing files immediately rather than
+        # leaving them until the next sweep (oauth-05).
+        _delete_flow_state(target_store, flow_id)
+        _delete_flow_callback(target_store, flow_id)
+        _delete_file(_flow_state_path(target_store, flow_id).with_suffix(".ready.json"))
+        raise
     provider_id = _provider_id(str(state.get("provider_id") or ""))
     if provider_id == "google" and state.get("flow") == "pkce" and state.get("callback_mode") == "loopback":
         callback = _load_flow_callback(target_store, flow_id)
@@ -343,11 +384,21 @@ def poll_memory_enhancement_oauth_flow(
         pending_statuses={403, 404},
     )
     if poll_payload.get("_pending"):
+        error = str(poll_payload.get("_error") or "")
+        if error in {"access_denied", "expired_token", "expired"}:
+            # Terminal: the user denied or the device code expired — stop polling
+            # a dead code until the CM TTL lapses (oauth-06).
+            raise MemoryEnhancementCredentialResolutionError(
+                "memory enhancement openai oauth device flow rejected; re-run setup"
+            )
+        interval = _payload_int(state, "interval", 5)
+        if error == "slow_down":
+            interval += 5  # honor the device-flow slow_down signal with additive backoff
         return {
             "status": "pending",
             "provider_id": provider_id,
             "flow_id": flow_id,
-            "poll_after_seconds": _payload_int(state, "interval", 5),
+            "poll_after_seconds": interval,
         }
 
     authorization_code = _payload_text(poll_payload, "authorization_code")
@@ -440,7 +491,14 @@ def _post_json(
         except httpx.HTTPError as exc:
             raise MemoryEnhancementCredentialResolutionError("memory enhancement oauth authorization unavailable") from exc
         if pending_statuses and response.status_code in pending_statuses:
-            return {"_pending": True}
+            # Surface the OAuth error code so the device-flow poller can tell
+            # authorization_pending/slow_down from access_denied/expired (oauth-06).
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            error = _payload_text(body, "error") if isinstance(body, Mapping) else ""
+            return {"_pending": True, "_error": error}
         if response.status_code in {400, 401, 403}:
             raise MemoryEnhancementCredentialResolutionError(
                 "memory enhancement oauth authorization rejected; re-run setup"
@@ -470,7 +528,13 @@ def _post_json(
             raw = response.read()
     except urllib.error.HTTPError as exc:
         if pending_statuses and exc.code in pending_statuses:
-            return {"_pending": True}
+            error = ""
+            try:
+                body = json.loads(exc.read().decode("utf-8"))
+                error = _payload_text(body, "error") if isinstance(body, Mapping) else ""
+            except Exception:
+                error = ""
+            return {"_pending": True, "_error": error}
         if exc.code in {400, 401, 403}:
             raise MemoryEnhancementCredentialResolutionError(
                 "memory enhancement oauth authorization rejected; re-run setup"
@@ -594,6 +658,29 @@ def _delete_flow_state(store: MemoryEnhancementOAuthStore, flow_id: str) -> None
         _flow_state_path(store, flow_id).unlink()
     except OSError:
         return
+
+
+def _sweep_expired_flow_states(store: MemoryEnhancementOAuthStore) -> None:
+    # Secret residue scar: abandoned/expired flows hold PKCE verifiers, device
+    # codes, and the Google client_secret on disk; _delete_flow_state only runs on
+    # the success paths, so sweep stale files at flow start (oauth-05).
+    flows_dir = store.path.parent / "oauth-flows"
+    cutoff_ms = int(time.time() * 1000)
+    try:
+        entries = list(flows_dir.glob("*.json"))
+    except OSError:
+        return
+    for path in entries:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        expires_at_ms = _payload_int(payload, "expires_at_ms", 0)
+        if 0 < expires_at_ms <= cutoff_ms:
+            for sibling in (path, path.with_suffix(".callback.json"), path.with_suffix(".ready.json")):
+                _delete_file(sibling)
 
 
 def _flow_callback_path(store: MemoryEnhancementOAuthStore, flow_id: str) -> Path:

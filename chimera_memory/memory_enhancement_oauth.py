@@ -1201,8 +1201,17 @@ def _jwt_expires_at_ms(token: str) -> int | None:
 def _google_oauth_client_credentials(extra: Mapping[str, Any]) -> tuple[str, str]:
     client_id = _mapping_text(extra, "client_id")
     client_secret = _mapping_text(extra, "client_secret")
-    if client_id:
+    if client_id and client_secret:
         return client_id, client_secret
+    if client_id:
+        # extra carries only the (non-secret) client_id; re-derive the public
+        # gemini-cli client_secret from env/default so it isn't persisted into
+        # auth.json / flow state and spread across disk artifacts (oauth-09).
+        env_secret = _first_env((
+            "CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_SECRET",
+            "HERMES_GEMINI_CLIENT_SECRET",
+        ))
+        return client_id, env_secret or GOOGLE_OAUTH_DEFAULT_CLIENT_SECRET
     client_id = _first_env((
         "CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_ID",
         "HERMES_GEMINI_CLIENT_ID",
@@ -1544,6 +1553,11 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _chmod_owner_only(path: Path, *, directory: bool = False) -> None:
+    # POSIX mode bits only. On Windows (win32/NTFS) this is a no-op for access
+    # control — chmod toggles the read-only attribute and does NOT restrict other
+    # local accounts via ACLs, so owner-only protection for auth.json holds on
+    # POSIX only. The sibling hermes_gemini_oauth.save_credentials documents the
+    # same limitation (hermes_gemini_oauth.py ~489-490). Scar: oauth-07.
     try:
         path.chmod(0o700 if directory else 0o600)
     except OSError:

@@ -736,57 +736,61 @@ def update_project_ids(project_id: str = "", managed_project_id: str = "") -> No
 # Callback server
 # =============================================================================
 
-class _OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
-    expected_state: str = ""
-    captured_code: Optional[str] = None
-    captured_error: Optional[str] = None
-    ready: Optional[threading.Event] = None
+def _make_oauth_callback_handler(
+    *,
+    expected_state: str,
+    result: dict,
+    ready: threading.Event,
+) -> type:
+    # Per-flow handler closing over a fresh result dict instead of mutating shared
+    # class attributes, so two concurrent same-process logins can't clobber each
+    # other's expected_state / captured code (oauth-12).
+    class _OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, N802
+            logger.debug("OAuth callback: " + format, *args)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, N802
-        logger.debug("OAuth callback: " + format, *args)
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path != CALLBACK_PATH:
+                self.send_response(404)
+                self.end_headers()
+                return
 
-    def do_GET(self) -> None:  # noqa: N802
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path != CALLBACK_PATH:
-            self.send_response(404)
+            params = urllib.parse.parse_qs(parsed.query)
+            state = (params.get("state") or [""])[0]
+            error = (params.get("error") or [""])[0]
+            code = (params.get("code") or [""])[0]
+
+            if state != expected_state:
+                result["error"] = "state_mismatch"
+                self._respond_html(400, _ERROR_PAGE.format(message="State mismatch — aborting for safety."))
+            elif error:
+                result["error"] = error
+                safe_err = (
+                    str(error)
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                self._respond_html(400, _ERROR_PAGE.format(message=f"Authorization denied: {safe_err}"))
+            elif code:
+                result["code"] = code
+                self._respond_html(200, _SUCCESS_PAGE)
+            else:
+                result["error"] = "no_code"
+                self._respond_html(400, _ERROR_PAGE.format(message="Callback received no authorization code."))
+
+            ready.set()
+
+        def _respond_html(self, status: int, body: str) -> None:
+            payload = body.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            return
+            self.wfile.write(payload)
 
-        params = urllib.parse.parse_qs(parsed.query)
-        state = (params.get("state") or [""])[0]
-        error = (params.get("error") or [""])[0]
-        code = (params.get("code") or [""])[0]
-
-        if state != type(self).expected_state:
-            type(self).captured_error = "state_mismatch"
-            self._respond_html(400, _ERROR_PAGE.format(message="State mismatch — aborting for safety."))
-        elif error:
-            type(self).captured_error = error
-            # Simple HTML-escape of the error value
-            safe_err = (
-                str(error)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-            )
-            self._respond_html(400, _ERROR_PAGE.format(message=f"Authorization denied: {safe_err}"))
-        elif code:
-            type(self).captured_code = code
-            self._respond_html(200, _SUCCESS_PAGE)
-        else:
-            type(self).captured_error = "no_code"
-            self._respond_html(400, _ERROR_PAGE.format(message="Callback received no authorization code."))
-
-        if type(self).ready is not None:
-            type(self).ready.set()
-
-    def _respond_html(self, status: int, body: str) -> None:
-        payload = body.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+    return _OAuthCallbackHandler
 
 
 _SUCCESS_PAGE = """<!doctype html>
@@ -810,16 +814,19 @@ h1 {{ color: #b42318; }} p {{ color: #555; }}
 """
 
 
-def _bind_callback_server(preferred_port: int = DEFAULT_REDIRECT_PORT) -> Tuple[http.server.HTTPServer, int]:
+def _bind_callback_server(
+    handler_cls: type,
+    preferred_port: int = DEFAULT_REDIRECT_PORT,
+) -> Tuple[http.server.HTTPServer, int]:
     try:
-        server = http.server.HTTPServer((REDIRECT_HOST, preferred_port), _OAuthCallbackHandler)
+        server = http.server.HTTPServer((REDIRECT_HOST, preferred_port), handler_cls)
         return server, preferred_port
     except OSError as exc:
         logger.info(
             "Preferred OAuth callback port %d unavailable (%s); requesting ephemeral port",
             preferred_port, exc,
         )
-    server = http.server.HTTPServer((REDIRECT_HOST, 0), _OAuthCallbackHandler)
+    server = http.server.HTTPServer((REDIRECT_HOST, 0), handler_cls)
     return server, server.server_address[1]
 
 
@@ -869,14 +876,11 @@ def start_oauth_flow(
         logger.info("Headless environment detected; using paste-mode OAuth fallback.")
         return _paste_mode_login(verifier, challenge, state, client_id, client_secret, project_id)
 
-    server, port = _bind_callback_server(DEFAULT_REDIRECT_PORT)
-    redirect_uri = f"http://{REDIRECT_HOST}:{port}{CALLBACK_PATH}"
-
-    _OAuthCallbackHandler.expected_state = state
-    _OAuthCallbackHandler.captured_code = None
-    _OAuthCallbackHandler.captured_error = None
     ready = threading.Event()
-    _OAuthCallbackHandler.ready = ready
+    result: dict = {}
+    handler_cls = _make_oauth_callback_handler(expected_state=state, result=result, ready=ready)
+    server, port = _bind_callback_server(handler_cls, DEFAULT_REDIRECT_PORT)
+    redirect_uri = f"http://{REDIRECT_HOST}:{port}{CALLBACK_PATH}"
 
     params = {
         "client_id": client_id,
@@ -910,8 +914,8 @@ def start_oauth_flow(
     code: Optional[str] = None
     try:
         if ready.wait(timeout=callback_wait_seconds):
-            code = _OAuthCallbackHandler.captured_code
-            error = _OAuthCallbackHandler.captured_error
+            code = result.get("code")
+            error = result.get("error")
             if error:
                 raise GoogleOAuthError(
                     f"Authorization failed: {error}",

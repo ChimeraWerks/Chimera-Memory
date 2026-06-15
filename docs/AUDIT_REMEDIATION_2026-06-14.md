@@ -215,6 +215,17 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       redacts UNC/relative backslash paths (the Windows style). Tests:
       `test_memory_context_pack.py`, `test_memory_semantic_recall.py`, new
       `test_memory_display.py`. (mfr-09, mfr-10 won't-fix above.)
+- [x] oauth-03, oauth-05, oauth-06, oauth-07, oauth-09, oauth-10, oauth-12 —
+      Anthropic auth-code exchange iterates the platform-first endpoint tuple
+      (parity with refresh); expired/abandoned flow-state files are swept at flow
+      start + unlinked on expiry (PKCE verifier / device-code / Google secret
+      residue); device-code poll distinguishes access_denied/expired (terminal)
+      from pending and honors slow_down; `_chmod_owner_only` documents its Windows
+      no-op; the public Google client_secret is no longer persisted into
+      `auth.json` (re-derived at refresh); Google loopback bind failure falls back
+      to paste mode (single flow-state write); Gemini callback handler is per-flow
+      (no shared class-state race). Tests: `test_memory_enhancement_oauth_flow.py`.
+      (oauth-02, oauth-08, oauth-11 won't-fix above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

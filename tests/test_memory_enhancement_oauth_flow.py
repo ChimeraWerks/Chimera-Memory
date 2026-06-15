@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 from chimera_memory import hermes_gemini_oauth
-from chimera_memory.memory_enhancement_oauth import MemoryEnhancementOAuthStore
+from chimera_memory.memory_enhancement_oauth import (
+    MemoryEnhancementCredentialResolutionError,
+    MemoryEnhancementOAuthStore,
+)
 from chimera_memory.memory_enhancement_hermes_oauth import run_hermes_memory_enhancement_oauth_login
 from chimera_memory.memory_enhancement_oauth_flow import (
     _bind_google_callback_server,
@@ -56,7 +59,9 @@ def test_anthropic_browser_oauth_flow_persists_refreshable_credential(monkeypatc
 
     assert result["status"] == "approved"
     assert "claude.ai/oauth/authorize" in started["authorization_url"]
-    assert captured["url"] == "https://console.anthropic.com/v1/oauth/token"
+    # oauth-03: the auth-code exchange now tries platform.claude.com first
+    # (mirroring the refresh path) before falling back to the console host.
+    assert captured["url"] == "https://platform.claude.com/v1/oauth/token"
     assert request_header(captured["request"], "User-Agent") == "claude-cli/2.1.74 (external, cli)"
     assert request_header(captured["request"], "Content-Type") == "application/json"
     assert str(captured["raw_body"]).lstrip().startswith("{")
@@ -100,6 +105,8 @@ def test_google_browser_oauth_flow_uses_pkce_and_stores_client_metadata(monkeypa
     assert credential.refresh_token == "TEST_ONLY_GOOGLE_REFRESH"
     assert credential.project_id == "project-test"
     assert credential.extra["client_id"] == "123456789012-testclientidvalue.apps.googleusercontent.com"
+    # oauth-09: the public client_secret must NOT be persisted into the credential.
+    assert "client_secret" not in credential.extra
 
 
 def test_google_oauth_loopback_callback_can_be_polled(monkeypatch, tmp_path: Path):
@@ -195,6 +202,66 @@ def test_openai_device_oauth_flow_polls_and_persists_codex_credential(tmp_path: 
     assert credential.refresh_token == "TEST_ONLY_OPENAI_REFRESH"
     assert credential.transport == "openai_codex"
     assert len(calls) == 3
+
+
+def _device_http_error(code: int, error: str) -> urllib.error.HTTPError:
+    import io
+
+    body = io.BytesIO(json.dumps({"error": error}).encode("utf-8"))
+    return urllib.error.HTTPError("https://auth.openai.com/x", code, error, {}, body)
+
+
+def _start_openai_device(store, *, interval: int = 5):
+    def opener(request, *, timeout):
+        return _json_response(
+            {"device_auth_id": "D", "user_code": "C", "interval": interval, "expires_in": 900}
+        )
+
+    return start_memory_enhancement_oauth_flow("openai", store=store, opener=opener)
+
+
+def test_device_poll_access_denied_is_terminal(tmp_path: Path):
+    # oauth-06: access_denied must raise a terminal error, not keep reporting
+    # 'pending' until the CM TTL lapses.
+    store = MemoryEnhancementOAuthStore(tmp_path / "auth.json")
+    started = _start_openai_device(store)
+
+    def opener(request, *, timeout):
+        raise _device_http_error(403, "access_denied")
+
+    with pytest.raises(MemoryEnhancementCredentialResolutionError):
+        poll_memory_enhancement_oauth_flow(started["flow_id"], store=store, opener=opener)
+
+
+def test_device_poll_slow_down_backs_off(tmp_path: Path):
+    # oauth-06: a slow_down signal increases the poll interval instead of being
+    # collapsed into a plain 'pending'.
+    store = MemoryEnhancementOAuthStore(tmp_path / "auth.json")
+    started = _start_openai_device(store, interval=5)
+
+    def opener(request, *, timeout):
+        raise _device_http_error(403, "slow_down")
+
+    result = poll_memory_enhancement_oauth_flow(started["flow_id"], store=store, opener=opener)
+
+    assert result["status"] == "pending"
+    assert result["poll_after_seconds"] == 10
+
+
+def test_start_flow_sweeps_expired_flow_state(monkeypatch, tmp_path: Path):
+    # oauth-05: an abandoned/expired flow's secret-bearing file is swept on the
+    # next flow start instead of lingering on disk.
+    monkeypatch.setenv("CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_ID", "123-test.apps.googleusercontent.com")
+    monkeypatch.setenv("CHIMERA_MEMORY_GOOGLE_OAUTH_CLIENT_SECRET", "TEST_ONLY_SECRET")
+    store = MemoryEnhancementOAuthStore(tmp_path / "auth.json")
+    flows_dir = store.path.parent / "oauth-flows"
+    flows_dir.mkdir(parents=True, exist_ok=True)
+    stale = flows_dir / "stale-flow.json"
+    stale.write_text(json.dumps({"expires_at_ms": 1, "code_verifier": "secret"}), encoding="utf-8")
+
+    start_memory_enhancement_oauth_flow("google", store=store, start_callback_server=False)
+
+    assert not stale.exists()
 
 
 def test_hermes_anthropic_login_persists_to_memory_pool(monkeypatch, tmp_path: Path):
@@ -351,19 +418,29 @@ def test_hermes_google_oauth_uses_loopback_before_paste_for_non_headless(monkeyp
         def server_close(self):
             calls.append("close")
 
+    # oauth-12: the per-flow handler captures into a fresh result dict (not shared
+    # class state); grab it so FakeReady can simulate the callback populating it.
+    result_holder: dict = {}
+
     class FakeReady:
         def wait(self, *, timeout):
             calls.append(f"wait:{timeout}")
-            hermes_gemini_oauth._OAuthCallbackHandler.captured_code = "TEST_ONLY_GOOGLE_CODE"
-            hermes_gemini_oauth._OAuthCallbackHandler.captured_error = None
+            result_holder["dict"]["code"] = "TEST_ONLY_GOOGLE_CODE"
             return True
+
+    real_make = hermes_gemini_oauth._make_oauth_callback_handler
+
+    def fake_make(*, expected_state, result, ready):
+        result_holder["dict"] = result
+        return real_make(expected_state=expected_state, result=result, ready=ready)
 
     monkeypatch.setattr(hermes_gemini_oauth, "_is_headless", lambda: False)
     monkeypatch.setattr(hermes_gemini_oauth, "_require_client_id", lambda: "test-client.apps.googleusercontent.com")
     monkeypatch.setattr(hermes_gemini_oauth, "_get_client_secret", lambda: "")
     monkeypatch.setattr(hermes_gemini_oauth, "_generate_pkce_pair", lambda: ("verifier", "challenge"))
     monkeypatch.setattr(hermes_gemini_oauth.secrets, "token_urlsafe", lambda _n: "state-test")
-    monkeypatch.setattr(hermes_gemini_oauth, "_bind_callback_server", lambda _port: (FakeServer(), 18085))
+    monkeypatch.setattr(hermes_gemini_oauth, "_make_oauth_callback_handler", fake_make)
+    monkeypatch.setattr(hermes_gemini_oauth, "_bind_callback_server", lambda handler_cls, _port=18085: (FakeServer(), 18085))
     monkeypatch.setattr(hermes_gemini_oauth.threading, "Event", lambda: FakeReady())
     monkeypatch.setattr(hermes_gemini_oauth.threading, "Thread", lambda **_kwargs: type("FakeThread", (), {"start": lambda self: None, "join": lambda self, timeout=None: None})())
     monkeypatch.setattr(
