@@ -270,6 +270,15 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       Codex; the stdin prompt write is BrokenPipeError-guarded so a fast-failing
       child still returns a handle (reaped, not mislabeled as a launch error); the
       Codex resume command passes `--cd`. Tests: `test_memory_cli_worker_supervisor.py`.
+- [x] wcp-05, wcp-06, wcp-07, wcp-08, wcp-09, wcp-10 — auto-capture writes via
+      exclusive create (no TOCTOU clobber) and guards non-integer importance;
+      writeback/auto-capture previews surface `blocking_findings`/`safety_blocked`;
+      profile-export instruction-grade count matches USER.md's predicate;
+      legacy-migration frontmatter honors the original CRLF/LF newline; generated-
+      provenance authored memory can't self-assert `review_status='confirmed'`
+      (clamped to pending). Tests: `test_memory_auto_capture.py`,
+      `test_memory_authored_writeback.py`, `test_memory_profile_export.py`,
+      `test_memory_legacy_migration.py`. (wcp-11 already-fixed above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

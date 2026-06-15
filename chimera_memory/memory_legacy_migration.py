@@ -217,7 +217,7 @@ def memory_legacy_frontmatter_retrofit(
         actor=actor,
         migrated_at=migrated_at or _utc_now(),
     )
-    updated = _render_frontmatter_markdown(retrofitted, body)
+    updated = _render_frontmatter_markdown(retrofitted, body, newline=split.get("newline", "\n"))
     verify = _split_frontmatter_preserving_body(updated)
     if not verify["ok"]:
         return {"ok": False, "error": "rendered retrofit frontmatter is invalid", "relative_path": relative_text}
@@ -330,7 +330,7 @@ def memory_legacy_frontmatter_review_action(
         reviewed_legacy["review_notes"] = notes
     reviewed["legacy_migration"] = reviewed_legacy
 
-    updated = _render_frontmatter_markdown(reviewed, body)
+    updated = _render_frontmatter_markdown(reviewed, body, newline=split.get("newline", "\n"))
     verify = _split_frontmatter_preserving_body(updated)
     if not verify["ok"]:
         return {"ok": False, "error": "rendered review frontmatter is invalid", "relative_path": relative_text}
@@ -448,6 +448,7 @@ def _split_frontmatter_preserving_body(text: str) -> dict[str, Any]:
         "frontmatter_text": frontmatter_text,
         "body": body,
         "had_frontmatter": True,
+        "newline": newline,
     }
 
 
@@ -484,7 +485,9 @@ def _retrofit_frontmatter(
     return retrofitted
 
 
-def _render_frontmatter_markdown(frontmatter: Mapping[str, Any], body: str) -> str:
+def _render_frontmatter_markdown(
+    frontmatter: Mapping[str, Any], body: str, *, newline: str = "\n"
+) -> str:
     dumped = yaml.dump(
         dict(frontmatter),
         Dumper=_NoAliasSafeDumper,
@@ -492,7 +495,12 @@ def _render_frontmatter_markdown(frontmatter: Mapping[str, Any], body: str) -> s
         allow_unicode=False,
         default_flow_style=False,
     ).strip()
-    return f"---\n{dumped}\n---\n{body}"
+    # body is preserved byte-for-byte (body_sha256 guard); match the frontmatter
+    # region newline to the original document so a CRLF legacy file stays uniform
+    # instead of LF frontmatter + CRLF body (wcp-08).
+    if newline != "\n":
+        dumped = dumped.replace("\n", newline)
+    return f"---{newline}{dumped}{newline}---{newline}{body}"
 
 
 def _review_snapshot(frontmatter: Mapping[str, Any]) -> dict[str, Any]:

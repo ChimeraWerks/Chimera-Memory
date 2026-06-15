@@ -2192,7 +2192,17 @@ def memory_auto_capture_session_close(
         )
         preview = {key: value for key, value in plan.items() if key != "body"}
         preview["body_preview"] = plan["body"][:1200]
-        return {"ok": True, "written": False, "plan": preview}
+        # Surface blocking_findings at the top level so a caller can warn that the
+        # write would be rejected by the safety scan, rather than reporting a clean
+        # preview that then fails on persist (wcp-06).
+        blocking = plan.get("blocking_findings") or []
+        return {
+            "ok": True,
+            "written": False,
+            "plan": preview,
+            "blocking_findings": blocking,
+            "safety_blocked": bool(blocking),
+        }
 
     write_result = write_auto_capture_file(personas_dir, plan)
     if not write_result.get("ok"):
@@ -2295,7 +2305,17 @@ def memory_authored_writeback(
         )
         preview = {key: value for key, value in plan.items() if key != "body"}
         preview["body_preview"] = plan["body"][:1200]
-        return {"ok": True, "written": False, "plan": preview}
+        # Surface blocking_findings at the top level so a caller can warn that the
+        # write would be rejected by the safety scan, rather than reporting a clean
+        # preview that then fails on persist (wcp-06).
+        blocking = plan.get("blocking_findings") or []
+        return {
+            "ok": True,
+            "written": False,
+            "plan": preview,
+            "blocking_findings": blocking,
+            "safety_blocked": bool(blocking),
+        }
 
     if plan.get("memory_scope") == MEMORY_SCOPE_PROJECT:
         if project_root is None:

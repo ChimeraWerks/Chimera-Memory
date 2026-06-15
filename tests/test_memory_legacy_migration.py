@@ -255,3 +255,14 @@ def test_legacy_frontmatter_review_action_rejects_unmigrated_file(tmp_path: Path
 
     assert result["ok"] is False
     assert result["error"] == "memory_payload required"
+
+
+def test_render_frontmatter_markdown_honors_crlf_newline() -> None:
+    # wcp-08: a CRLF legacy file must stay uniform — the rendered frontmatter
+    # region uses the original newline instead of LF, so no mixed endings appear.
+    from chimera_memory.memory_legacy_migration import _render_frontmatter_markdown
+
+    out = _render_frontmatter_markdown({"type": "procedural"}, "body line one\r\nbody line two\r\n", newline="\r\n")
+
+    assert out.startswith("---\r\n")
+    assert "\n" not in out.replace("\r\n", "")  # every newline is part of a CRLF pair

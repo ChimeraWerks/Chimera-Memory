@@ -40,6 +40,17 @@ def _slugify(value: str, fallback: str = "session-capture") -> str:
     return (text or fallback)[:64].strip("-") or fallback
 
 
+def _importance(value: object, default: int = 6) -> int:
+    # Guard non-integer importance (e.g. 'high') like the authored-writeback path
+    # so a non-default/non-MCP caller gets a clamped default instead of a raw
+    # ValueError (wcp-09).
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(10, parsed))
+
+
 def _dedupe(items: list[str], limit: int) -> list[str]:
     seen: set[str] = set()
     deduped: list[str] = []
@@ -144,7 +155,7 @@ def build_auto_capture_plan(
     relative_path = f"memory/episodes/{filename}"
     frontmatter = {
         "type": "episodic",
-        "importance": max(1, min(10, int(importance))),
+        "importance": _importance(importance),
         "created": created_at,
         "status": "active",
         "about": safe_title,
@@ -233,15 +244,26 @@ def write_auto_capture_file(personas_dir: Path, plan: dict) -> dict:
     relative_path = Path(str(plan["relative_path"]))
     target = persona_root / relative_path
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        stem = target.stem
-        suffix = target.suffix
-        target = target.with_name(f"{stem}-{uuid.uuid4().hex[:8]}{suffix}")
-        relative_path = Path("memory/episodes") / target.name
-    target.write_text(str(plan["body"]), encoding="utf-8", newline="\n")
+    body = str(plan["body"])
+    # Exclusive create avoids a TOCTOU clobber: second-precision timestamp + slug
+    # filenames can collide across concurrent session-close captures, so a plain
+    # exists()-then-write could silently overwrite another evidence-only memory
+    # (wcp-05). open("x") (O_CREAT|O_EXCL) fails closed; retry with a uuid suffix.
+    for _attempt in range(8):
+        try:
+            with target.open("x", encoding="utf-8", newline="\n") as handle:
+                handle.write(body)
+            break
+        except FileExistsError:
+            base = persona_root / relative_path
+            name = f"{base.stem}-{uuid.uuid4().hex[:8]}{base.suffix}"
+            target = persona_root / "memory" / "episodes" / name
+    else:
+        return {"ok": False, "error": "auto-capture file write collided repeatedly"}
+    final_relative = Path("memory/episodes") / target.name
     return {
         "ok": True,
         "path": str(target),
-        "relative_path": str(relative_path).replace("\\", "/"),
+        "relative_path": str(final_relative).replace("\\", "/"),
         "persona_root": str(persona_root),
     }

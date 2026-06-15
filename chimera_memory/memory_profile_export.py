@@ -261,8 +261,19 @@ def _build_artifacts(records: list[dict], *, generated_at: str, persona: str | N
         "filters": filters,
         "counts": {
             "selected": len(records),
-            "instruction_grade": sum(1 for row in records if row.get("can_use_as_instruction")),
-            "evidence_only": sum(1 for row in records if not row.get("can_use_as_instruction")),
+            # Match USER.md's instruction-grade predicate (can_use_as_instruction
+            # AND review_status=='confirmed') so the JSON counts agree with what is
+            # rendered; the two buckets still partition the selected set (wcp-07).
+            "instruction_grade": sum(
+                1
+                for row in records
+                if row.get("can_use_as_instruction") and row.get("review_status") == "confirmed"
+            ),
+            "evidence_only": sum(
+                1
+                for row in records
+                if not (row.get("can_use_as_instruction") and row.get("review_status") == "confirmed")
+            ),
         },
         "records": records,
         "artifact_names": list(artifacts),

@@ -1103,6 +1103,13 @@ def _provenance_policy(payload: Mapping[str, Any]) -> dict[str, Any]:
         or provenance.get("review_status")
     )
     review_status = raw_review_status if raw_review_status in AUTHORED_REVIEW_STATUSES else ""
+    # Scar: a writing caller can supply review_status='confirmed' on generated-
+    # provenance authored memory; without this clamp it survives to the written
+    # frontmatter and is consumed as a trust signal by the profile-export
+    # selection gate, forging the review-gated-by-default floor. Only
+    # instruction-grade provenance may self-assert 'confirmed' (wcp-10).
+    if review_status == "confirmed" and status not in INSTRUCTION_GRADE_PROVENANCE:
+        review_status = "pending"
     requires_review = provenance.get("requires_review", payload.get("requires_user_confirmation"))
     if isinstance(requires_review, bool):
         requires_user_confirmation = requires_review

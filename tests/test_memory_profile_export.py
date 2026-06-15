@@ -84,6 +84,35 @@ def test_profile_export_preview_uses_reviewed_memory_only(tmp_path: Path) -> Non
     assert events[0]["payload"]["selected_count"] == 2
 
 
+def test_profile_export_counts_match_render_predicate(tmp_path: Path) -> None:
+    # wcp-07: a record with can_use_as_instruction=true but review_status=evidence_only
+    # is NOT instruction-grade in USER.md, so the JSON count must agree (count it as
+    # evidence_only), and the two buckets still partition the selected set.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    mixed = tmp_path / "mixed.md"
+    _write_memory(
+        mixed,
+        [
+            "type: procedural",
+            "importance: 9",
+            "about: instruction-flag but evidence review",
+            "provenance_status: user_confirmed",
+            "review_status: evidence_only",
+            "can_use_as_instruction: true",
+        ],
+        "Flagged instruction-grade but only evidence-only by review status.",
+    )
+    assert index_file(conn, "asa", "memory/procedural/mixed.md", mixed)
+
+    result = memory_profile_export(conn, persona="asa", write=False)
+    counts = json.loads(result["artifacts"]["memory-profile.json"])["counts"]
+
+    assert counts["instruction_grade"] == 0
+    assert counts["evidence_only"] == 1
+    assert counts["instruction_grade"] + counts["evidence_only"] == counts["selected"]
+
+
 def test_profile_export_write_creates_portable_artifacts(tmp_path: Path, monkeypatch) -> None:
     # Declare the allowed export root so the containment guard (wcp-03) permits
     # writing under the test's tmp dir on every platform (incl. Linux /tmp).

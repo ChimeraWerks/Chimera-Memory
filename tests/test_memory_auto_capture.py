@@ -61,6 +61,27 @@ def test_auto_capture_preview_audits_without_writing(tmp_path: Path) -> None:
     assert events[0]["payload"]["action_item_count"] == 1
 
 
+def test_write_auto_capture_file_does_not_clobber_existing(tmp_path: Path) -> None:
+    # wcp-05: an exclusive create avoids a TOCTOU clobber — writing a plan whose
+    # target already exists must produce a new (uuid-suffixed) file, not overwrite.
+    from chimera_memory.memory_auto_capture import build_auto_capture_plan, write_auto_capture_file
+
+    personas = _personas_dir(tmp_path)
+    plan = build_auto_capture_plan(
+        persona="asa", title="Same Title", summary="same body", created_at="2026-06-15T00:00:00Z"
+    )
+
+    first = write_auto_capture_file(personas, plan)
+    assert first["ok"] is True
+    first_path = Path(first["path"])
+    original = first_path.read_text(encoding="utf-8")
+
+    second = write_auto_capture_file(personas, plan)
+    assert second["ok"] is True
+    assert Path(second["path"]) != first_path
+    assert first_path.read_text(encoding="utf-8") == original
+
+
 def test_auto_capture_write_creates_review_gated_memory(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)
