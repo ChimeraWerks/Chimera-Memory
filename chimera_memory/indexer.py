@@ -80,6 +80,7 @@ class Indexer:
         self._stop_event = threading.Event()
         self._watcher_thread = None
         self._poll_thread = None
+        self._meta_cache: dict[str, tuple[int, int, dict]] = {}
 
     @staticmethod
     def _normalize_path(value: str | Path | None) -> str | None:
@@ -108,6 +109,23 @@ class Indexer:
             return False
         return any(cwd == root or cwd.startswith(root + "/") for root in roots)
 
+    def _session_metadata(self, path: Path) -> dict:
+        # Memoize per file: extract_session_metadata scans Codex rollouts to EOF,
+        # and _should_index_file would otherwise rescan the same file 2-3x per
+        # backfill/poll pass (exclude-ids + persona/project cwd checks). Keyed on
+        # (size, mtime_ns) so a grown tail or rewritten Hermes file re-reads (hc-09).
+        try:
+            stat = path.stat()
+            key = str(path.resolve())
+            cached = self._meta_cache.get(key)
+            if cached and cached[0] == stat.st_size and cached[1] == stat.st_mtime_ns:
+                return cached[2]
+        except OSError:
+            return self.parser.extract_session_metadata(path)
+        meta = self.parser.extract_session_metadata(path)
+        self._meta_cache[key] = (stat.st_size, stat.st_mtime_ns, meta)
+        return meta
+
     def _should_index_file(self, path: Path) -> bool:
         normalized_path = self._normalize_path(path) or str(path).replace("\\", "/").lower()
         for pattern in self.exclude_globs:
@@ -121,7 +139,7 @@ class Indexer:
                 log.info("Skipping %s: matched transcript exclude glob", path)
                 return False
         if self.exclude_session_ids:
-            metadata = self.parser.extract_session_metadata(path)
+            metadata = self._session_metadata(path)
             session_id = str(metadata.get("session_id") or "").strip()
             if session_id in self.exclude_session_ids:
                 log.info("Skipping %s: matched transcript exclude session id", path)
@@ -129,11 +147,11 @@ class Indexer:
         if self.parser.format_name != "codex":
             return True
         if self.persona_root:
-            metadata = self.parser.extract_session_metadata(path)
+            metadata = self._session_metadata(path)
             cwd = self._normalize_path(metadata.get("cwd"))
             return cwd == self.persona_root
         if self.project_roots:
-            metadata = self.parser.extract_session_metadata(path)
+            metadata = self._session_metadata(path)
             cwd = self._normalize_path(metadata.get("cwd"))
             return self._cwd_under_any_root(cwd, self.project_roots)
         return True

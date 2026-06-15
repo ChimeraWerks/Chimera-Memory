@@ -54,6 +54,11 @@ def _personas_dir_from_root(persona_root: Path | None, persona_id: str | None) -
     depth = len([part for part in persona_id.replace("\\", "/").split("/") if part.strip()])
     current = persona_root
     for _ in range(depth):
+        # Over-walk guard: if persona_id has more segments than persona_root has
+        # trailing dirs, .parent would bottom out at the drive root (C:\) and we'd
+        # derive a huge personas_dir to scan/watch — treat as cannot-derive (hc-11).
+        if current.parent == current:
+            return None
         current = current.parent
     return current
 

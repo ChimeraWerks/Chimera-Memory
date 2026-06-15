@@ -13,7 +13,7 @@ from .memory_observability import record_memory_audit_event
 
 # not_built/disabled are informational (rank 0): a fresh or embeddings-off
 # install is not "broken" (corruption); they never escalate the overall status.
-_STATUS_RANK = {"not_built": 0, "disabled": 0, "ok": 0, "degraded": 1, "broken": 2}
+_STATUS_RANK = {"not_built": 0, "disabled": 0, "ok": 0, "unavailable": 1, "degraded": 1, "broken": 2}
 
 
 DEFAULT_THRESHOLDS = {
@@ -172,8 +172,10 @@ def _provider_profile() -> dict[str, Any]:
             "requires_network": bool(selected_candidate.get("requires_network")),
             "live": False,
         }
-    except Exception:
-        return {"status": "unavailable"}
+    except Exception as exc:
+        # Surface the fault class (not its message) so health stays leak-safe
+        # while no longer masking provider-resolution faults as a bland blank (ghh-12).
+        return {"status": "unavailable", "reason": type(exc).__name__}
 
 
 def _selected_provider(provider_profile: dict[str, Any] | None = None) -> str:
@@ -331,8 +333,10 @@ def _runtime_profile(conn: sqlite3.Connection, persona: str | None) -> dict[str,
         global_root = global_memory_root()
         global_root_source = "env" if os.environ.get("CHIMERA_MEMORY_GLOBAL_ROOT", "").strip() else "default"
         global_counts = _global_memory_counts(conn)
-    except Exception:
-        return {"status": "unavailable"}
+    except Exception as exc:
+        # Class name only keeps the runtime profile path-safe (no config path,
+        # TOML text, or scope detail leaks) while flagging that profiling failed (ghh-12).
+        return {"status": "unavailable", "reason": type(exc).__name__}
 
     persona_set = bool(transcript_persona)
     project_root_configured = bool(project_roots)
@@ -386,6 +390,7 @@ def collect_cm_health(
         effective_thresholds.update(thresholds)
 
     provider_profile = _provider_profile()
+    runtime_profile = _runtime_profile(conn, persona)
     checks = {
         "embeddings": _check_embeddings(conn, effective_thresholds, now),
         "enhancement_queue": _check_enhancement_queue(conn, now, effective_thresholds),
@@ -402,12 +407,23 @@ def collect_cm_health(
             **worker_states,
         }
 
-    status = _worst(*(check.get("status", "ok") for check in checks.values()))
+    # Fold profiling status into overall health so a masked config/scope/migration
+    # fault escalates to 'degraded' instead of reporting 'ok' (ghh-12). A profile
+    # that came back 'unavailable' contributes a 'degraded' signal (kept within the
+    # snapshot's ok/degraded/broken vocabulary).
+    profile_degraded = "unavailable" in (
+        provider_profile.get("status"),
+        runtime_profile.get("status"),
+    )
+    status = _worst(
+        *(check.get("status", "ok") for check in checks.values()),
+        "degraded" if profile_degraded else "ok",
+    )
     return {
         "schema_version": "chimera-memory.health.v1",
         "created_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "persona": persona or "",
-        "runtime_profile": _runtime_profile(conn, persona),
+        "runtime_profile": runtime_profile,
         "provider_profile": provider_profile,
         "status": status,
         "checks": checks,

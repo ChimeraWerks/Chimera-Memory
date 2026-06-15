@@ -64,3 +64,16 @@ def test_identity_derives_name_persona_and_roots_from_persona_id_and_root(tmp_pa
     assert identity.personas_dir == tmp_path / "personas"
     assert identity.shared_root == shared_root
     assert identity.warnings() == []
+
+
+def test_identity_does_not_derive_personas_dir_when_id_overflows_root(tmp_path: Path, monkeypatch) -> None:
+    # hc-11: a persona_id with more segments than the root has trailing dirs must
+    # not climb past the drive root into a huge personas_dir; derive None instead.
+    for key in ["TRANSCRIPT_PERSONA", "CHIMERA_PERSONA_NAME", "CHIMERA_PERSONAS_DIR", "CHIMERA_SHARED_ROOT"]:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("CHIMERA_PERSONA_ID", "/".join(f"seg{i}" for i in range(40)))
+    monkeypatch.setenv("CHIMERA_PERSONA_ROOT", str(tmp_path))
+
+    identity = load_identity_from_env()
+
+    assert identity.personas_dir is None

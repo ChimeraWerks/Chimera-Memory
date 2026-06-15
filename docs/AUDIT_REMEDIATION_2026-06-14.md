@@ -185,6 +185,13 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       normcase/normpath canonical form (Windows casing/8.3 drift). Tests:
       `test_memory_global_{review,seed}.py`. (gsr-06 promoted from won't-fix: the
       finding's record-only intent doesn't block remediation.)
+- [x] hc-09, hc-11, ghh-12 — indexer memoizes per-file Codex session metadata
+      (size+mtime keyed) so a backfill/poll pass doesn't rescan rollouts to EOF
+      2-3x (hc-09); `_personas_dir_from_root` over-walk guard returns None instead
+      of climbing past the drive root (hc-11); `collect_cm_health` surfaces a
+      leak-safe class-name reason for runtime/provider profile faults and folds
+      them into overall status (degraded, not silent ok) (ghh-12). Tests:
+      `test_identity.py`, `test_memory_health.py`. (hc-12 won't-fix above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

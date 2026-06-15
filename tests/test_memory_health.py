@@ -286,3 +286,20 @@ def test_health_snapshot_records_sanitized_codex_runtime_profile(tmp_path, monke
     assert "global_available_files=4/5" in text
     assert "global_instruction_grade_files=2/4" in text
     assert str(tmp_path) not in text
+
+
+def test_health_escalates_when_runtime_profile_unavailable(monkeypatch) -> None:
+    # ghh-12: a masked runtime-profile fault must escalate the overall status
+    # (not silently report 'ok') and surface a leak-safe class-name reason.
+    conn = _conn()
+    monkeypatch.setattr(
+        "chimera_memory.memory_health._runtime_profile",
+        lambda conn, persona: {"status": "unavailable", "reason": "OperationalError"},
+    )
+
+    snapshot = collect_cm_health(conn, persona="asa")
+
+    assert snapshot["status"] == "degraded"
+    assert snapshot["runtime_profile"]["reason"] == "OperationalError"
+    assert "/" not in snapshot["runtime_profile"]["reason"]
+    assert "\\" not in snapshot["runtime_profile"]["reason"]
