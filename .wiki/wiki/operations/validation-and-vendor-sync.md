@@ -78,16 +78,3 @@ python -m pip install -e ".[dev,mcp]"
 python -m compileall chimera_memory
 python -m pytest
 ```
-
-## PersonifyAgents Vendor Sync
-
-This repo is source of truth. When runtime CM changes must be mirrored and
-`../PersonifyAgents` exists:
-
-1. Commit and push CM first.
-2. From `../PersonifyAgents`, run `python scripts/sync-chimera-memory.py`.
-3. Stage and commit `vendor/chimera-memory/` as `vendor: sync CM <sha>`.
-4. Run PA vendor tests plus PA runtime/PWA tests.
-5. Push PA and verify CI when runtime behavior changed.
-
-Docs-only agent setup changes do not need vendor sync unless Charles asks.

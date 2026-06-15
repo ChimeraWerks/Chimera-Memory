@@ -166,7 +166,7 @@ Current v1 MCP status:
 Project writes can target more than one repo without restarting CM per project by setting `CHIMERA_MEMORY_PROJECT_ROOTS`:
 
 ```text
-CHIMERA_MEMORY_PROJECT_ROOTS=ChimeraMemory=<chimera-memory-root>/.chimera-memory;PersonifyAgents=<personify-agents-root>/.chimera-memory;ProjectChimera=<project-chimera-root>/.chimera-memory
+CHIMERA_MEMORY_PROJECT_ROOTS=ChimeraMemory=<chimera-memory-root>/.chimera-memory;DemoProject=<demo-project-root>/.chimera-memory;ProjectChimera=<project-chimera-root>/.chimera-memory
 ```
 
 The legacy single-project `CHIMERA_MEMORY_PROJECT_ROOT` remains supported. When both are present, the project-id map is used for matching `project_id` values.
@@ -188,7 +188,7 @@ Asa-side live smoke passed after restart on 2026-05-18:
 
 - `memory_diagnose(mode="tools")` returned the five-tool persona belt.
 - `memory_diagnose(mode="harness")` returned `chimera-memory.active-harness-lease.v1`, current lease present, conflict count `0`, `warning_only=true`.
-- `memory_promote_snapshot(destination_scope="project", project_id="PersonifyAgents", write=false)` previewed successfully.
+- `memory_promote_snapshot(destination_scope="project", project_id="DemoProject", write=false)` previewed successfully.
 - `memory_promote_snapshot(..., write=true)` without `approved_by` failed with the approval-required gate.
 - Audit query showed `memory_promote_snapshot_planned` and `memory_promote_snapshot_approval_required`.
 - The legacy `discord_recall_index(direction="outbound")` compatibility path

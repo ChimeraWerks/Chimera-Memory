@@ -590,7 +590,7 @@ least-privilege `persona_memory` surface); `doctor` is read-only and path-safe;
 `install` writes per-persona launcher scripts under `~/.chimera-memory/hermes/`
 (dry-run by default) and never mutates Hermes's `config.yaml`. Hermes running
 inside Claude Code (Claude-format JSONL under `~/.claude/projects`) is handled as
-`claude-code` with no setup. The PersonifyAgents installer is deprecated.
+`claude-code` with no setup.
 
 ## Service-Mode Boundary
 

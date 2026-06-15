@@ -115,20 +115,6 @@ def test_hermes_client_name_alone_does_not_imply_a_provider() -> None:
     assert plan.selected.provider_id == "openai"
 
 
-def test_personifyagents_llm_provider_alias_is_ignored() -> None:
-    plan = resolve_enhancement_provider_plan(
-        {
-            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "openai,anthropic,dry_run",
-            "PERSONIFYAGENTS_LLM_PROVIDER": "claude",
-            "CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory",
-            "CHIMERA_MEMORY_ENHANCEMENT_ANTHROPIC_CREDENTIAL_REF": "oauth:anthropic-memory",
-        }
-    )
-
-    assert plan.provider_affinity == ""
-    assert plan.selected.provider_id == "openai"
-
-
 def test_provider_affinity_does_not_create_credential_ref(tmp_path) -> None:
     plan = resolve_enhancement_provider_plan(
         {

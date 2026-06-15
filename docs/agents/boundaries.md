@@ -97,9 +97,3 @@ or env vars:
 - Keep user-facing output safe and actionable.
 - Preserve compatibility re-exports if callers already import through `memory.py` or package `__init__`.
 - Include provenance labels for generated, fallback, cached, help_probe, live, or user_supplied data.
-
-## PersonifyAgents Boundary
-
-This repo is the source of truth. Runtime CM changes land here first. Only after
-this repo is tested, committed, and pushed should the PA vendor copy be synced
-from `../PersonifyAgents` using `python scripts/sync-chimera-memory.py`.

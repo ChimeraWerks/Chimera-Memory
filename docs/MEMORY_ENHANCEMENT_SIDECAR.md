@@ -294,9 +294,9 @@ The runner:
 - completes the job with normalized metadata
 - stores failures as bounded categories only
 
-CM does not resolve raw OAuth tokens in this runner. A host application such as
-PersonifyAgents can inject a client that resolves scoped credentials from its
-own secret store and performs the provider-specific call.
+CM does not resolve raw OAuth tokens in this runner. A host application can
+inject a client that resolves scoped credentials from its own secret store and
+performs the provider-specific call.
 
 ## Generated Synthesis Artifacts
 

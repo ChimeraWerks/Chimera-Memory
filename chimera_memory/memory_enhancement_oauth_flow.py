@@ -864,13 +864,13 @@ def _google_callback_handler(
 _GOOGLE_CALLBACK_SUCCESS_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Google sign-in complete</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:10vh auto;max-width:32rem;text-align:center;color:#202124}h1{color:#188038}</style></head>
-<body><h1>Signed in to Google.</h1><p>You can close this tab and return to PersonifyAgents.</p></body></html>
+<body><h1>Signed in to Google.</h1><p>You can close this tab and return to ChimeraMemory.</p></body></html>
 """
 
 _GOOGLE_CALLBACK_ERROR_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Google sign-in failed</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:10vh auto;max-width:32rem;text-align:center;color:#202124}h1{color:#b3261e}</style></head>
-<body><h1>Sign-in failed</h1><p>Return to PersonifyAgents and restart Google sign-in.</p></body></html>
+<body><h1>Sign-in failed</h1><p>Return to ChimeraMemory and restart Google sign-in.</p></body></html>
 """
 
 

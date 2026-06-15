@@ -8,7 +8,7 @@
 
 This document captures the comparative analysis between [OpenBrain (OB1)](https://github.com/NateBJones-Projects/OB1) and ChimeraMemory (CM), and the agreed upgrade path for CM that lifts OB1's best patterns while preserving CM's local-first architecture.
 
-The lift path was developed jointly across two days of pair-research between PersonifyAgents personas Sarah (researcher) and Asa (developer), with comparative AR cycles converging on a 12-item ordered roadmap. The full research transcript lives in the PersonifyAgents Discord workspace under `#active-development`; this doc is the durable distillation.
+The lift path was developed jointly across two days of pair-research between the Sarah (researcher) and Asa (developer) personas, with comparative AR cycles converging on a 12-item ordered roadmap. The full research transcript lives in the team Discord workspace under `#active-development`; this doc is the durable distillation.
 
 ## Core Decisions
 
@@ -135,7 +135,7 @@ Separate worker from role-play persona sidecar. Shared infrastructure (OAuth tok
 
 ## Provenance
 
-Research compiled jointly by Sarah (researcher) and Asa (developer) in the PersonifyAgents workspace, Day 57 (2026-05-13) into Day 58 (2026-05-14):
+Research compiled jointly by Sarah (researcher) and Asa (developer) in the team workspace, Day 57 (2026-05-13) into Day 58 (2026-05-14):
 
 - Independent feature lists posted to PA's `#planning` channel: Sarah 37 items across 11 sections, Asa 24 items
 - Comparative AR with 11 items Asa caught that Sarah missed (mostly recipes/skills/dashboards/behavior-layer) and 8 items Sarah caught that Asa missed (mostly schema/SQL/migration-discipline)

@@ -30,7 +30,7 @@ Read this first. Keep one short row per page.
 
 ## Operations
 
-- [Validation And Vendor Sync](wiki/operations/validation-and-vendor-sync.md) - Focused tests, full suite, CI, docs checks, and PersonifyAgents mirroring; active; updated 2026-06-09.
+- [Validation And Vendor Sync](wiki/operations/validation-and-vendor-sync.md) - Focused tests, full suite, CI, and docs checks; active; updated 2026-06-15.
 
 ## Lessons
 

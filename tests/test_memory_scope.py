@@ -375,14 +375,14 @@ def test_start_memory_watcher_schedules_non_persona_project_and_global_roots(
     shared_root = tmp_path / "shared"
     global_root = tmp_path / "global-memory"
     pc_root = tmp_path / "ProjectChimera" / ".chimera-memory"
-    pa_root = tmp_path / "PersonifyAgents" / ".chimera-memory"
+    pa_root = tmp_path / "DemoProject" / ".chimera-memory"
     for root in (personas, shared_root, global_root, pc_root, pa_root):
         root.mkdir(parents=True)
 
     monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(global_root))
     monkeypatch.setenv(
         "CHIMERA_MEMORY_PROJECT_ROOTS",
-        f"ProjectChimera={pc_root};PersonifyAgents={pa_root}",
+        f"ProjectChimera={pc_root};DemoProject={pa_root}",
     )
 
     observer = start_memory_watcher(object(), personas)
@@ -464,7 +464,7 @@ def test_start_memory_watcher_indexes_events_from_each_project_root(
     shared_root = tmp_path / "shared"
     global_root = tmp_path / "global-memory"
     pc_root = tmp_path / "ProjectChimera" / ".chimera-memory"
-    pa_root = tmp_path / "PersonifyAgents" / ".chimera-memory"
+    pa_root = tmp_path / "DemoProject" / ".chimera-memory"
     for root in (personas / "developer" / "asa" / "memory", shared_root, global_root, pc_root, pa_root):
         root.mkdir(parents=True)
 
@@ -474,7 +474,7 @@ def test_start_memory_watcher_indexes_events_from_each_project_root(
     monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(global_root))
     monkeypatch.setenv(
         "CHIMERA_MEMORY_PROJECT_ROOTS",
-        f"ProjectChimera={pc_root};PersonifyAgents={pa_root}",
+        f"ProjectChimera={pc_root};DemoProject={pa_root}",
     )
 
     db = TranscriptDB(tmp_path / "watcher.db")
@@ -497,7 +497,7 @@ def test_start_memory_watcher_indexes_events_from_each_project_root(
     _write(
         pa_file,
         "multi watcher event pa marker",
-        "type: procedural\nmemory_scope: project\nproject_id: PersonifyAgents\n",
+        "type: procedural\nmemory_scope: project\nproject_id: DemoProject\n",
     )
     _write(private_file, "multi watcher event private marker")
 
@@ -516,7 +516,7 @@ def test_start_memory_watcher_indexes_events_from_each_project_root(
     rows = [tuple(row) for row in rows]
 
     assert rows == [
-        ("project:PersonifyAgents", "memory/watcher-pa.md", "project", "PersonifyAgents"),
+        ("project:DemoProject", "memory/watcher-pa.md", "project", "DemoProject"),
         ("project:ProjectChimera", "memory/watcher-pc.md", "project", "ProjectChimera"),
     ]
 
@@ -579,7 +579,7 @@ def test_project_root_map_resolves_multiple_project_layers(tmp_path: Path, monke
     root = tmp_path
     personas = root / "personas"
     pc_root = root / "ProjectChimera" / ".chimera-memory"
-    pa_root = root / "PersonifyAgents" / ".chimera-memory"
+    pa_root = root / "DemoProject" / ".chimera-memory"
 
     _write(personas / "developer" / "asa" / "memory" / "asa.md", "multi project marker asa")
     _write(
@@ -590,20 +590,20 @@ def test_project_root_map_resolves_multiple_project_layers(tmp_path: Path, monke
     _write(
         pa_root / "memory" / "status.md",
         "multi project marker pa",
-        "type: procedural\nmemory_scope: project\nproject_id: PersonifyAgents\n",
+        "type: procedural\nmemory_scope: project\nproject_id: DemoProject\n",
     )
 
     monkeypatch.setenv("TRANSCRIPT_PERSONA", "asa")
     monkeypatch.setenv("CHIMERA_MEMORY_GLOBAL_ROOT", str(root / "missing-global"))
     monkeypatch.setenv(
         "CHIMERA_MEMORY_PROJECT_ROOTS",
-        f"ProjectChimera={pc_root};PersonifyAgents={pa_root}",
+        f"ProjectChimera={pc_root};DemoProject={pa_root}",
     )
 
     assert project_memory_root("ProjectChimera") == pc_root
-    assert project_memory_root("PersonifyAgents") == pa_root
+    assert project_memory_root("DemoProject") == pa_root
     assert dict(project_memory_roots()) == {
-        "PersonifyAgents": pa_root,
+        "DemoProject": pa_root,
         "ProjectChimera": pc_root,
     }
 
@@ -615,9 +615,9 @@ def test_project_root_map_resolves_multiple_project_layers(tmp_path: Path, monke
         ("asa", "memory/asa.md", None),
         ("project:ProjectChimera", "memory/status.md", "ProjectChimera"),
     }
-    assert _paths(memory_search(conn, "multi project marker", persona="asa", project_id="PersonifyAgents", limit=10)) == {
+    assert _paths(memory_search(conn, "multi project marker", persona="asa", project_id="DemoProject", limit=10)) == {
         ("asa", "memory/asa.md", None),
-        ("project:PersonifyAgents", "memory/status.md", "PersonifyAgents"),
+        ("project:DemoProject", "memory/status.md", "DemoProject"),
     }
 
 

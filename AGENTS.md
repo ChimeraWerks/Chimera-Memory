@@ -9,8 +9,7 @@ duplicating them here.
 
 ChimeraMemory indexes local agent transcripts and curated markdown memories into
 SQLite, serves them through CLI/MCP surfaces, and preserves scoped memory across
-Claude Code, Codex, Hermes, standalone users, and the PersonifyAgents vendor
-copy.
+Claude Code, Codex, Hermes, and standalone users.
 
 The baseline is local-first: SQLite, markdown plus YAML frontmatter, local
 fastembed/BGE embeddings, MCP stdio or local streamable HTTP, and explicit
@@ -60,7 +59,7 @@ Update `.wiki/` when work changes durable project understanding:
 - enhancement sidecar, worker, provider, OAuth, queue, or budget boundaries
 - importer, auto-capture, authored writeback, review, profile export, or
   generated metadata policy
-- service-mode, startup worker, or PersonifyAgents vendor-sync policy
+- service-mode or startup worker policy
 - contradictions found or resolved
 
 Do not update `.wiki/` for trivial edits, temporary experiments, local DB state,
@@ -161,13 +160,6 @@ modules.
 - `dry_run` enhancement remains the no-provider floor.
 - CLI workers must use the worker-only MCP surface and return results through
   worker submit tools, not free-form stdout scraping.
-
-## Source Of Truth (PersonifyAgents Deprecated)
-
-This repo is the single source of truth. The PersonifyAgents vendor copy and its
-`scripts/sync-chimera-memory.py` flow are **deprecated** — do not run a PA vendor
-sync unless Charles explicitly asks. Land all runtime CM changes here; there is
-no required downstream mirror.
 
 ## Final Response
 

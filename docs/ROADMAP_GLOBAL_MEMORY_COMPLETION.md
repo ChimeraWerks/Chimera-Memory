@@ -115,24 +115,11 @@ and live provider smoke succeeded with `openai/gpt-5.3-codex-spark`.
 - [x] Run full `python -m pytest`.
 - [x] Run wiki lint.
 - [x] Run `git diff --check`.
-- [x] Sync into PersonifyAgents vendor copy if this runtime behavior must ship
-  there.
-- [x] Run PA vendor/runtime checks if synced.
 
 Receipts:
 
 - CM branch `codex/chimera-memory-global-operation` committed
   `d37dc4049348835fbd3421712ca0150ac2ab8cf3` and pushed to origin.
-- PA branch `codex/sync-chimera-memory-global-operation` synced the vendor copy
-  from the committed CM SHA with `source_dirty=false`, portable source hint
-  `../Chimera-Memory`, and vendor hash
-  `35bf3dfbab175da059488083c53c1343ecb9a20f33077bb8f49dae21539ab8b4`.
-- PA sync checks passed: `python scripts\sync-chimera-memory.py --check`,
-  `python scripts\sync-chimera-memory.py --check --strict --source ...`, and
-  `python -m pytest tests\test_sync_chimera_memory.py -q`.
-- A narrow PA sync-script fix made the sync command Windows-console safe and
-  stopped recording a machine-specific absolute source path or local username in
-  `.sync-source.json`.
 - This roadmap update is the final CM follow-up commit and is re-synced into PA
   before closure.
 

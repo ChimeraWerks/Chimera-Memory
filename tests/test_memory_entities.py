@@ -37,10 +37,10 @@ def test_entity_index_derives_people_topics_projects_and_tools(tmp_path: Path) -
             "entity: Charles",
             "tags:",
             "  - memory",
-            "  - project:PA",
+            "  - project:Hermes",
             "  - tool:Codex",
         ],
-        "Charles is shaping PA memory work.",
+        "Charles is shaping Hermes memory work.",
     )
     second = tmp_path / "sarah-memory.md"
     _write_memory(
@@ -72,7 +72,7 @@ def test_entity_index_derives_people_topics_projects_and_tools(tmp_path: Path) -
     assert memory_topic[0]["file_count"] == 2
 
     links = memory_file_entity_links(conn, file_path="charles-memory.md")
-    assert {link["canonical_name"] for link in links} == {"Charles", "memory", "PersonifyAgents", "Codex"}
+    assert {link["canonical_name"] for link in links} == {"Charles", "memory", "Hermes", "Codex"}
 
     events = memory_audit_query(conn, event_type="memory_entities_indexed", persona="asa")
     assert len(events) == 1
@@ -91,17 +91,17 @@ def test_entity_connections_use_shared_file_evidence(tmp_path: Path) -> None:
             "importance: 7",
             "entity: Charles",
             "tags:",
-            "  - project:PA",
+            "  - project:Hermes",
             "  - tool:Codex",
         ],
-        "PA work connects Charles and Codex.",
+        "Hermes work connects Charles and Codex.",
     )
     assert index_file(conn, "asa", "pa.md", memory_file)
     memory_entity_index(conn)
 
     connections = memory_entity_connections(conn, entity_name="Charles", entity_type="person")
 
-    assert {row["canonical_name"] for row in connections} == {"PersonifyAgents", "Codex"}
+    assert {row["canonical_name"] for row in connections} == {"Hermes", "Codex"}
     for row in connections:
         assert row["overlap_count"] == 1
         assert row["evidence_paths"] == ["pa.md"]
@@ -166,7 +166,6 @@ def test_entity_index_canonicalizes_common_legacy_tag_aliases(tmp_path: Path) ->
             "  - asa",
             "  - ceo",
             "  - chimera-memory",
-            "  - pa",
             "  - hermes",
             "  - ceo-feedback",
         ],
@@ -185,7 +184,7 @@ def test_entity_index_canonicalizes_common_legacy_tag_aliases(tmp_path: Path) ->
     assert by_name["ceo-feedback"]["entity_type"] == "topic"
 
     assert memory_entity_query(conn, query="ceo", entity_type="person", persona="sarah")[0]["canonical_name"] == "Charles"
-    assert memory_entity_query(conn, query="pa", entity_type="project", persona="sarah")[0]["canonical_name"] == "PersonifyAgents"
+    assert memory_entity_query(conn, query="hermes", entity_type="project", persona="sarah")[0]["canonical_name"] == "Hermes"
 
 
 def test_typed_entity_edge_upsert_accumulates_support() -> None:
@@ -300,11 +299,11 @@ def test_entity_edge_evidence_keyed_is_idempotent_per_contributor() -> None:
 
 
 def test_canonical_index_entity_keeps_person_named_like_override_key() -> None:
-    # cm-ent-005: a person literally named 'Pa' must not be renamed to the
-    # PersonifyAgents project canonical; the raw name is kept.
-    assert _canonical_index_entity("person", "Pa") == ("person", "Pa")
+    # cm-ent-005: a person whose name collides with a project override key (here
+    # 'Hermes') must not be renamed to the project canonical; the raw name is kept.
+    assert _canonical_index_entity("person", "Hermes") == ("person", "Hermes")
     # The bare legacy tag path (topic) still canonicalizes to the project.
-    assert _canonical_index_entity("topic", "pa") == ("project", "PersonifyAgents")
+    assert _canonical_index_entity("topic", "hermes") == ("project", "Hermes")
 
 
 def test_entity_edge_query_excludes_expired_edges_by_default() -> None:

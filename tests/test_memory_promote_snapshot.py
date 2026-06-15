@@ -116,11 +116,11 @@ def test_promote_snapshot_uses_project_root_map(tmp_path: Path, monkeypatch) -> 
     personas_dir = tmp_path / "personas"
     source = personas_dir / "developer" / "asa" / "memory" / "procedural" / "source.md"
     pc_root = tmp_path / "ProjectChimera" / ".chimera-memory"
-    pa_root = tmp_path / "PersonifyAgents" / ".chimera-memory"
+    pa_root = tmp_path / "DemoProject" / ".chimera-memory"
     _write_memory(source, marker="mapped project promotion marker")
     monkeypatch.setenv(
         "CHIMERA_MEMORY_PROJECT_ROOTS",
-        f"ProjectChimera={pc_root};PersonifyAgents={pa_root}",
+        f"ProjectChimera={pc_root};DemoProject={pa_root}",
     )
 
     conn = sqlite3.connect(":memory:")
@@ -133,7 +133,7 @@ def test_promote_snapshot_uses_project_root_map(tmp_path: Path, monkeypatch) -> 
         persona="asa",
         source_file_path="memory/procedural/source.md",
         destination_scope="project",
-        project_id="PersonifyAgents",
+        project_id="DemoProject",
         write=True,
         approved_by="charles",
     )
@@ -146,7 +146,7 @@ def test_promote_snapshot_uses_project_root_map(tmp_path: Path, monkeypatch) -> 
 
     frontmatter = _frontmatter(target)
     assert frontmatter["memory_scope"] == "project"
-    assert frontmatter["project_id"] == "PersonifyAgents"
+    assert frontmatter["project_id"] == "DemoProject"
 
 
 def test_promote_snapshot_rejects_duplicate_target(tmp_path: Path, monkeypatch) -> None:

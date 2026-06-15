@@ -1205,7 +1205,7 @@
 - Landed the audit High-severity set (frontmatter coercion, OpenAI key regex, live-retrieval superseded filter, recall similarity guard, ChatGPT importer crash guards, CLI top-level handler, MCP error/path-leak sanitizers, trace-analysis egress redaction, entity-link preservation, scope-aware idempotency key, OAuth lock-across-network, FTS staleness recovery, Codex TOML installer data loss).
 - Updated `.wiki` drift page and README harness rows to match the new detection behavior.
 - Added a native Hermes parser for standalone per-persona `session_*.json` sessions (was unindexed: a JSON-not-JSONL format). Indexer discovery + watchdog are now parser-aware via `session_glob`; harness detection resolves `hermes` to the Hermes parser and a persona-scoped session dir. Verified on real `asa` data. Tests: `tests/test_hermes_parser.py`.
-- Doc pass for harness detection + Hermes parser/setup + the deferred-item resolutions: updated README (Hermes section + native CLI), `docs/agents/commands.md` (Harness Auto-Detection + Hermes Setup Helpers + new env vars + PA-deprecated), `docs/MODULE_LAYOUT.md` (harness.py + hermes_setup.py ownership), `.wiki/repo-brief.md`, `.wiki/wiki/systems/runtime-architecture-and-module-ownership.md`, `.wiki/wiki/systems/mcp-cli-and-service-surfaces.md`, and `AGENTS.md` (PA deprecated). Source of truth is this repo; PA vendor sync retired.
+- Doc pass for harness detection + Hermes parser/setup + the deferred-item resolutions: updated README (Hermes section + native CLI), `docs/agents/commands.md` (Harness Auto-Detection + Hermes Setup Helpers + new env vars), `docs/MODULE_LAYOUT.md` (harness.py + hermes_setup.py ownership), `.wiki/repo-brief.md`, `.wiki/wiki/systems/runtime-architecture-and-module-ownership.md`, `.wiki/wiki/systems/mcp-cli-and-service-surfaces.md`, and `AGENTS.md`. Source of truth is this repo.
 
 ## 2026-06-15 — Low-severity audit pass complete (full audit closed)
 
@@ -1219,3 +1219,10 @@
 
 - Reconciled four stale `[ ]` checkboxes in `docs/AUDIT_REMEDIATION_2026-06-14.md` that contradicted its own "audit closed" conclusion (smr-04/T1.3, hc-08/T1.5 were done in the Medium batch; the two T2.*/T3.* catch-alls now cite the findings that closed them). Tracker is now internally consistent.
 - Cleared the `docs/OB1_COMPARISON.md` "stdio-only today" drift (item 11): CM already ships `serve --transport {stdio,sse,streamable-http}` (`cli.py:41`); the still-open piece of that OB1 item is only the access-key/CORS/Accept-header auth layer, not the transport. Removed the resolved bullet from the drift page's Current Documentation Drift list.
+
+## 2026-06-15 — PersonifyAgents removed from the repo (tombstone)
+
+- Charles directed a full purge of PersonifyAgents references from the codebase (memories excluded). **PA is dead; do not re-introduce a vendor copy, sync script, or installer.** Removed across 24 files.
+- Code: dropped the 3 PA entries from `_ENTITY_OVERRIDES` (`memory_entities.py`); removed the optional `personifyagents.gateway_protocol` import so `ProtocolValidationError` bases on `ValueError` directly (identical standalone behavior, `memory_enhancement_credentials.py`); the Google OAuth callback pages now say "ChimeraMemory" (`memory_enhancement_oauth_flow.py`).
+- Tests: entity-override tests now exercise the `Hermes` override instead of the removed `pa`→PA one (incl. the cm-ent-005 person-vs-override-key regression); scope/promote sample project renamed to `DemoProject`; the two now-moot "PA env alias is ignored" guard tests deleted.
+- Docs/wiki: deleted the PA vendor-sync sections from `AGENTS.md`, `docs/agents/{validation,boundaries,commands}.md`, and `.wiki/wiki/operations/validation-and-vendor-sync.md`; removed the `.githooks/post-commit` PA-sync nudge entirely; genericized PA attributions in `docs/OB1_COMPARISON.md` and the sidecar host-injection note. Full suite still green.

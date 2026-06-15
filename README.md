@@ -351,8 +351,6 @@ Hermes can also use CM as a memory **provider** / MCP server during agent turns:
 1. **As an MCP server** (same as Claude Code / Codex), under `mcp_servers.chimera-memory` in `<HERMES_HOME>/config.yaml`. `hermes template` prints a ready-to-paste block (least-privilege `persona_memory` surface).
 2. **As a native memory provider** via a plugin filesystem symlink at `<HERMES_HOME>/plugins/chimera_memory` plus `memory.provider: chimera_memory` in `config.yaml` — Hermes's first-class memory backend for live recall.
 
-> **Note:** The PersonifyAgents (`personifyagents install apply ...`) automated installer is **deprecated**. Use the native `chimera-memory hermes` and `chimera-memory codex` commands above. This repo is the single source of truth.
-
 ## Architecture
 
 ```
@@ -1186,7 +1184,6 @@ memory_fts (content)
 ### Phase 5 ✅ — Cross-Runtime
 - [x] Codex CLI parser (separate from Claude Code parser)
 - [x] Hermes Agent integration (memory provider plugin + MCP server)
-- [x] PersonifyAgents installer handlers (deterministic per-runtime wiring)
 - [x] `split-db` CLI for per-persona DB isolation
 
 ### Phase 6 ✅ — Memory Enhancement + Provider Layer
@@ -1231,8 +1228,7 @@ Set `MEMORY_ROOT=/dev/null` (or simply leave it unset) to tell the indexer there
 
 ## Related
 
-- [PersonifyAgents](https://github.com/nexu-io/personifyagents) — Person-shaped agent platform built on top of ChimeraMemory. Uses the curated memory layer heavily. Provides the deterministic installer handlers that wire CM into any runtime.
-- [ChimeraPersonas](https://github.com/ChimeraWerks/ChimeraPersonas) — Earlier opinionated persona system using ChimeraMemory's curated layer. PA is the successor.
+- [ChimeraPersonas](https://github.com/ChimeraWerks/ChimeraPersonas) — Earlier opinionated persona system using ChimeraMemory's curated layer.
 
 ## License
 

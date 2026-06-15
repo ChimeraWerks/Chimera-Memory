@@ -7,11 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-try:  # Compatibility for PA wrappers while ChimeraMemory remains standalone.
-    from personifyagents.gateway_protocol import ProtocolValidationError as _ProtocolValidationBase
-except Exception:  # noqa: BLE001 - optional downstream package may not exist
-    _ProtocolValidationBase = ValueError
-
 
 CREDENTIAL_REF_SCHEMES = frozenset(("oauth", "secret", "env"))
 MAX_CREDENTIAL_VALUE_CHARS = 16_384
@@ -24,7 +19,7 @@ _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,119}$")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
-class ProtocolValidationError(_ProtocolValidationBase):
+class ProtocolValidationError(ValueError):
     """Raised when memory-enhancement protocol input is invalid."""
 
 

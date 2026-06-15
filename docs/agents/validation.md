@@ -84,16 +84,6 @@ python tests/test_parser.py
 - Codex setup/parser: `tests/test_codex_setup.py`, `tests/test_codex_parser.py`
 - MCP/server startup and persona surface: `tests/test_server_startup.py`, `tests/test_persona_tool_surface.py`, `tests/test_whereami.py`
 
-## PersonifyAgents Verification
-
-When runtime CM changes must be mirrored and `../PersonifyAgents` exists:
-
-1. Commit and push CM first.
-2. From `../PersonifyAgents`, run `python scripts/sync-chimera-memory.py`.
-3. Stage and commit `vendor/chimera-memory/` as `vendor: sync CM <sha>`.
-4. Run PA vendor tests plus PA runtime/PWA tests.
-5. Push PA and verify CI when runtime behavior changed.
-
 ## Completion Rules
 
 - Do not call work complete with failing validation unless the user explicitly accepts the risk.

@@ -210,4 +210,3 @@ retrieval/indexing contracts.
 - A change crosses persona, project, or global memory boundaries.
 - A write might touch runtime DBs, transcript JSONL, OAuth/auth files, `.env`, generated worker homes, or provider credentials.
 - A provider call, subprocess, sidecar, import, migration, or browser/client output is involved.
-- A CM runtime change needs the PersonifyAgents vendor sync after commit and push.

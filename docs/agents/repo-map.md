@@ -4,7 +4,7 @@
 
 ChimeraMemory is a Python package and MCP server that indexes local agent
 transcripts and curated markdown memories into SQLite. It serves Claude Code,
-Codex, Hermes, standalone users, and a PersonifyAgents vendor copy.
+Codex, Hermes, and standalone users.
 
 ## Top-Level Layout
 

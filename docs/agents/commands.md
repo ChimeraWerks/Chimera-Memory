@@ -658,6 +658,3 @@ Before finalizing code changes:
 git diff
 git status --short
 ```
-
-The PersonifyAgents vendor copy is deprecated; do not run a PA vendor sync unless
-Charles explicitly asks. This repo is the single source of truth.
