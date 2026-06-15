@@ -3938,6 +3938,17 @@ def _prewarm_embeddings_enabled() -> bool:
     return True
 
 
+def _prewarm_embeddings_enabled_for_secondary() -> bool:
+    # A secondary server process (one that did NOT win the maintenance lease) runs
+    # no embedding worker, so the "worker owns model loading" assumption above does
+    # not apply: prewarm here unless explicitly disabled, or the first embedding
+    # tool call in that process pays the cold-start cost (smr-05).
+    configured = os.environ.get("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", "").strip()
+    if configured:
+        return _env_bool("CHIMERA_MEMORY_PREWARM_EMBEDDINGS", default=True)
+    return True
+
+
 def _startup_bootstrap_delay_seconds() -> float:
     return _env_float(
         "CHIMERA_MEMORY_STARTUP_BOOTSTRAP_DELAY_SECONDS",
@@ -4381,6 +4392,10 @@ def _bootstrap_startup_services() -> object | None:
         logging.getLogger("chimera_memory.startup").info(
             "startup maintenance already owned by another process; skipping live workers"
         )
+        # This process serves embedding queries but runs no embedding worker;
+        # prewarm so its first semantic tool call is not a cold start (smr-05).
+        if _prewarm_embeddings_enabled_for_secondary():
+            _prewarm_embeddings()
         return None
     _startup_maintenance_lease = lease
     logging.getLogger("chimera_memory.startup").info(

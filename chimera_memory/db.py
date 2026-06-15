@@ -312,7 +312,11 @@ class TranscriptDB:
                 e.get("session_id", ""),
                 e.get("entry_type", "unknown"),
                 e.get("timestamp", ""),
-                e.get("content"),
+                # Store '' not NULL: SQLite treats NULL as distinct in the
+                # UNIQUE(session_id,timestamp,entry_type,content) key, so
+                # NULL-content rows (tool_call/system) would duplicate on every
+                # re-backfill (schema-db-06).
+                e.get("content") or "",
                 e.get("persona"),
                 e.get("source"),
                 e.get("channel"),

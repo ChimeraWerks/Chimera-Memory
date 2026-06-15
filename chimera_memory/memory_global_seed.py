@@ -955,16 +955,27 @@ def _path_provenance(value: str | Path | None = None) -> str:
     return "user_supplied" if value else "fallback"
 
 
+def _path_within_root(resolved: Path, root_resolved: Path) -> bool:
+    # rglob follows symlinked DIRECTORIES, so a file reached through one can sit
+    # outside the root even though it is not itself a symlink. Require the resolved
+    # path to stay under the resolved root (gsr-03).
+    return resolved == root_resolved or root_resolved in resolved.parents
+
+
 def _discover_root_markdown_files(root: Path) -> list[tuple[str, Path]]:
     files: list[tuple[str, Path]] = []
+    root_resolved = root.resolve(strict=False)
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.is_symlink():
+            continue
+        resolved = path.resolve(strict=False)
+        if not _path_within_root(resolved, root_resolved):
             continue
         if _should_skip_path(root, path):
             continue
         if path.suffix.lower() not in INDEX_EXTENSIONS:
             continue
-        files.append((str(path.relative_to(root)).replace("\\", "/"), path.resolve(strict=False)))
+        files.append((str(path.relative_to(root)).replace("\\", "/"), resolved))
     return sorted(files, key=lambda item: item[0])
 
 
@@ -1355,11 +1366,16 @@ def _discover_seed_candidates(
     exclude_patterns: list[str],
 ) -> list[GlobalSeedCandidate]:
     candidates: list[GlobalSeedCandidate] = []
+    source_resolved = source.resolve(strict=False)
     for path in sorted(source.rglob("*")):
         if not path.is_file():
             continue
         if path.is_symlink():
             candidates.append(_candidate(source, target, path, "skip", "symlink"))
+            continue
+        if not _path_within_root(path.resolve(strict=False), source_resolved):
+            # Reached through a symlinked directory -> outside the source (gsr-03).
+            candidates.append(_candidate(source, target, path, "skip", "outside source root"))
             continue
         if _should_skip_path(source, path):
             candidates.append(_candidate(source, target, path, "skip", "skipped directory"))

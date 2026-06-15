@@ -7,6 +7,7 @@ import html
 import json
 import mailbox
 import re
+import shutil
 import sqlite3
 import tempfile
 import zipfile
@@ -115,12 +116,16 @@ def _message_body(message) -> str:
     return text
 
 
-def _parse_mbox(path: Path, source_label: str) -> list[dict]:
+def _parse_mbox(path: Path, source_label: str, limit: int | None = None) -> list[dict]:
     parser = BytesParser(policy=policy.default)
     box = mailbox.mbox(str(path), factory=lambda handle: parser.parse(handle))
     messages = []
     try:
         for ordinal, message in enumerate(box):
+            # Stop once we have enough; a Takeout mbox can be many GB and the
+            # caller only keeps `limit` messages anyway (imp-06).
+            if limit is not None and len(messages) >= limit:
+                break
             body = _message_body(message)
             if not body:
                 continue
@@ -151,7 +156,11 @@ def _parse_mbox(path: Path, source_label: str) -> list[dict]:
     return messages
 
 
-def _load_gmail_messages(import_path: Path) -> list[dict]:
+def _remaining(limit: int | None, collected: int) -> int | None:
+    return None if limit is None else max(0, limit - collected)
+
+
+def _load_gmail_messages(import_path: Path, limit: int | None = None) -> list[dict]:
     path = Path(import_path)
     if path.suffix.lower() == ".zip":
         messages: list[dict] = []
@@ -165,9 +174,16 @@ def _load_gmail_messages(import_path: Path) -> list[dict]:
                 if not mbox_infos:
                     raise ValueError("zip export does not contain an mbox file")
                 for idx, info in enumerate(mbox_infos):
+                    if limit is not None and len(messages) >= limit:
+                        break
                     extracted = tmp_root / f"{idx}-{Path(info.filename).name or 'mail.mbox'}"
-                    extracted.write_bytes(archive.read(info))
-                    messages.extend(_parse_mbox(extracted, info.filename.replace("\\", "/")))
+                    # Stream the entry to disk instead of archive.read() loading
+                    # the whole (multi-GB) mbox into memory (imp-06).
+                    with archive.open(info) as src, open(extracted, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    messages.extend(
+                        _parse_mbox(extracted, info.filename.replace("\\", "/"), limit=_remaining(limit, len(messages)))
+                    )
         return messages
     if path.is_dir():
         mbox_paths = sorted(item for item in path.rglob("*.mbox") if item.is_file())
@@ -175,10 +191,14 @@ def _load_gmail_messages(import_path: Path) -> list[dict]:
             raise ValueError("directory does not contain any .mbox files")
         messages = []
         for mbox_path in mbox_paths:
-            messages.extend(_parse_mbox(mbox_path, mbox_path.relative_to(path).as_posix()))
+            if limit is not None and len(messages) >= limit:
+                break
+            messages.extend(
+                _parse_mbox(mbox_path, mbox_path.relative_to(path).as_posix(), limit=_remaining(limit, len(messages)))
+            )
         return messages
     if path.is_file():
-        return _parse_mbox(path, path.name)
+        return _parse_mbox(path, path.name, limit=limit)
     raise ValueError("Gmail import path must be an mbox file, directory, or zip export")
 
 
@@ -241,13 +261,14 @@ def build_gmail_import_plans(
     persona = persona.strip()
     if not persona:
         return {"ok": False, "error": "persona required"}
+    load_limit = max(0, min(int(limit), 5000))
     try:
-        messages = _load_gmail_messages(Path(import_path))
+        messages = _load_gmail_messages(Path(import_path), limit=load_limit)
     except (OSError, ValueError, zipfile.BadZipFile, mailbox.Error) as exc:
         return {"ok": False, "error": f"failed to load Gmail export: {exc}"}
 
     plans = []
-    for message in messages[: max(0, min(int(limit), 5000))]:
+    for message in messages[:load_limit]:
         rendered = render_gmail_import_markdown(message)
         findings, blocking_findings = _safe_findings(rendered)
         source_hash = _hash_text(f"{message.get('source_path')}\n{message.get('source_id')}\n{message.get('body')}")

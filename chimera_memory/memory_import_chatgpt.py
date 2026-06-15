@@ -363,48 +363,61 @@ def memory_import_chatgpt_export(
             continue
         full_path = Path(result["path"])
         relative_path = result["relative_path"]
-        indexed = index_file_func(conn, persona, relative_path, full_path)
-        row = conn.execute(
-            "SELECT id FROM memory_files WHERE path = ?",
-            (str(full_path).replace("\\", "/"),),
-        ).fetchone()
-        file_id = row[0] if row else None
-        pyramid = None
-        if build_pyramid and file_id is not None:
-            pyramid = pyramid_summary_builder(
-                conn,
-                file_path=str(file_id),
-                persona=persona,
-                force=force,
-                actor=actor,
+        # Isolate per-conversation indexing: one malformed conversation must not
+        # abort the whole import and orphan the files already written (imp-05).
+        try:
+            indexed = index_file_func(conn, persona, relative_path, full_path)
+            row = conn.execute(
+                "SELECT id FROM memory_files WHERE path = ?",
+                (str(full_path).replace("\\", "/"),),
+            ).fetchone()
+            file_id = row[0] if row else None
+            pyramid = None
+            if build_pyramid and file_id is not None:
+                pyramid = pyramid_summary_builder(
+                    conn,
+                    file_path=str(file_id),
+                    persona=persona,
+                    force=force,
+                    actor=actor,
+                )
+                if pyramid.get("ok") and pyramid.get("built"):
+                    pyramid_built += 1
+            written.append(
+                {
+                    **result,
+                    "file_id": file_id,
+                    "indexed": indexed,
+                    "pyramid_built": bool(pyramid and pyramid.get("built")),
+                }
             )
-            if pyramid.get("ok") and pyramid.get("built"):
-                pyramid_built += 1
-        written.append(
-            {
-                **result,
-                "file_id": file_id,
-                "indexed": indexed,
-                "pyramid_built": bool(pyramid and pyramid.get("built")),
-            }
-        )
-        record_memory_audit_event(
-            conn,
-            "memory_import_chatgpt_conversation",
-            persona=persona,
-            target_kind="memory_file",
-            target_id=str(file_id or relative_path),
-            payload={
-                "source": "chatgpt",
-                "source_id": plan.get("source_id"),
-                "relative_path": relative_path,
-                "file_id": file_id,
-                "indexed": indexed,
-                "pyramid_built": bool(pyramid and pyramid.get("built")),
-            },
-            actor=actor,
-            commit=False,
-        )
+            record_memory_audit_event(
+                conn,
+                "memory_import_chatgpt_conversation",
+                persona=persona,
+                target_kind="memory_file",
+                target_id=str(file_id or relative_path),
+                payload={
+                    "source": "chatgpt",
+                    "source_id": plan.get("source_id"),
+                    "relative_path": relative_path,
+                    "file_id": file_id,
+                    "indexed": indexed,
+                    "pyramid_built": bool(pyramid and pyramid.get("built")),
+                },
+                actor=actor,
+                commit=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - keep importing the rest
+            failed.append(
+                {
+                    **result,
+                    "ok": False,
+                    "indexed": False,
+                    "error": f"index/pyramid failed ({type(exc).__name__})",
+                }
+            )
+            continue
     record_memory_audit_event(
         conn,
         "memory_import_chatgpt_completed",

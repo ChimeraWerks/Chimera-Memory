@@ -440,7 +440,9 @@ def test_bootstrap_skips_live_workers_when_maintenance_lease_is_held(monkeypatch
     monkeypatch.setattr(server, "_prewarm_embeddings", lambda: calls.append("prewarm"))
 
     assert server._bootstrap_startup_services() is None
-    assert calls == []
+    # Secondary process: no live workers start, but it still prewarms its own
+    # embedding model so its first semantic tool call is not a cold start (smr-05).
+    assert calls == ["prewarm"]
 
 
 def test_startup_maintenance_lease_is_exclusive(monkeypatch, tmp_path):
