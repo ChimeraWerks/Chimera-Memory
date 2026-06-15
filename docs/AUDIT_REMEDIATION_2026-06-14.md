@@ -158,6 +158,12 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
 - [x] cli-08, cli-09 — embed `--limit` rejects negatives / treats 0 as no-cap;
       stdin buffered once so `codex context/exec` can't double-read `-`.
       Tests: `test_codex_context.py` (`_read_cli_text_arg` share, neg-limit).
+- [x] codex-setup-3, codex-setup-5, codex-setup-6 — `_parse_diagnostic_timestamp`
+      truncates 7-digit fractions for the 3.10 floor; `_resolve_cli_db_path`
+      `expandvars` (fixes the review-queue doctor check for all four callers);
+      TOML removal buffers comments so a note before a kept table survives.
+      Tests: `test_codex_setup.py` (timestamp, comment-before-table).
+      (codex-setup-4 won't-fix above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

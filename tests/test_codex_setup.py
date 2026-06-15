@@ -3225,3 +3225,33 @@ def test_toml_server_removal_preserves_commented_table_after_block(tmp_path):
     assert 'model = "gpt-5"' in result  # top-level preserved
     assert "[profiles.work]" in result  # following table preserved
     assert 'approval_policy = "never"' in result  # and its keys
+
+
+def test_toml_server_removal_preserves_comment_between_block_and_table(tmp_path):
+    """A comment between the CM block and a kept table must survive (codex-setup-6)."""
+    from chimera_memory.codex_setup import _remove_codex_toml_server_blocks
+
+    text = (
+        "[mcp_servers.chimera-memory]\n"
+        'command = "chimera-memory"\n'
+        "\n"
+        "# user note kept below\n"
+        "[mcp_servers.other]\n"
+        'command = "other"\n'
+    )
+    result = _remove_codex_toml_server_blocks(text, {"chimera-memory"})
+
+    assert "chimera-memory" not in result  # CM subtree removed
+    assert "# user note kept below" in result  # comment preserved
+    assert "[mcp_servers.other]" in result  # kept table preserved
+    assert 'command = "other"' in result
+
+
+def test_parse_diagnostic_timestamp_truncates_seven_fraction_digits():
+    """.NET ToString('o') 7-digit fractions must parse on the 3.10 floor (codex-setup-3)."""
+    from chimera_memory.codex_setup import _parse_diagnostic_timestamp
+
+    parsed = _parse_diagnostic_timestamp("2026-06-14T12:34:56.1234567Z")
+
+    assert parsed is not None
+    assert parsed == datetime(2026, 6, 14, 12, 34, 56, 123456, tzinfo=timezone.utc)

@@ -890,6 +890,11 @@ def _remove_codex_toml_server_blocks(text: str, server_names: set[str]) -> str:
             skip_roots.add(f"mcp_servers.{key}")
 
     kept: list[str] = []
+    # Comment/blank lines are ambiguous until the next table header classifies
+    # them: buffer, then flush before a kept table or drop before a skipped one.
+    # Without this, comments between the CM block and the next table were dropped
+    # because skipping stayed True until the next header (codex-setup-6).
+    pending: list[str] = []
     skipping = False
     for line in text.splitlines():
         stripped = line.strip()
@@ -901,8 +906,19 @@ def _remove_codex_toml_server_blocks(text: str, server_names: set[str]) -> str:
         if header:
             table = header.group(1).strip()
             skipping = any(table == root or table.startswith(root + ".") for root in skip_roots)
+            if not skipping:
+                kept.extend(pending)
+                kept.append(line)
+            pending = []
+            continue
+        if stripped == "" or stripped.startswith("#"):
+            pending.append(line)
+            continue
         if not skipping:
+            kept.extend(pending)
             kept.append(line)
+        pending = []
+    kept.extend(pending)
     return "\n".join(kept).rstrip()
 
 
@@ -1186,6 +1202,11 @@ def _parse_diagnostic_timestamp(value: object) -> datetime | None:
         return None
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
+    # .NET ToString("o") emits 7 fractional-second digits; Python 3.10
+    # fromisoformat only accepts 3 or 6, so truncate to 6 or the listener
+    # freshness check silently no-ops on the 3.10 floor (codex-setup-3). 3.11+
+    # already tolerates the extra digits; this regex only fires when >6 present.
+    text = re.sub(r"(\.\d{6})\d+", r"\1", text)
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:

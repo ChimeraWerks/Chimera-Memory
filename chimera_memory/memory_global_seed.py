@@ -990,7 +990,11 @@ def _resolve_cli_global_root(value: str | Path | None = None) -> tuple[Path, str
 
 def _resolve_cli_db_path(value: str | Path | None = None) -> Path:
     if value:
-        return Path(value).expanduser()
+        # Expand env vars too (e.g. %USERPROFILE% on Windows), matching every
+        # other DB-path resolution; expanduser-only made env-var paths resolve to
+        # a literal non-existent path so the global review-queue doctor check
+        # falsely reported the queue unavailable (codex-setup-5).
+        return Path(os.path.expandvars(os.path.expanduser(str(value))))
     return Path.home() / ".chimera-memory" / "transcript.db"
 
 
