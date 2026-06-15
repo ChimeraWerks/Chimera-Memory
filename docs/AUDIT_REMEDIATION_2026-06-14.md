@@ -177,6 +177,14 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       expired edges by default (`current_only`); override map no longer renames a
       person whose name matches a short override key (person 'Pa' stays 'Pa');
       orphan-entity GC drops co-occurrence-only ghosts. Tests: `test_memory_entities.py`.
+- [x] gsr-06, gsr-07, gsr-08 — review guard now always scans and records
+      injection findings (block stays coupled to default-availability, so a
+      restrict/reject remediation still writes but its findings are recorded);
+      `_render_frontmatter_markdown` keeps non-ASCII frontmatter literal
+      (`allow_unicode=True`); inspect compares indexed-vs-discovered paths on a
+      normcase/normpath canonical form (Windows casing/8.3 drift). Tests:
+      `test_memory_global_{review,seed}.py`. (gsr-06 promoted from won't-fix: the
+      finding's record-only intent doesn't block remediation.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

@@ -105,6 +105,12 @@ def inspect_global_memory_corpus(
     ]
     guard_status = _plan_global_file_guard(root_files, enabled=True)
     db_counts, indexed_by_path = _global_db_counts(db)
+    # Windows stores memory_files.path unresolved while discovery resolve()s, so
+    # compare on a normcased/normpath canonical form; otherwise casing or
+    # 8.3-vs-long drift in the configured root misreports indexed files (gsr-08).
+    indexed_by_canonical = {
+        os.path.normcase(os.path.normpath(key)): value for key, value in indexed_by_path.items()
+    }
     root_indexed = 0
     root_available = 0
     root_instruction_grade = 0
@@ -115,7 +121,7 @@ def inspect_global_memory_corpus(
 
     root_relatives = {relative for relative, _path in root_files}
     for relative, path in root_files:
-        indexed_row = indexed_by_path.get(str(path).replace("\\", "/"))
+        indexed_row = indexed_by_canonical.get(os.path.normcase(os.path.normpath(str(path))))
         indexed = indexed_row is not None
         if indexed:
             root_indexed += 1
@@ -178,7 +184,7 @@ def inspect_global_memory_corpus(
         receipt["files"] = [
             {
                 "relative_path": relative,
-                "indexed": str(path).replace("\\", "/") in indexed_by_path,
+                "indexed": os.path.normcase(os.path.normpath(str(path))) in indexed_by_canonical,
                 "governance": governance_statuses[index],
             }
             for index, (relative, path) in enumerate(root_files)
@@ -2016,11 +2022,14 @@ def _split_frontmatter_preserving_body(text: str) -> dict[str, Any]:
 
 
 def _render_frontmatter_markdown(frontmatter: Mapping[str, Any], body: str) -> str:
+    # allow_unicode keeps accented/non-Latin frontmatter values literal; files are
+    # written as UTF-8, and escaping them churned content hashes and hurt
+    # readability on every stamp/review touch (gsr-07).
     dumped = yaml.dump(
         dict(frontmatter),
         Dumper=_NoAliasSafeDumper,
         sort_keys=False,
-        allow_unicode=False,
+        allow_unicode=True,
         default_flow_style=False,
     ).strip()
     return f"---\n{dumped}\n---\n{body}"

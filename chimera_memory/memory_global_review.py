@@ -1571,9 +1571,10 @@ def _review_guard(content: str, *, relative_path: str, reviewed_frontmatter: Map
         "blocked_relative_paths": [],
         "findings": [],
     }
-    if not default_available:
-        return receipt
-
+    # Always scan so injection findings are recorded even for restrict/reject
+    # remediation (which leave the file out of default retrieval); couple only the
+    # hard BLOCK to default-availability so a payload stays rejectable and a later
+    # re-confirm / root-migration re-checks the persisted findings (gsr-06).
     findings = [
         {
             "type": str(finding.get("type") or "unknown"),
@@ -1582,10 +1583,11 @@ def _review_guard(content: str, *, relative_path: str, reviewed_frontmatter: Map
         for finding in scan_for_injection(content)
     ]
     if findings:
-        receipt["blocked_count"] = 1
         receipt["finding_count"] = len(findings)
-        receipt["blocked_relative_paths"] = [relative_path]
         receipt["findings"] = [{"relative_path": relative_path, "findings": findings}]
+        if default_available:
+            receipt["blocked_count"] = 1
+            receipt["blocked_relative_paths"] = [relative_path]
     return receipt
 
 

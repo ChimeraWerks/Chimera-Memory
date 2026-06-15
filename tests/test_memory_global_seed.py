@@ -283,6 +283,25 @@ def test_global_seed_write_copies_and_indexes_global_rows(tmp_path: Path) -> Non
     ]
 
 
+def test_global_seed_preserves_unicode_frontmatter(tmp_path: Path) -> None:
+    # gsr-07: stamping must keep non-ASCII frontmatter literal (not \uXXXX),
+    # so first-touch governance stamping doesn't churn hashes / mangle text.
+    source = tmp_path / "shared"
+    target = tmp_path / "global"
+    db_path = tmp_path / "transcript.db"
+    _write(
+        source / "TEAM_KNOWLEDGE.md",
+        "---\ntype: procedural\nimportance: 7\nabout: café Renée\n---\nteam fact\n",
+    )
+
+    result = seed_global_memory_corpus(source, target_root=target, db_path=db_path, write=True)
+
+    assert result["ok"] is True
+    target_text = (target / "TEAM_KNOWLEDGE.md").read_text(encoding="utf-8")
+    assert "café Renée" in target_text
+    assert "\\u00e9" not in target_text
+
+
 def test_global_seed_write_blocks_mixed_source_without_explicit_filter_or_allow(tmp_path: Path) -> None:
     source = tmp_path / "shared"
     target = tmp_path / "global"
