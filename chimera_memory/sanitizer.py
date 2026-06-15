@@ -116,7 +116,9 @@ def scan_for_injection(content: str) -> list[dict]:
                 "type": "injection",
                 "pattern": pattern.pattern[:60],
                 "match_count": len(matches),
-                "sample": str(matches[0])[:100],
+                # Sample is surfaced in receipts/MCP output; redact secrets so a
+                # credential caught by the injection scan is not echoed raw (ghh-10).
+                "sample": (sanitize_content(str(matches[0])[:100]) or ""),
             })
 
     # Check for invisible unicode
@@ -134,7 +136,7 @@ def scan_for_injection(content: str) -> list[dict]:
         findings.append({
             "type": "html_comment",
             "match_count": len(html_comments),
-            "sample": html_comments[0][:100],
+            "sample": (sanitize_content(html_comments[0][:100]) or ""),
         })
 
     # Check for credential patterns

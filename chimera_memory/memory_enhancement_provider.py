@@ -71,7 +71,10 @@ FAILURE_CATEGORIES = {
     "unknown_error",
 }
 
-_CREDENTIAL_REF_RE = re.compile(r"^(?:oauth|secret|env):[A-Za-z_][A-Za-z0-9_.:\\-]{0,119}$")
+# Must match memory_enhancement_credentials._CREDENTIAL_REF_RE exactly (no stray
+# backslash in the class) and be applied with fullmatch, or the planner marks a
+# ref "available" that the resolver then rejects as invalid (pc-02).
+_CREDENTIAL_REF_RE = re.compile(r"^(?:oauth|secret|env):[A-Za-z_][A-Za-z0-9_.:\-]{0,119}$")
 
 
 @dataclass(frozen=True)
@@ -234,7 +237,7 @@ def _active_pooled_credential_ref(env: Mapping[str, str], provider_id: str) -> s
     except Exception:
         return ""
     ref = credential.ref.raw_ref
-    return ref if _CREDENTIAL_REF_RE.match(ref) else ""
+    return ref if _CREDENTIAL_REF_RE.fullmatch(ref) else ""
 
 
 def _oauth_store_path_from_env(env: Mapping[str, str]) -> str | None:

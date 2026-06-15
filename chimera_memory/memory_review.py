@@ -20,6 +20,11 @@ REVIEW_ACTIONS = {
 }
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards so a literal path is matched literally (ESCAPE '\\')."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _memory_governance_snapshot(row: sqlite3.Row | tuple) -> dict:
     return {
         "provenance_status": row[4],
@@ -42,7 +47,7 @@ def _find_memory_file_for_review(conn: sqlite3.Connection, file_path: str):
                fm_sensitivity_tier, fm_can_use_as_instruction,
                fm_can_use_as_evidence, fm_requires_user_confirmation
         FROM memory_files
-        WHERE path = ? OR relative_path = ? OR path LIKE ?
+        WHERE path = ? OR relative_path = ? OR path LIKE ? ESCAPE '\\'
         ORDER BY CASE
             WHEN path = ? THEN 0
             WHEN relative_path = ? THEN 1
@@ -50,7 +55,9 @@ def _find_memory_file_for_review(conn: sqlite3.Connection, file_path: str):
         END
         LIMIT 1
         """,
-        (path, path, f"%{path}%", path, path),
+        # Escape LIKE wildcards so a path containing %/_ (or a crafted value)
+        # cannot match an unintended file; exact matches still rank first.
+        (path, path, f"%{_escape_like(path)}%", path, path),
     ).fetchone()
 
 

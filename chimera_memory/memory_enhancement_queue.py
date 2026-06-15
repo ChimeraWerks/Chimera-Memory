@@ -833,6 +833,10 @@ def memory_worker_submit_result(
         return {"ok": False, "error": "enhancement job is not running", "job_id": job_id}
     if str(job.get("locked_by_worker") or "") != worker_id:
         return {"ok": False, "error": "worker does not own this job", "job_id": job_id}
+    # Validate before handing off: an unknown status would raise an uncaught
+    # ValueError deep in memory_enhancement_complete and leak as a raw error (ec-02).
+    if status not in {"succeeded", "failed", "skipped"}:
+        return {"ok": False, "error": "status must be succeeded, failed, or skipped", "job_id": job_id}
     if status == "succeeded":
         if not actual_provider.strip():
             return {"ok": False, "error": "actual_provider is required for succeeded worker result", "job_id": job_id}

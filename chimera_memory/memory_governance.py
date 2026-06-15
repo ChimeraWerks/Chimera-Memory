@@ -13,6 +13,8 @@ REVIEW_STATUSES = {
     "rejected", "stale", "merged", "superseded", "disputed",
 }
 SENSITIVITY_TIERS = {"standard", "restricted", "unknown"}
+# Provenance statuses that retire a claim from evidence use.
+_EVIDENCE_BLOCKING = {"disputed", "superseded"}
 INSTRUCTION_GRADE_PROVENANCE = {"user_confirmed", "auto_confirmed"}
 
 
@@ -70,6 +72,14 @@ def governance_from_frontmatter(fm: dict) -> dict:
     )
     if provenance not in INSTRUCTION_GRADE_PROVENANCE:
         requires_user_confirmation = 1
+
+    # A disputed/superseded *provenance* is a retired claim: it must not be
+    # usable as evidence even if the frontmatter says so, mirroring the
+    # instruction clamp above (ghh-06). Lifecycle/review blocking is handled by
+    # the retrieval filters (include_blocked), so we do not clamp on those here —
+    # the opt-in review path still needs to surface lifecycle-blocked rows.
+    retired = provenance in _EVIDENCE_BLOCKING
+    can_use_as_evidence = 0 if retired else _bool_int(fm.get("can_use_as_evidence"), True)
     return {
         "provenance_status": provenance,
         "confidence": _optional_float(fm.get("confidence")),
@@ -77,6 +87,6 @@ def governance_from_frontmatter(fm: dict) -> dict:
         "review_status": review,
         "sensitivity_tier": sensitivity,
         "can_use_as_instruction": can_use_as_instruction,
-        "can_use_as_evidence": _bool_int(fm.get("can_use_as_evidence"), True),
+        "can_use_as_evidence": can_use_as_evidence,
         "requires_user_confirmation": requires_user_confirmation,
     }

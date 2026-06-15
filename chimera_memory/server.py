@@ -894,7 +894,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             f"Embedded {count} entries using provider={runtime['provider']} "
             f"threads={runtime['threads']}/{runtime['cpu_count']} "
             f"cpu_reserve={runtime['cpu_reserve_percent']}%.\n"
-            f"Progress status file: {embedding_progress_path()}\n"
+            f"Progress status file: {_safe_reference_uri_display(embedding_progress_path())}\n"
             f"Semantic search is now available.\n"
             f"Use semantic_search(query) to find content by meaning, not just keywords."
         )

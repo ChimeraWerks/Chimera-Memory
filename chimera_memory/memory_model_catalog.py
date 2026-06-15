@@ -301,7 +301,9 @@ def _fetch_models_dev() -> Mapping[str, Any] | None:
         )
         with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+    # ValueError covers both UnicodeDecodeError (bad bytes from .decode) and
+    # JSONDecodeError; without it a non-UTF-8 response crashes the picker.
+    except (OSError, TimeoutError, urllib.error.URLError, ValueError):
         return None
     return payload if isinstance(payload, Mapping) else None
 
@@ -325,7 +327,7 @@ def _read_catalog_file(path: Path) -> tuple[dict[str, Any] | None, float]:
     try:
         mtime = path.stat().st_mtime
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):  # ValueError covers Unicode/JSON decode errors
         return None, 0.0
     if not _validate_catalog(data):
         return None, 0.0

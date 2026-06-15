@@ -512,7 +512,9 @@ def _utc_now() -> str:
 
 
 def _plan_file(persona: str, persona_root: Path, path: Path) -> dict[str, Any]:
-    content = path.read_text(encoding="utf-8")
+    # errors="replace": a single non-UTF-8 legacy memory file must not abort the
+    # whole migration plan with a UnicodeDecodeError (wcp-02).
+    content = path.read_text(encoding="utf-8", errors="replace")
     frontmatter, body = parse_frontmatter(content)
     relative_path = path.relative_to(persona_root).as_posix()
     memory_type = _clean_type(frontmatter.get("type"))

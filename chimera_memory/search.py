@@ -111,7 +111,8 @@ def _chronological(
 
 
 def _fts_search(
-    db, query, channel, limit, after, before, direction, author, include_tool_calls
+    db, query, channel, limit, after, before, direction, author, include_tool_calls,
+    entry_types=None,
 ) -> list[dict]:
     """Full-text search across transcript content."""
     # Split query into terms and build safe FTS query
@@ -120,9 +121,12 @@ def _fts_search(
     if not fts_query:
         return []
 
-    entry_types = list(CONVERSATION_TYPES)
-    if include_tool_calls:
-        entry_types.append("tool_call")
+    if entry_types is None:
+        entry_types = list(CONVERSATION_TYPES)
+        if include_tool_calls:
+            entry_types.append("tool_call")
+    else:
+        entry_types = list(entry_types)
 
     conditions = []
     params = []
@@ -413,9 +417,11 @@ def hybrid_search(
     # Over-fetch from both channels (3x limit for RRF merge)
     pool_size = limit * 3
 
-    # Channel 1: FTS5 keyword search
+    # Channel 1: FTS5 keyword search (honor the same entry_types as the vector
+    # channel; previously the FTS channel ignored the caller's filter — se-01).
     fts_results = _fts_search(
         db, query, channel, pool_size, after, before, None, None, False,
+        entry_types=entry_types,
     )
     fts_ranking = {r["id"]: rank for rank, r in enumerate(fts_results)}
 

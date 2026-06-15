@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 MCP_SURFACE_ENV = "CHIMERA_MEMORY_MCP_SURFACE"
 
@@ -65,7 +68,11 @@ def normalize_mcp_surface(value: object) -> str:
         return "persona_memory"
     if surface in {"worker", "memory_worker", "enhancement_worker"}:
         return "worker"
-    return "full"
+    # Non-empty but unrecognized (a typo): fail CLOSED to the memory-only belt
+    # instead of silently granting the full admin/legacy surface (wsm-01).
+    # Unset/blank is handled by FULL_SURFACES above and still defaults to full.
+    log.warning("Unknown MCP surface %r; falling back to persona_memory", surface)
+    return "persona_memory"
 
 
 def resolve_mcp_surface(config: Mapping[str, Any] | None, env: Mapping[str, str] | None) -> str:

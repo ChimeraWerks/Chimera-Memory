@@ -152,12 +152,16 @@ def test_worker_mcp_surface_exposes_only_worker_tools(monkeypatch, tmp_path: Pat
     }
 
 
-def test_mcp_surface_policy_normalizes_unknown_to_full() -> None:
+def test_mcp_surface_policy_fails_closed_on_unknown() -> None:
     assert normalize_mcp_surface("persona") == "persona"
     assert normalize_mcp_surface("codex-desktop") == "codex"
     assert normalize_mcp_surface("project") == "codex"
     assert normalize_mcp_surface("memory-only") == "persona_memory"
     assert normalize_mcp_surface("memory-worker") == "worker"
-    assert normalize_mcp_surface("wat") == "full"
-    assert tool_allowed("memory_import_chatgpt_export", "wat") is True
+    # Unset/blank still defaults to the full surface...
+    assert normalize_mcp_surface("") == "full"
+    assert normalize_mcp_surface(None) == "full"
+    # ...but a non-empty typo must fail CLOSED, not silently grant admin (wsm-01).
+    assert normalize_mcp_surface("wat") == "persona_memory"
+    assert tool_allowed("memory_import_chatgpt_export", "wat") is False
     assert tool_allowed("memory_import_chatgpt_export", "persona") is False

@@ -276,7 +276,7 @@ def render_twitter_import_markdown(document: dict) -> str:
         "confidence": 0.75,
         "lifecycle_status": "active",
         "review_status": "pending",
-        "sensitivity_tier": "standard",
+        "sensitivity_tier": "restricted",
         "can_use_as_instruction": False,
         "can_use_as_evidence": True,
         "requires_user_confirmation": True,
