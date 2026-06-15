@@ -80,23 +80,41 @@ This tracker records the prioritized fixes. Status: `[x]` done & tested,
 - [x] ghh-04: memory_diagnose(health) no longer writes (repair) on a read.
 - [x] hermes-002: Gemini cloudcode adapter honors the caller timeout (post+stream).
 
-## Remaining (Medium/Low) — tracked follow-up
+## Hermes setup command (parity with `codex install`) — DONE
 
-The Critical + all 16 High + ~25 Medium findings plus the full harness
-identification work are complete and tested (full suite green). The remaining
-confirmed findings are in `.claude/audit-findings.json`, grouped by theme.
+- [x] `chimera-memory hermes template|doctor|install` (new `hermes_setup.py`).
+      template prints the indexer env + paste-in MCP config block; doctor is
+      read-only (session store, parse smoke, harness resolution); install writes
+      per-persona launcher scripts under `~/.chimera-memory/hermes/` and never
+      mutates Hermes's comment-rich config.yaml. Verified on real `asa` data.
 
-Notable RISKY Mediums deferred (need new tests / careful restructure):
-- Data integrity: gsr-04/05/11 (global seed/review rollback + prune confirmation),
-  cm-ent-002 (co_occurs_with idempotency), schema-db-06 (NULL-content dedup),
-  mfr-04 (recall fingerprint dedup), schema-db-02 follow-ups.
-- Concurrency/connection hygiene: cli-07, schema-db-01 (db_split close),
-  hc-05/smr-07 (cached memory_conn cross-thread), pc-03 (per-process call cap).
-- Retrieval ranking: se-02 (_rerank discards RRF), mfr-03 (per-result commits).
-- Config/portability: codex-setup-2 (stale snake_case mcp_servers), gsr-03
-  (symlink escape), imp-05/06 (importer resource), oauth-04 (pool overwrite).
-- UX/perf taxonomy: se-06 (health 'not_built' state), smr-05/wsm-04 (prewarm),
-  ghh-* remaining redactions.
+## Medium severity — landed (batches G–J + extras)
 
-se-03 (dead `consolidate_old_entries`): left in place — unreferenced, no runtime
-impact; flagged for deliberate removal in a dedicated cleanup, not bundled here.
+- [x] cli-04, cli-07 (CLI persona-dir validation, conn-leak/busy_timeout).
+- [x] cli-02/cli-03 covered by the cli-01 top-level handler (no raw-traceback leak).
+- [x] ec-01 (worker path leak), wcp-03 (export containment), schema-db-01/10
+      (db_split close + busy_timeout), codex-setup-2 (stale snake_case mcpServers).
+- [x] wsm-04 (worker prewarm off), se-02 (RRF-dominant rerank), se-06 (not_built),
+      mfr-04 (recall fingerprint dedup), mfr-03 (batched reinforce + ISO ts).
+- [x] pc-03 (cost-cap rolling window + lock), cm-ent-002 (evidence-keyed edges),
+      gsr-11 (safe prune), gsr-03 (symlink containment), gsr-04 (truncated-queue
+      auto-promote fails closed).
+- [x] imp-05 (per-conversation import isolation), imp-06 (gmail streaming + limit),
+      smr-05 (secondary-process prewarm), schema-db-06 (NULL-content dedup),
+      hc-05/smr-07 (per-thread memory connection), cm-ent-003 (dead index migration).
+
+## Deliberately deferred (with reasons)
+
+- gsr-05 (seed rollback on index failure): a correct rollback needs
+  backup-before-overwrite (overwritten files have no backup to restore); the
+  failure is already surfaced (receipt non-OK) and self-heals on the next
+  reindex, so a partial rollback risks deleting wanted files. Needs a design pass.
+- oauth-04 (duplicate provider-login pool overwrite): genuine product decision —
+  overwrite-on-refresh vs pool-distinct-accounts vs error. Needs intent.
+- se-03 (dead `consolidate_old_entries`): unreferenced, zero runtime impact;
+  flagged for a dedicated dead-code removal, not bundled with behavior changes.
+
+The Critical + all 16 High + the large majority of Medium findings plus the full
+harness identification work and the Hermes setup command are complete and tested
+(full suite green). Remaining items are the three deferred above plus Low-severity
+polish catalogued in `.claude/audit-findings.json`.

@@ -355,7 +355,7 @@ ON memory_entity_edges(target_entity_id, relation_type);
 
 CREATE INDEX IF NOT EXISTS idx_memory_entity_edges_current
 ON memory_entity_edges(relation_type, source_entity_id)
-WHERE valid_until IS NULL;
+WHERE valid_until IS NULL OR valid_until = '';
 
 CREATE TRIGGER IF NOT EXISTS memory_entities_au_updated_at
 AFTER UPDATE OF
@@ -578,9 +578,34 @@ def init_memory_tables(conn: sqlite3.Connection):
     _check_memory_schema_prereqs(conn)
     conn.executescript(MEMORY_SCHEMA)
     _migrate_memory_files_schema(conn)
+    _migrate_entity_edge_current_index(conn)
     conn.executescript(MEMORY_POST_MIGRATION_SCHEMA)
     _migrate_memory_enhancement_jobs_schema(conn)
     conn.commit()
+
+
+def _migrate_entity_edge_current_index(conn: sqlite3.Connection) -> None:
+    """Recreate the entity-edge 'current' partial index with the right predicate.
+
+    The original predicate was `valid_until IS NULL`, but current edges store ''
+    (not NULL), so the index never matched and was dead (cm-ent-003). CREATE INDEX
+    IF NOT EXISTS cannot change an existing predicate, so drop and recreate.
+    Idempotent: a no-op once the index already carries the new predicate.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='idx_memory_entity_edges_current'"
+    ).fetchone()
+    if row is None:
+        return  # fresh DB already created it from MEMORY_SCHEMA with the new predicate
+    if "valid_until = ''" in str(row[0] or ""):
+        return  # already migrated
+    conn.execute("DROP INDEX IF EXISTS idx_memory_entity_edges_current")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_entity_edges_current "
+        "ON memory_entity_edges(relation_type, source_entity_id) "
+        "WHERE valid_until IS NULL OR valid_until = ''"
+    )
 
 
 def _check_memory_schema_prereqs(conn: sqlite3.Connection) -> None:

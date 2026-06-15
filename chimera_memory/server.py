@@ -609,6 +609,12 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
 
     # Lazy-init DB and indexer
     _state = {}
+    # Per-thread memory connection: FastMCP can dispatch sync tools on a worker
+    # thread pool (HTTP transport), and a sqlite connection may only be used on
+    # the thread that created it. A single cached connection therefore raised
+    # "created in a thread can only be used in that same thread" off the main
+    # thread; give each thread its own connection instead (hc-05/smr-07).
+    _memory_conn_local = threading.local()
 
     def _get_db():
         if "db" not in _state:
@@ -1077,15 +1083,16 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             log.warning("active harness warning: %s", warning)
 
     def _get_memory_conn():
-        """Get a connection with memory tables initialized."""
-        if "memory_conn" not in _state:
+        """Get this thread's memory connection with tables initialized."""
+        conn = getattr(_memory_conn_local, "conn", None)
+        if conn is None:
             from .memory import init_memory_tables
             db = _get_db()
             conn = db._connect()
             init_memory_tables(conn)
-            _state["memory_conn"] = conn
-        _refresh_active_harness_lease(_state["memory_conn"], _get_db())
-        return _state["memory_conn"]
+            _memory_conn_local.conn = conn
+        _refresh_active_harness_lease(conn, _get_db())
+        return conn
 
     def _ensure_memory_indexed():
         """Ensure memory files are indexed on first use, and start the live watcher.

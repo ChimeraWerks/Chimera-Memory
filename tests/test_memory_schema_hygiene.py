@@ -545,3 +545,27 @@ def test_idempotency_key_is_partial_unique_and_content_fingerprint_accepts_dupli
     assert groups[0]["content_fingerprint"] == "fingerprint-1"
     assert groups[0]["duplicate_count"] == 2
     assert [item["relative_path"] for item in groups[0]["files"]] == ["a.md", "c.md"]
+
+
+def test_entity_edge_current_index_migrates_dead_predicate() -> None:
+    """The dead `valid_until IS NULL` partial index is rebuilt to match '' (cm-ent-003)."""
+    conn = sqlite3.connect(":memory:")
+    # Simulate a legacy DB: edges table + the OLD index predicate.
+    conn.execute(
+        "CREATE TABLE memory_entity_edges ("
+        "id INTEGER PRIMARY KEY, source_entity_id INTEGER, target_entity_id INTEGER, "
+        "relation_type TEXT, valid_until TEXT)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_memory_entity_edges_current "
+        "ON memory_entity_edges(relation_type, source_entity_id) WHERE valid_until IS NULL"
+    )
+    conn.commit()
+
+    init_memory_tables(conn)
+
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='idx_memory_entity_edges_current'"
+    ).fetchone()[0]
+    assert "valid_until = ''" in sql  # rebuilt to match how current edges are stored

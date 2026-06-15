@@ -355,6 +355,19 @@ def memory_global_auto_promote(
         result["recommendations"] = _global_auto_promote_enablement_recommendations(policy_id)
         return result
 
+    # The duplicate-body guard below counts body hashes only over the returned
+    # window. If the pending queue is truncated, those counts are incomplete and a
+    # file with a duplicate outside the window could be wrongly promoted. Fail
+    # closed for write mode; surface the flag everywhere (gsr-04).
+    result["truncated"] = bool(pending.get("truncated"))
+    if write and pending.get("truncated"):
+        result["ok"] = False
+        result["error"] = (
+            "global review queue is truncated; the duplicate-body guard cannot be "
+            "computed over the full pending set. Raise --limit or promote in batches."
+        )
+        return result
+
     files = pending.get("files") if isinstance(pending.get("files"), list) else []
     target_receipts: dict[str, dict[str, Any]] = {}
     body_hash_counts: dict[str, int] = {}
