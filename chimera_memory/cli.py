@@ -320,6 +320,24 @@ def main():
     sub_codex_exec.add_argument("--json", action="store_true", help="Emit a machine-readable receipt")
     sub_codex_exec.set_defaults(force=True)
 
+    # hermes: standalone Hermes Agent transcript indexing helpers
+    sub_hermes = subparsers.add_parser("hermes", help="Hermes Agent integration helpers")
+    hermes_subparsers = sub_hermes.add_subparsers(dest="hermes_command")
+    sub_hermes_template = hermes_subparsers.add_parser("template", help="Print a safe Hermes indexer + MCP config template")
+    sub_hermes_template.add_argument("--persona", required=True, help="Hermes persona to index (required; scopes to that persona only)")
+    sub_hermes_template.add_argument("--command", dest="cm_command", default="chimera-memory", help="chimera-memory command name on PATH")
+    sub_hermes_template.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub_hermes_doctor = hermes_subparsers.add_parser("doctor", help="Check Hermes standalone indexing setup")
+    sub_hermes_doctor.add_argument("--persona", required=True, help="Hermes persona to check")
+    sub_hermes_doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub_hermes_install = hermes_subparsers.add_parser("install", help="Write per-persona Hermes indexer launcher scripts")
+    sub_hermes_install.add_argument("--persona", required=True, help="Hermes persona to index")
+    sub_hermes_install.add_argument("--persona-id", default="", help="Optional stable persona id, e.g. developer/asa")
+    sub_hermes_install.add_argument("--jsonl-dir", default="", help="Override the Hermes session directory")
+    sub_hermes_install.add_argument("--command", dest="cm_command", default="chimera-memory", help="chimera-memory command name on PATH")
+    sub_hermes_install.add_argument("--write", action="store_true", help="Actually write the launcher scripts (default is dry-run)")
+    sub_hermes_install.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
     # enhance: memory-enhancement queue and dry-run helpers
     sub_enhance = subparsers.add_parser("enhance", help="Memory enhancement sidecar helpers")
     enhance_subparsers = sub_enhance.add_subparsers(dest="enhance_command")
@@ -465,6 +483,8 @@ def main():
             _run_split_db(args)
         elif args.command == "codex":
             _run_codex(args)
+        elif args.command == "hermes":
+            _run_hermes(args)
         elif args.command == "global":
             _run_global(args)
         elif args.command == "enhance":
@@ -955,6 +975,69 @@ def _run_global(args):
 
     print("Missing global command. Try: chimera-memory global inspect", file=sys.stderr)
     sys.exit(2)
+
+
+def _run_hermes(args):
+    from .hermes_setup import (
+        inspect_hermes_setup,
+        install_hermes_indexer,
+        render_hermes_template,
+    )
+
+    command = getattr(args, "hermes_command", None)
+    if command == "template":
+        result = render_hermes_template(args.persona, command=args.cm_command)
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"# ChimeraMemory <-> Hermes setup for persona '{result['persona']}'")
+            print("\n## Index standalone Hermes sessions (run CM with this env):")
+            for key in sorted(result["indexer_env"]):
+                print(f"  {key}={result['indexer_env'][key]}")
+            print(f"\n  $ {result['backfill_command']}    # one-shot")
+            print(f"  $ {result['serve_command']}                 # watch + backfill")
+            print("\n## Let Hermes query CM memory (paste into Hermes config.yaml):\n")
+            print(result["mcp_config_block"])
+        return
+
+    if command == "doctor":
+        report = inspect_hermes_setup(args.persona)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(f"Hermes setup for persona '{report['persona']}': {'OK' if report['ok'] else 'ISSUES'}")
+            for check in report["checks"]:
+                mark = {"ok": "[ok]", "warn": "[warn]", "error": "[ERR]"}.get(check["status"], "[?]")
+                print(f"  {mark} {check['check']}: {check['detail']}")
+        if not report["ok"]:
+            sys.exit(1)
+        return
+
+    if command == "install":
+        result = install_hermes_indexer(
+            args.persona,
+            write=args.write,
+            jsonl_dir=args.jsonl_dir,
+            persona_id=args.persona_id,
+            command=args.cm_command,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            if not result.get("ok"):
+                print(f"Hermes install failed: {result.get('error', 'unknown error')}")
+                sys.exit(1)
+            verb = "Wrote" if result.get("written") else "Would write (dry-run; pass --write)"
+            print(f"{verb} Hermes indexer launchers for persona '{result['persona']}':")
+            print(f"  ~/.chimera-memory/hermes/{result['launchers']['powershell_name']}")
+            print(f"  ~/.chimera-memory/hermes/{result['launchers']['bash_name']}")
+            print("  env:")
+            for key in sorted(result["indexer_env"]):
+                print(f"    {key}={result['indexer_env'][key]}")
+        return
+
+    print("Usage: chimera-memory hermes {template|doctor|install} --persona <name>")
+    sys.exit(1)
 
 
 def _run_codex(args):
@@ -1560,8 +1643,13 @@ def _open_memory_db(db_path: str | None):
     from .server import get_default_db_path
 
     path = db_path or str(get_default_db_path())
-    conn = sqlite3.connect(path)
-    init_memory_tables(conn)
+    conn = sqlite3.connect(path, timeout=10)
+    try:
+        conn.execute("PRAGMA busy_timeout=10000")
+        init_memory_tables(conn)
+    except Exception:
+        conn.close()  # don't leak the handle if schema init fails
+        raise
     return conn
 
 
@@ -2104,9 +2192,12 @@ def _run_enhance(args):
         selected_project_id = ""
         selected_project_root = None
         selected_global_root = None
-        personas_dir = Path(args.personas_dir or os.environ.get("CHIMERA_PERSONAS_DIR", "."))
+        resolved_personas_dir = str(args.personas_dir or os.environ.get("CHIMERA_PERSONAS_DIR", "")).strip()
+        personas_dir = Path(resolved_personas_dir or ".")
         if selected_scope == "persona":
-            if not selected_persona or not str(args.personas_dir or "").strip():
+            # Validate the RESOLVED dir (including the CHIMERA_PERSONAS_DIR
+            # fallback used just above), not only the --personas-dir flag (cli-04).
+            if not selected_persona or not resolved_personas_dir:
                 result = {
                     "ok": False,
                     "error": "--persona and --personas-dir are required for persona authored memory",
