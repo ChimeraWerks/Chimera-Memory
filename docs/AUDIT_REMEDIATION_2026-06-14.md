@@ -164,6 +164,15 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       TOML removal buffers comments so a note before a kept table survives.
       Tests: `test_codex_setup.py` (timestamp, comment-before-table).
       (codex-setup-4 won't-fix above.)
+- [x] ec-03, ec-05, ec-06, ec-07, ec-08, ec-09, ec-10, ec-11 — runner no longer
+      double-completes a succeeded job on persist-failure (ec-03) and skips a
+      poison cost-cap job after `COST_CAP_MAX_DEFERRALS` (ec-11); dead Google
+      CloudCode discovery/onboarding cluster (14 fns + 2 consts, blocking sleeps)
+      removed (ec-05); worker usage ledger labels BYOK/local not always-oauth
+      (ec-06); shadow report + claim `worker_request` sanitized (ec-07/ec-08);
+      empty-provider worker budget gate resolves the configured provider (ec-09);
+      file_id-less authored enqueue dedupes on fingerprint (ec-10). Tests in
+      `test_memory_enhancement_{queue,runner}.py` (5 new + 1 updated).
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full

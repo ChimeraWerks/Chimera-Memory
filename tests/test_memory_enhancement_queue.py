@@ -337,7 +337,8 @@ def test_memory_worker_submit_result_completes_owned_job(tmp_path: Path) -> None
         FROM memory_provider_usage_events
         """
     ).fetchone()
-    assert usage == ("openai", "cli_worker", "oauth", "owner-worker", claimed["job"]["job_id"], "succeeded", 0, 0, 123)
+    # ec-06: CLI worker usage is BYOK, not user-OAuth; the ledger must reflect that.
+    assert usage == ("openai", "cli_worker", "byok", "owner-worker", claimed["job"]["job_id"], "succeeded", 0, 0, 123)
 
 
 def test_memory_worker_submit_result_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -452,6 +453,28 @@ def test_memory_worker_budget_uses_shared_provider_governor(monkeypatch) -> None
     assert budget["usage"]["minute"] == 1
 
 
+def test_memory_worker_budget_resolves_empty_provider_from_order(monkeypatch) -> None:
+    # ec-09: a worker that omits --provider must not short-circuit the governor;
+    # the gate resolves the configured provider and evaluates its real caps.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER", "openai")
+    monkeypatch.setenv("CHIMERA_MEMORY_ENHANCEMENT_PER_MINUTE_CALL_CAP", "1")
+    conn.execute(
+        """
+        INSERT INTO memory_provider_usage_events (provider, transport, worker_id, status)
+        VALUES ('openai', 'cli_worker', 'worker-1', 'succeeded')
+        """
+    )
+    conn.commit()
+
+    budget = memory_worker_budget(conn, worker_id="worker-1", provider="")
+
+    assert budget["provider"] == "openai"
+    assert budget["allowed"] is False
+    assert budget["reason"] == "per_minute_call_cap"
+
+
 def test_memory_enhancement_enqueue_authored_builds_pending_job() -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)
@@ -482,6 +505,52 @@ def test_memory_enhancement_enqueue_authored_builds_pending_job() -> None:
     events = memory_audit_query(conn, event_type="memory_enhancement_authored_enqueued", persona="asa")
     assert len(events) == 1
     assert events[0]["payload"]["job_id"] == job["job_id"]
+
+
+def test_memory_enhancement_enqueue_authored_dedupes_without_file_id() -> None:
+    # ec-10: a file_id-less authored enqueue (e.g. CLI enqueue-authored) must
+    # dedupe on the content fingerprint instead of accumulating duplicate jobs.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    kwargs = dict(
+        persona="asa",
+        memory_payload={
+            "memory_type": "procedural",
+            "lessons": [{"teaching": "Dedupe authored enqueues without a file id."}],
+        },
+        provenance={"status": "generated"},
+        source_ref="day62/authored-dedupe",
+    )
+
+    first = memory_enhancement_enqueue_authored(conn, **kwargs)
+    second = memory_enhancement_enqueue_authored(conn, **kwargs)
+
+    assert first["enqueued"] is True
+    assert second["enqueued"] is False
+    assert second["job"]["job_id"] == first["job"]["job_id"]
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM memory_enhancement_jobs WHERE file_id IS NULL AND status = 'pending'"
+    ).fetchone()[0]
+    assert pending == 1
+
+
+def test_safe_enhancement_receipt_redacts_worker_request() -> None:
+    # ec-08: a claim result carries raw wrapped content + an absolute source path;
+    # safe_enhancement_receipt must drop the body and redact the path.
+    receipt = {
+        "worker_request": {
+            "source_ref": {"path": "C:/Users/charl/secret/notes.md"},
+            "content": {"text": "raw body referencing C:/Users/charl/secret/notes.md"},
+        }
+    }
+
+    safe = safe_enhancement_receipt(receipt)
+
+    wr = safe["worker_request"]
+    assert wr["content"]["text"] == ""
+    assert wr["content"]["redacted"] is True
+    assert wr["content"]["chars"] > 0
+    assert "C:/Users/charl/secret" not in str(wr["source_ref"]["path"])
 
 
 def test_memory_enhancement_complete_authored_uses_agent_fields() -> None:

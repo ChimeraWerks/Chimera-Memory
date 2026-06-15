@@ -26,6 +26,11 @@ from .memory_enhancement_queue import (
 )
 from .memory_provider_governor import provider_governor_check, provider_usage_record
 
+# Max times a job may be re-deferred for tripping the provider cost cap before it
+# is skipped, so a deterministically-poison job can't permanently head the FIFO
+# (claim is ORDER BY created_at ASC). attempt_count is incremented at claim time.
+COST_CAP_MAX_DEFERRALS = 5
+
 
 class MemoryEnhancementClient(Protocol):
     """Client interface supplied by a host application or sidecar adapter."""
@@ -141,9 +146,47 @@ def run_memory_enhancement_provider_batch(
                     }
                 )
                 continue
-            category = "unknown_error"
+            # scar: client.invoke succeeded and we already recorded succeeded
+            # usage + completed the job as succeeded above. If that persist
+            # returned ok=False, do NOT fall through to the failure block:
+            # re-completing as failed would overwrite the succeeded row and
+            # double-charge usage. (audit ec-03)
+            failures.append(
+                {
+                    "job_id": job["job_id"],
+                    "status": "completion_persist_failed",
+                    "failure_category": "completion_persist_failed",
+                    "provider_id": plan.selected.provider_id,
+                    "model": plan.selected.model,
+                }
+            )
+            continue
         except MemoryEnhancementCostCapError as exc:
             category = classify_enhancement_failure(exc)
+            if int(job.get("attempt_count") or 0) >= COST_CAP_MAX_DEFERRALS:
+                # Poison job: it trips the cost cap on every claim (e.g. oversized
+                # content vs a low max_input). Skip it instead of re-deferring to
+                # pending forever, where it would permanently head the FIFO and
+                # starve newer jobs. (audit ec-11)
+                memory_enhancement_complete(
+                    conn,
+                    job_id=str(job["job_id"]),
+                    status="skipped",
+                    response_payload=_safe_failure_payload(category, plan, job),
+                    error="cost_cap_exhausted",
+                    actual_provider=plan.selected.provider_id,
+                    actual_model=plan.selected.model,
+                )
+                failures.append(
+                    {
+                        "job_id": job["job_id"],
+                        "status": "skipped",
+                        "failure_category": "cost_cap_exhausted",
+                        "provider_id": plan.selected.provider_id,
+                        "model": plan.selected.model,
+                    }
+                )
+                break
             conn.execute(
                 """
                 UPDATE memory_enhancement_jobs

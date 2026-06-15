@@ -12,9 +12,11 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from .memory_display import redact_local_path_references
 from .memory_enhancement_queue import memory_enhancement_enqueue
 from .memory_observability import _json_object, record_memory_audit_event
 from .memory_enhancement_provider import resolve_enhancement_provider_plan
+from .sanitizer import sanitize_content
 
 
 TRUE_VALUES = {"1", "true", "yes", "y", "on"}
@@ -26,6 +28,16 @@ MEMORY_TYPE_ALIASES = {
 
 def _split_csv(value: object) -> set[str]:
     return {item.strip().lower() for item in str(value or "").split(",") if item.strip()}
+
+
+def _safe_receipt_text(value: object) -> str:
+    # The shadow report echoes a worker-submitted error string through an MCP
+    # tool; a worker could embed a raw path/exception/provider stderr, so redact
+    # paths and secret patterns first, mirroring safe_enhancement_receipt (ec-07).
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return redact_local_path_references(sanitize_content(text) or "")
 
 
 def _is_memory_index_path(file_path: str) -> bool:
@@ -302,7 +314,7 @@ def memory_enhancement_shadow_report(
                 "relative_path": row[11] or row[4],
                 "requested_provider_present": bool(row[5]),
                 "requested_model_present": bool(row[6]),
-                "error": row[7],
+                "error": _safe_receipt_text(row[7]),
                 "attempt_count": row[9],
                 "comparison": comparison,
             }

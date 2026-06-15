@@ -33,7 +33,6 @@ from .memory_enhancement_provider import classify_enhancement_failure
 OPENAI_CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 ANTHROPIC_OAUTH_ENDPOINT = "https://api.anthropic.com/v1/messages"
 GOOGLE_CLOUDCODE_ENDPOINT = "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
-GOOGLE_CLOUDCODE_FREE_TIER_ID = "free-tier"
 
 OPENAI_CODEX_HEADERS = {
     "User-Agent": "codex_cli_rs/0.0.0 (ChimeraMemory)",
@@ -55,10 +54,6 @@ ANTHROPIC_JSON_OUTPUT_CONTRACT = (
 GOOGLE_CLOUDCODE_HEADERS = {
     "User-Agent": "hermes-agent (gemini-cli-compat)",
     "X-Goog-Api-Client": "gl-python/hermes",
-}
-GOOGLE_CLOUDCODE_DISCOVERY_HEADERS = {
-    "User-Agent": "google-api-nodejs-client/9.15.1 (gzip)",
-    "X-Goog-Api-Client": "gl-node/24.0.0",
 }
 
 
@@ -748,166 +743,6 @@ def _runtime_error_from_hermes_google_error(exc: BaseException) -> RuntimeError:
     return RuntimeError(" ".join(piece for piece in pieces if piece))
 
 
-def _google_cloudcode_project_id(
-    credential: MemoryEnhancementOAuthCredential,
-    *,
-    provider: Mapping[str, str],
-    model_client: Any,
-    opener: Callable[..., Any] | None,
-    timeout_seconds: int,
-) -> str:
-    if credential.project_id:
-        return credential.project_id
-    headers = {
-        "Authorization": f"Bearer {credential.access_token}",
-        "x-activity-request-id": str(uuid.uuid4()),
-        **_google_cloudcode_discovery_headers(provider),
-    }
-    load_response = _post_google_cloudcode_json(
-        _google_cloudcode_endpoint(provider, credential, "loadCodeAssist"),
-        _google_cloudcode_load_request(""),
-        headers,
-        opener=opener or model_client.urllib.request.urlopen,
-        timeout_seconds=timeout_seconds,
-        model_client=model_client,
-    )
-    discovered = _google_cloudcode_project_from_response(load_response)
-    if discovered:
-        return discovered
-
-    tier_id = _google_cloudcode_current_tier(load_response)
-    if tier_id:
-        raise RuntimeError("memory enhancement google project unavailable")
-
-    onboard_request = {
-        "tierId": _google_cloudcode_default_tier(load_response) or GOOGLE_CLOUDCODE_FREE_TIER_ID,
-        "metadata": _google_cloudcode_client_metadata(),
-    }
-    deadline = time.monotonic() + max(1, min(int(timeout_seconds), 30))
-    while True:
-        onboard_response = _post_google_cloudcode_json(
-            _google_cloudcode_endpoint(provider, credential, "onboardUser"),
-            onboard_request,
-            headers,
-            opener=opener or model_client.urllib.request.urlopen,
-            timeout_seconds=timeout_seconds,
-            model_client=model_client,
-        )
-        discovered = _google_cloudcode_project_from_response(onboard_response)
-        if discovered:
-            return discovered
-        operation_name = str(onboard_response.get("name") or "").strip()
-        if not operation_name or onboard_response.get("done") is True:
-            break
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(1)
-        onboard_response = _post_google_cloudcode_json(
-            _google_cloudcode_operation_endpoint(credential, operation_name),
-            {},
-            headers,
-            opener=opener or model_client.urllib.request.urlopen,
-            timeout_seconds=timeout_seconds,
-            model_client=model_client,
-        )
-        discovered = _google_cloudcode_project_from_response(onboard_response)
-        if discovered:
-            return discovered
-        if onboard_response.get("done") is True:
-            break
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(1)
-    raise RuntimeError("memory enhancement google project unavailable")
-
-
-def _post_google_cloudcode_json(
-    endpoint: str,
-    payload: Mapping[str, Any],
-    headers: Mapping[str, str],
-    *,
-    opener: Callable[..., Any],
-    timeout_seconds: int,
-    model_client: Any,
-) -> Mapping[str, Any]:
-    if not hasattr(model_client, "_validate_endpoint"):
-        return model_client._post_json(
-            endpoint,
-            payload,
-            headers,
-            opener=opener,
-            timeout_seconds=timeout_seconds,
-        )
-    safe_endpoint = model_client._validate_endpoint(endpoint)
-    request = model_client.urllib.request.Request(
-        safe_endpoint,
-        data=json.dumps(dict(payload), separators=(",", ":"), sort_keys=True).encode("utf-8"),
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            **dict(headers),
-        },
-        method="POST",
-    )
-    try:
-        with opener(request, timeout=timeout_seconds) as response:
-            raw_body = response.read()
-    except model_client.urllib.error.HTTPError as exc:
-        raise RuntimeError(_google_cloudcode_failure_category(exc, model_client)) from exc
-    except model_client.urllib.error.URLError as exc:
-        raise RuntimeError("memory enhancement provider unavailable") from exc
-    except TimeoutError as exc:
-        raise RuntimeError("memory enhancement provider timeout") from exc
-    try:
-        decoded = json.loads(raw_body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("memory enhancement provider returned invalid JSON") from exc
-    if not isinstance(decoded, dict):
-        raise RuntimeError("memory enhancement provider returned invalid JSON")
-    return decoded
-
-
-def _google_cloudcode_failure_category(exc: Any, model_client: Any) -> str:
-    category = model_client._http_failure_category(exc.code)
-    reason = _google_cloudcode_http_error_reason(exc)
-    return f"{category} ({reason})" if reason else category
-
-
-def _google_cloudcode_http_error_reason(exc: Any) -> str:
-    try:
-        raw_body = exc.read()
-    except Exception:
-        raw_body = b""
-    if not raw_body:
-        return ""
-    try:
-        payload = json.loads(raw_body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return f"google_http_{int(exc.code)}"
-    error = payload.get("error") if isinstance(payload, Mapping) else {}
-    if not isinstance(error, Mapping):
-        return f"google_http_{int(exc.code)}"
-    status = _safe_google_error_token(error.get("status"))
-    reason = ""
-    details = error.get("details") if isinstance(error.get("details"), list) else []
-    for detail in details:
-        if isinstance(detail, Mapping):
-            reason = _safe_google_error_token(detail.get("reason"))
-            if reason:
-                break
-    parts = [f"google_http_{int(exc.code)}"]
-    if status:
-        parts.append(status)
-    if reason and reason != status:
-        parts.append(reason)
-    return "_".join(parts)
-
-
-def _safe_google_error_token(value: object) -> str:
-    text = str(value or "").strip().upper()
-    return "".join(ch if ch.isalnum() else "_" for ch in text)[:80].strip("_")
-
-
 def _google_cloudcode_model_retryable(message: str) -> bool:
     text = message.lower()
     if "auth failed" in text or "rate limited" in text or "timeout" in text:
@@ -921,34 +756,6 @@ def _google_cloudcode_model_retryable(message: str) -> bool:
         or "provider rejected content" in text
         or "returned invalid json" in text
     )
-
-
-def _google_cloudcode_load_request(project_id: str) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "metadata": {
-            "duetProject": project_id,
-            **_google_cloudcode_client_metadata(),
-        }
-    }
-    if project_id:
-        payload["cloudaicompanionProject"] = project_id
-    return payload
-
-
-def _google_cloudcode_client_metadata() -> dict[str, str]:
-    return {
-        "ideType": "IDE_UNSPECIFIED",
-        "platform": "PLATFORM_UNSPECIFIED",
-        "pluginType": "GEMINI",
-    }
-
-
-def _google_cloudcode_discovery_headers(provider: Mapping[str, str]) -> dict[str, str]:
-    headers = dict(GOOGLE_CLOUDCODE_DISCOVERY_HEADERS)
-    model = str(provider.get("model") or "").strip()
-    if model:
-        headers["User-Agent"] = f"{headers['User-Agent']} model/{model}"
-    return headers
 
 
 def _google_cloudcode_endpoint(
@@ -971,58 +778,6 @@ def _google_cloudcode_base_url(credential: MemoryEnhancementOAuthCredential) -> 
     if raw.endswith("/v1internal"):
         return raw.removesuffix("/v1internal")
     return raw
-
-
-def _google_cloudcode_operation_endpoint(credential: MemoryEnhancementOAuthCredential, operation_name: str) -> str:
-    base_url = _google_cloudcode_base_url(credential)
-    return f"{base_url}/v1internal/{operation_name.lstrip('/')}"
-
-
-def _google_cloudcode_project_from_response(response: Mapping[str, Any]) -> str:
-    direct = response.get("cloudaicompanionProject")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-    if isinstance(direct, Mapping):
-        project_id = str(direct.get("id") or "").strip()
-        if project_id:
-            return project_id
-    nested = response.get("response") if isinstance(response.get("response"), Mapping) else {}
-    if isinstance(nested, Mapping):
-        nested_project = nested.get("cloudaicompanionProject")
-        if isinstance(nested_project, str) and nested_project.strip():
-            return nested_project.strip()
-        if isinstance(nested_project, Mapping):
-            project_id = str(nested_project.get("id") or "").strip()
-            if project_id:
-                return project_id
-    return ""
-
-
-def _google_cloudcode_default_tier(response: Mapping[str, Any]) -> str:
-    tiers = response.get("allowedTiers") if isinstance(response.get("allowedTiers"), list) else []
-    for tier in tiers:
-        if isinstance(tier, Mapping) and tier.get("isDefault") is True:
-            return str(tier.get("id") or "").strip()
-    return ""
-
-
-def _google_cloudcode_current_tier(response: Mapping[str, Any]) -> str:
-    current = response.get("currentTier") if isinstance(response.get("currentTier"), Mapping) else {}
-    return str(current.get("id") or "").strip() if isinstance(current, Mapping) else ""
-
-
-def _metadata_from_google_cloudcode_response(response: Mapping[str, Any], model_client: Any) -> Mapping[str, Any]:
-    text = _google_response_text(response)
-    return _model_client_parse_response(model_client, {}, text)
-
-
-def _google_response_text(response: Mapping[str, Any]) -> str:
-    payload = response.get("response") if isinstance(response.get("response"), Mapping) else response
-    candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
-    first = candidates[0] if candidates and isinstance(candidates[0], Mapping) else {}
-    content = first.get("content") if isinstance(first.get("content"), Mapping) else {}
-    parts = content.get("parts") if isinstance(content.get("parts"), list) else []
-    return "".join(str(part.get("text") or "") for part in parts if isinstance(part, Mapping))
 
 
 def _memory_model_client_module() -> Any:

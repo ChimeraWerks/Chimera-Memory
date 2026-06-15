@@ -79,6 +79,19 @@ def _diagnostic_int(mapping: dict | None, *keys: str) -> int:
     return 0
 
 
+_LOCAL_PROVIDER_IDS = {"dry_run", "ollama", "lmstudio", "openai_compatible"}
+
+
+def _worker_credential_mode(actual_provider: str) -> str:
+    provider = str(actual_provider or "").strip().lower()
+    if not provider or provider in _LOCAL_PROVIDER_IDS:
+        return "local"
+    # CLI workers run on their own credentials (BYOK); the user-OAuth path is the
+    # runner, not the worker, so the ledger must not label worker usage 'oauth'
+    # for every provider (ec-06).
+    return "byok"
+
+
 def _find_memory_file_for_enhancement(conn: sqlite3.Connection, file_path: str):
     path = file_path.replace("\\", "/").strip()
     return conn.execute(
@@ -220,6 +233,33 @@ def safe_enhancement_receipt(receipt: object) -> object:
         safe = safe_enhancement_job_receipt(safe)
     elif "path" in safe:
         safe["path"] = _safe_receipt_path(safe.get("path"))
+    if isinstance(safe.get("worker_request"), dict):
+        # A claim result carries the raw wrapped content + source path. Any
+        # non-worker display must route through here first; redact the path and
+        # drop the content body so it can't leak (ec-08; pairs with the
+        # by-design raw worker surface in ec-01).
+        wr = dict(safe["worker_request"])
+        source_ref = wr.get("source_ref") if isinstance(wr.get("source_ref"), dict) else {}
+        if source_ref:
+            source_ref = dict(source_ref)
+            source_ref["path"] = _safe_receipt_path(source_ref.get("path"))
+            wr["source_ref"] = source_ref
+        content = wr.get("content") if isinstance(wr.get("content"), dict) else {}
+        if content:
+            content = dict(content)
+            text = str(content.get("text") or "")
+            content["text"] = ""
+            content["redacted"] = bool(text)
+            content["chars"] = len(text)
+            wr["content"] = content
+        if isinstance(wr.get("request_payload"), dict):
+            wr["request_payload"] = _public_request_payload(
+                wr["request_payload"],
+                fallback_path=source_ref.get("path") if isinstance(source_ref, dict) else "",
+            )
+        if "existing_metadata" in wr:
+            wr["existing_metadata"] = {}
+        safe["worker_request"] = wr
     if "error" in safe:
         safe["error"] = _safe_receipt_text(safe.get("error"))
     return safe
@@ -360,18 +400,6 @@ def memory_enhancement_enqueue_authored(
     requested_model: str = "",
 ) -> dict:
     """Queue enrichment for a caller-authored structured memory payload."""
-    if file_id:
-        existing = conn.execute(
-            """
-            SELECT job_id FROM memory_enhancement_jobs
-            WHERE file_id = ? AND status IN ('pending', 'running')
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (file_id,),
-        ).fetchone()
-        if existing:
-            return {"ok": True, "enqueued": False, "job": _select_enhancement_job(conn, existing[0])}
     try:
         request_payload = build_authored_memory_enrichment_request(
             memory_payload=memory_payload,
@@ -382,13 +410,42 @@ def memory_enhancement_enqueue_authored(
     except ValueError as exc:
         return {"ok": False, "error": str(exc), "source_ref": source_ref}
 
-    job_id = str(uuid.uuid4())
     fingerprint = _authored_payload_fingerprint(
         {
             "memory_payload": request_payload.get("memory_payload") or {},
             "provenance": request_payload.get("provenance") or {},
         }
     )
+    if file_id:
+        existing = conn.execute(
+            """
+            SELECT job_id FROM memory_enhancement_jobs
+            WHERE file_id = ? AND status IN ('pending', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (file_id,),
+        ).fetchone()
+    else:
+        # No file_id (e.g. CLI enqueue-authored): dedupe on the content
+        # fingerprint within the same persona so repeated identical authored
+        # enqueues don't accumulate duplicate pending jobs (ec-10).
+        existing = conn.execute(
+            """
+            SELECT job_id FROM memory_enhancement_jobs
+            WHERE file_id IS NULL
+              AND persona IS ?
+              AND content_fingerprint = ?
+              AND status IN ('pending', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (request_payload.get("persona"), fingerprint),
+        ).fetchone()
+    if existing:
+        return {"ok": True, "enqueued": False, "job": _select_enhancement_job(conn, existing[0])}
+
+    job_id = str(uuid.uuid4())
     path = source_ref or str(request_payload["request_id"])
     conn.execute(
         """
@@ -868,7 +925,7 @@ def memory_worker_submit_result(
         conn,
         provider=actual_provider,
         transport="cli_worker",
-        credential_mode="oauth",
+        credential_mode=_worker_credential_mode(actual_provider),
         worker_id=worker_id,
         job_id=job_id,
         status=status,
@@ -925,12 +982,20 @@ def memory_worker_budget(
         return {"ok": False, "error": "worker_id is required"}
     if capability not in WORKER_CAPABILITIES:
         return {"ok": False, "error": f"unsupported worker capability: {capability}"}
-    from .memory_enhancement_provider import load_enhancement_budget
+    from .memory_enhancement_provider import _provider_order_for_env, load_enhancement_budget
 
     budget = load_enhancement_budget(os.environ)
+    # A worker that omits --provider would otherwise short-circuit the governor as
+    # 'local_or_missing_provider' and skip real caps; resolve the first non-dry_run
+    # provider from the configured order so the pre-claim gate evaluates the caps
+    # the runner will actually hit (ec-09).
+    effective_provider = provider
+    if not effective_provider:
+        order = _provider_order_for_env(os.environ)
+        effective_provider = next((candidate for candidate in order if candidate != "dry_run"), "")
     governor = provider_governor_check(
         conn,
-        provider=provider,
+        provider=effective_provider,
         budget=budget,
         requested_calls=1,
         transport="cli_worker",
@@ -942,7 +1007,7 @@ def memory_worker_budget(
         "reason": governor.get("reason", ""),
         "worker_id": worker_id,
         "capability": capability,
-        "provider": provider,
+        "provider": effective_provider,
         "mode": "shared_provider_governor",
         "usage": governor.get("usage", {}),
         "budget": {

@@ -7,6 +7,7 @@ from chimera_memory.memory import (
     memory_enhancement_enqueue,
 )
 from chimera_memory.memory_enhancement_runner import (
+    COST_CAP_MAX_DEFERRALS,
     StaticMemoryEnhancementClient,
     run_memory_enhancement_provider_batch,
 )
@@ -291,3 +292,66 @@ def test_provider_runner_defers_claimed_job_when_client_cost_cap_hits(tmp_path: 
     assert receipt["failures"][0]["status"] == "deferred"
     row = conn.execute("SELECT status, locked_at, error FROM memory_enhancement_jobs").fetchone()
     assert row == ("pending", None, "quota_exceeded")
+
+
+def test_provider_runner_skips_poison_cost_cap_job_after_max_deferrals(tmp_path: Path) -> None:
+    # ec-11: a job that trips the cost cap on every claim must be skipped after
+    # COST_CAP_MAX_DEFERRALS instead of permanently heading the FIFO.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_runner_memory(conn, tmp_path, "poison.md")
+    enqueued = memory_enhancement_enqueue(conn, file_path="poison.md")
+    conn.execute(
+        "UPDATE memory_enhancement_jobs SET attempt_count = ? WHERE job_id = ?",
+        (COST_CAP_MAX_DEFERRALS, enqueued["job"]["job_id"]),
+    )
+    conn.commit()
+    client = StaticMemoryEnhancementClient(
+        [MemoryEnhancementCostCapError("memory enhancement cost cap reached: 1 calls")]
+    )
+
+    receipt = run_memory_enhancement_provider_batch(
+        conn,
+        client=client,
+        env={
+            "CHIMERA_MEMORY_ENHANCEMENT_PROVIDER_ORDER": "dry_run",
+            "CHIMERA_MEMORY_ENHANCEMENT_MAX_LLM_CALLS_PER_RUN": "10",
+        },
+    )
+
+    assert receipt["failures"][0]["status"] == "skipped"
+    assert receipt["failures"][0]["failure_category"] == "cost_cap_exhausted"
+    row = conn.execute("SELECT status, error FROM memory_enhancement_jobs").fetchone()
+    assert row == ("skipped", "cost_cap_exhausted")
+
+
+def test_provider_runner_does_not_double_complete_on_persist_failure(tmp_path: Path, monkeypatch) -> None:
+    # ec-03: if completing a succeeded job returns ok=False, the runner must not
+    # fall through and re-complete it as failed (which would double-charge usage).
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    _index_runner_memory(conn, tmp_path, "persist.md")
+    memory_enhancement_enqueue(conn, file_path="persist.md")
+    client = StaticMemoryEnhancementClient(
+        [{"memory_type": "lesson", "summary": "ok", "topics": ["x"], "confidence": 0.8}]
+    )
+    monkeypatch.setattr(
+        "chimera_memory.memory_enhancement_runner.memory_enhancement_complete",
+        lambda *args, **kwargs: {"ok": False},
+    )
+
+    receipt = run_memory_enhancement_provider_batch(
+        conn,
+        client=client,
+        env={"CHIMERA_MEMORY_ENHANCEMENT_OPENAI_CREDENTIAL_REF": "oauth:openai-memory"},
+        persona="asa",
+    )
+
+    assert receipt["processed_count"] == 0
+    assert receipt["failure_count"] == 1
+    assert receipt["failures"][0]["status"] == "completion_persist_failed"
+    # Exactly one usage row (the succeeded one), no second failed row / double charge.
+    usage = conn.execute(
+        "SELECT status, COUNT(*) FROM memory_provider_usage_events GROUP BY status"
+    ).fetchall()
+    assert usage == [("succeeded", 1)]
