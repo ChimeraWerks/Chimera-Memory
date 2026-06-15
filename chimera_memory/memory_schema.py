@@ -658,24 +658,29 @@ def _migrate_memory_files_schema(conn: sqlite3.Connection) -> None:
     _ensure_memory_file_column(conn, columns, "idempotency_key", "idempotency_key TEXT")
     _ensure_memory_file_column(conn, columns, "content_fingerprint", "content_fingerprint TEXT")
     _ensure_memory_file_column(conn, columns, "updated_at", "updated_at TEXT")
-    _ensure_memory_file_column(conn, columns, "fm_provenance_status", "fm_provenance_status TEXT")
+    # Match MEMORY_SCHEMA column-level DEFAULTs on a migrated DB for the
+    # static-valued governance columns, so a future partial-insert path that omits
+    # them gets the same safe default on migrated and fresh DBs (schema-db-04).
+    # NOT fm_confidence (no schema default), fm_lifecycle_status / memory_scope
+    # (backfill is persona/type-derived, not a single constant).
+    _ensure_memory_file_column(conn, columns, "fm_provenance_status", "fm_provenance_status TEXT DEFAULT 'imported'")
     _ensure_memory_file_column(conn, columns, "fm_confidence", "fm_confidence REAL")
     _ensure_memory_file_column(conn, columns, "fm_lifecycle_status", "fm_lifecycle_status TEXT")
-    _ensure_memory_file_column(conn, columns, "fm_review_status", "fm_review_status TEXT")
-    _ensure_memory_file_column(conn, columns, "fm_sensitivity_tier", "fm_sensitivity_tier TEXT")
-    _ensure_memory_file_column(conn, columns, "fm_can_use_as_instruction", "fm_can_use_as_instruction INTEGER")
-    _ensure_memory_file_column(conn, columns, "fm_can_use_as_evidence", "fm_can_use_as_evidence INTEGER")
+    _ensure_memory_file_column(conn, columns, "fm_review_status", "fm_review_status TEXT DEFAULT 'confirmed'")
+    _ensure_memory_file_column(conn, columns, "fm_sensitivity_tier", "fm_sensitivity_tier TEXT DEFAULT 'standard'")
+    _ensure_memory_file_column(conn, columns, "fm_can_use_as_instruction", "fm_can_use_as_instruction INTEGER DEFAULT 1")
+    _ensure_memory_file_column(conn, columns, "fm_can_use_as_evidence", "fm_can_use_as_evidence INTEGER DEFAULT 1")
     _ensure_memory_file_column(
         conn,
         columns,
         "fm_requires_user_confirmation",
-        "fm_requires_user_confirmation INTEGER",
+        "fm_requires_user_confirmation INTEGER DEFAULT 0",
     )
     _ensure_memory_file_column(
         conn,
         columns,
         "fm_exclude_from_default_search",
-        "fm_exclude_from_default_search INTEGER",
+        "fm_exclude_from_default_search INTEGER DEFAULT 0",
     )
     _ensure_memory_file_column(conn, columns, "memory_scope", "memory_scope TEXT")
     _ensure_memory_file_column(conn, columns, "project_id", "project_id TEXT")

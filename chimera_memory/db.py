@@ -215,7 +215,16 @@ class TranscriptDB:
     def _connect(self) -> sqlite3.Connection:
         """Create a connection with WAL mode and safety pragmas."""
         conn = sqlite3.connect(str(self.db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
+        # Read back journal_mode: WAL silently falls back to rollback-journal on
+        # filesystems that cannot mmap the shared WAL (some network shares), which
+        # degrades multi-harness concurrency with no error (schema-db-07).
+        mode_row = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+        actual_mode = (mode_row[0] if mode_row else "") or ""
+        if actual_mode.lower() != "wal":
+            log.warning(
+                "SQLite journal_mode is %r, not 'wal'; concurrent multi-harness access may be degraded",
+                actual_mode,
+            )
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=10000")
         conn.execute("PRAGMA wal_autocheckpoint=100")
@@ -251,11 +260,14 @@ class TranscriptDB:
     def execute_with_retry(self, conn: sqlite3.Connection, sql: str, params=(),
                            max_retries: int = 3, base_delay: float = 0.5):
         """Execute SQL with exponential backoff retry on SQLITE_BUSY."""
+        max_retries = max(1, max_retries)  # range(<=0) would return None and crash callers (schema-db-09)
         for attempt in range(max_retries):
             try:
                 return conn.execute(sql, params)
             except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
+                # 'is locked' matches both 'database is locked' and the distinct
+                # 'database table is locked' SQLITE_BUSY variant (schema-db-08).
+                if "is locked" in str(e) and attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)
                     log.warning(f"DB locked, retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                     time.sleep(delay)
@@ -265,11 +277,13 @@ class TranscriptDB:
     def executemany_with_retry(self, conn: sqlite3.Connection, sql: str, params_list,
                                 max_retries: int = 3, base_delay: float = 0.5):
         """Execute many with exponential backoff retry on SQLITE_BUSY."""
+        max_retries = max(1, max_retries)  # range(<=0) would return None and crash callers (schema-db-09)
         for attempt in range(max_retries):
             try:
                 return conn.executemany(sql, params_list)
             except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
+                # 'is locked' matches the 'database table is locked' variant too (schema-db-08).
+                if "is locked" in str(e) and attempt < max_retries - 1:
                     delay = base_delay * (2 ** attempt)
                     log.warning(f"DB locked, retry {attempt + 1}/{max_retries} in {delay:.1f}s")
                     time.sleep(delay)

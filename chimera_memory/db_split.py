@@ -247,10 +247,15 @@ def split_persona_db(
             _remove_sqlite_files(target_db)
 
         target_db.parent.mkdir(parents=True, exist_ok=True)
-        TranscriptDB(target_db)
+        db = TranscriptDB(target_db)
 
         with _connect(target_db, readonly=False) as target:
             init_embedding_table(target)
+            # Drop FTS sync triggers so the bulk transcript copy below does not
+            # populate transcript_fts row-by-row; rebuild_fts re-derives the index
+            # and re-creates the triggers once at the end (mirrors db.py's
+            # bulk-import path), halving FTS work per split (schema-db-11).
+            db.disable_fts_triggers(target)
 
             if _table_exists(source, "settings"):
                 settings_cols = _common_columns(source, target, "settings")
@@ -294,7 +299,7 @@ def split_persona_db(
                     )
 
             _copy_import_log(source, target, session_ids=session_ids, jsonl_dirs=jsonl_dirs)
-            target.execute("INSERT INTO transcript_fts(transcript_fts) VALUES('rebuild')")
+            db.rebuild_fts(target)
             target.commit()
             integrity = target.execute("PRAGMA integrity_check").fetchone()[0]
 

@@ -112,3 +112,45 @@ def test_split_db_writes_persona_db_with_fts_and_embeddings(tmp_path: Path) -> N
         assert len(fts) == 1
     finally:
         conn.close()
+
+
+def test_split_db_recreates_fts_triggers(tmp_path: Path) -> None:
+    # schema-db-11: the split drops FTS triggers for the bulk copy then rebuilds;
+    # rebuild_fts must re-create the triggers so a later insert on the target DB
+    # still syncs transcript_fts.
+    source = tmp_path / "source.db"
+    _seed_source(source)
+
+    results = split_db(
+        source,
+        output_root=tmp_path / "personas",
+        personas=["sarah"],
+        persona_ids={"sarah": "researcher/sarah"},
+        dry_run=False,
+        replace=True,
+    )
+    target = Path(results[0].target_db)
+
+    conn = sqlite3.connect(target)
+    try:
+        triggers = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' "
+                "AND name IN ('transcript_ai','transcript_ad','transcript_au')"
+            ).fetchall()
+        }
+        assert triggers == {"transcript_ai", "transcript_ad", "transcript_au"}
+
+        conn.execute(
+            "INSERT INTO transcript (session_id, entry_type, timestamp, content, persona, source) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("s-new", "user_message", "2026-06-15T00:00:00Z", "freshsplitmarker", "sarah", "test"),
+        )
+        conn.commit()
+        hits = conn.execute(
+            "SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'freshsplitmarker'"
+        ).fetchall()
+        assert len(hits) == 1
+    finally:
+        conn.close()

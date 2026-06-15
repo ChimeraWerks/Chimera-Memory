@@ -110,6 +110,29 @@ def test_init_memory_tables_migrates_legacy_memory_files_schema() -> None:
     assert "memory_active_harness_leases" in _table_names(conn)
 
 
+def test_migrated_governance_columns_carry_schema_defaults() -> None:
+    # schema-db-04: a migrated DB's static-valued governance columns must carry
+    # the same column-level DEFAULT as a fresh DB, so a future partial insert
+    # gets the safe default on both. (memory_scope / fm_lifecycle_status are
+    # persona/type-derived, so they intentionally have no constant default.)
+    conn = sqlite3.connect(":memory:")
+    conn.execute(LEGACY_MEMORY_FILES_SQL)
+
+    init_memory_tables(conn)
+
+    defaults = {
+        row[1]: row[4]  # name -> dflt_value
+        for row in conn.execute("PRAGMA table_info(memory_files)").fetchall()
+    }
+    assert defaults["fm_provenance_status"] == "'imported'"
+    assert defaults["fm_review_status"] == "'confirmed'"
+    assert defaults["fm_sensitivity_tier"] == "'standard'"
+    assert defaults["fm_can_use_as_instruction"] == "1"
+    assert defaults["fm_can_use_as_evidence"] == "1"
+    assert defaults["fm_requires_user_confirmation"] == "0"
+    assert defaults["fm_exclude_from_default_search"] == "0"
+
+
 def test_index_file_writes_content_fingerprint_and_updates_timestamp(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)

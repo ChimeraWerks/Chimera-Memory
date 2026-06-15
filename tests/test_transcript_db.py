@@ -168,3 +168,30 @@ def test_ensure_fts_triggers_recovers_from_interrupted_backfill(tmp_path: Path) 
 
         # Healthy on the second call.
         assert db.ensure_fts_triggers(conn) is False
+
+
+def test_execute_with_retry_retries_database_table_is_locked(tmp_path: Path, monkeypatch) -> None:
+    # schema-db-08: the 'database table is locked' SQLITE_BUSY variant must be
+    # retried like 'database is locked', not raised immediately.
+    import sqlite3
+
+    import chimera_memory.db as db_module
+
+    monkeypatch.setattr(db_module.time, "sleep", lambda _s: None)
+    db = TranscriptDB(tmp_path / "transcript.db")
+
+    class _FlakyConn:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, sql, params=()):
+            self.calls += 1
+            if self.calls == 1:
+                raise sqlite3.OperationalError("database table is locked")
+            return "ok"
+
+    conn = _FlakyConn()
+    result = db.execute_with_retry(conn, "SELECT 1", max_retries=3)
+
+    assert result == "ok"
+    assert conn.calls == 2

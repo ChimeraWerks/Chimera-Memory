@@ -235,6 +235,15 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       instead of the network-first default. Tests: `test_memory_model_catalog.py`,
       `test_memory_enhancement_{provider,http_client,credentials}.py`.
       (pc-08 already-fixed above.)
+- [x] schema-db-04, schema-db-07, schema-db-08, schema-db-09, schema-db-11 —
+      migrated DBs add static-valued governance columns WITH the matching DEFAULT
+      (parity with fresh DBs); `_connect` reads back `journal_mode` and warns on a
+      non-WAL fallback; the retry helpers match `is locked` (covers the
+      `database table is locked` variant) and guard `max_retries<1`; `split_persona_db`
+      drops FTS triggers before the bulk copy and `rebuild_fts` re-creates them
+      (halves FTS work, no double-index). Tests: `test_memory_schema_hygiene.py`,
+      `test_transcript_db.py`, `test_db_split.py`. (schema-db-03, schema-db-10
+      already-fixed; schema-db-05 won't-fix above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full
