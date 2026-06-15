@@ -17,6 +17,11 @@ _LOCAL_PATH_FRAGMENT_RE = re.compile(
     r"file://[^\s\"'<>]+"
     r"|(?<![\w])(?:[A-Za-z]:[^\s\"'<>]+)"
     r"|(?:(?<=^)|(?<=[\s=\(\[\{]))/(?!/)[^\s\"'<>]+"
+    # UNC (\\server\share\...) and leading/relative backslash paths (.\x, ..\..\y)
+    # — the Windows path style most likely on this platform was previously not
+    # redacted, leaking through MCP-facing prose (mfr-08).
+    r"|\\\\[^\s\"'<>]+"
+    r"|(?<![\w])\.{0,2}\\[^\s\"'<>]+"
 )
 
 

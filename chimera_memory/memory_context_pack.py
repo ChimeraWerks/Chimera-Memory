@@ -498,7 +498,20 @@ def memory_context_pack(
         if cards and used_tokens + candidate_tokens > selected_budget:
             continue
         if not cards and used_tokens + candidate_tokens > selected_budget:
-            candidate["card_text"] = _clean_snippet(candidate["card_text"], max_chars=max(180, selected_budget * 3))
+            # Truncate only the evidence line and rebuild the two-line card so the
+            # `\n   ` break survives (collapsing the whole card merged header +
+            # evidence into one line). Budget is in tokens; rough_token_count uses
+            # ~4 chars/token, so convert the clamp to chars (mfr-06).
+            header, sep, evidence = candidate["card_text"].partition("\n   ")
+            if sep:
+                header_tokens = rough_token_count(header + sep)
+                evidence_token_budget = max(45, selected_budget - used_tokens - header_tokens)
+                clamped_evidence = _clean_snippet(evidence, max_chars=evidence_token_budget * 4)
+                candidate["card_text"] = f"{header}{sep}{clamped_evidence}"
+            else:
+                candidate["card_text"] = _clean_snippet(
+                    candidate["card_text"], max_chars=max(180, selected_budget * 4)
+                )
             candidate_tokens = rough_token_count(candidate["card_text"])
         used_tokens += candidate_tokens
         candidate["token_estimate"] = candidate_tokens

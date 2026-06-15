@@ -1533,7 +1533,11 @@ def memory_recall(
             "semantic_score": sim,
             "fts_score": 0.0,
             "snippet": "",
-            "match_text": "",
+            # Populate match_text from the already-selected body column so the
+            # deterministic quality gate sees body tokens for purely-semantic
+            # candidates (mirrors the FTS-rescue path) instead of near-empty
+            # tokens that lean entirely on semantic_score thresholds (mfr-07).
+            "match_text": r[12] or "",
             "memory_scope": r[10],
             "project_id": r[11],
             "content_fingerprint": r[13],

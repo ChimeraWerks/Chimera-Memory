@@ -32,6 +32,31 @@ def test_context_pack_skips_without_topic_shift_and_audits() -> None:
     assert len(events) == 1
 
 
+def test_context_pack_first_card_overflow_keeps_two_line_shape(tmp_path: Path) -> None:
+    # mfr-06: when the first card overflows the token budget, only the evidence
+    # is truncated and the two-line card shape (header + `\n   ` + evidence) is
+    # preserved, rather than collapsing the whole card onto one line.
+    conn = sqlite3.connect(":memory:")
+    init_memory_tables(conn)
+    big = tmp_path / "broker.md"
+    body = "Hermes context broker retrieves bounded memory cards before each turn. " * 12
+    _write_memory(big, ["type: procedural", "importance: 9", "about: Hermes context broker"], body)
+    assert index_file(conn, "asa", "memory/broker.md", big)
+
+    result = memory_context_pack(
+        conn,
+        current_context="Need Hermes context broker automatic memory cards now.",
+        persona="asa",
+        limit=5,
+        token_budget=120,
+        force=True,
+    )
+
+    assert result["ok"] is True
+    assert result["returned_count"] == 1
+    assert "\n   " in result["cards"][0]["card_text"]
+
+
 def test_context_pack_returns_fenced_scoped_cards_and_trace(tmp_path: Path) -> None:
     conn = sqlite3.connect(":memory:")
     init_memory_tables(conn)

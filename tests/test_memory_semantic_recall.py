@@ -296,3 +296,31 @@ def test_memory_recall_excludes_restricted_blocked_and_non_evidence_by_default(t
         "global/restricted.md",
         "global/blocked.md",
     }
+
+
+def test_quality_gate_uses_semantic_body_tokens():
+    # mfr-07: a mid-strength semantic candidate (above the strong floor, below
+    # the very-strong fallback) whose BODY carries the query terms must survive
+    # the quality gate. Before match_text was populated for semantic rows, an
+    # identical candidate with no body tokens was dropped.
+    from chimera_memory.memory_relevance import quality_filter_candidates
+
+    def _candidate(match_text: str) -> dict:
+        return {
+            "semantic_score": 0.80,
+            "fts_score": 0.0,
+            "match_text": match_text,
+            "snippet": "",
+            "about": "",
+            "tags": "",
+            "recall_source": "semantic",
+        }
+
+    terms = ["quantum", "widget"]
+    with_body, _ = quality_filter_candidates(
+        [_candidate("quantum widget calibration notes in the body")], query_terms=terms
+    )
+    without_body, _ = quality_filter_candidates([_candidate("")], query_terms=terms)
+
+    assert len(with_body) == 1
+    assert len(without_body) == 0

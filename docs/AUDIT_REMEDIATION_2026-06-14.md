@@ -208,6 +208,13 @@ fixes vs. documented won't-fix**. Fixes land in tested per-file batches with ful
       other importers); Obsidian prefers authored frontmatter dates over mtime;
       Instagram thread `source_id` hashes the full body (no 1000-char collision).
       Tests across `test_memory_import_{twitter,atom_blogger,obsidian,instagram}.py`.
+- [x] mfr-06, mfr-07, mfr-08 — context-pack first-card overflow truncates only
+      the evidence and keeps the two-line card shape (token-unit clamp); semantic
+      recall candidates carry `match_text` from the already-selected body column
+      so the quality gate sees body tokens; `redact_local_path_references` now
+      redacts UNC/relative backslash paths (the Windows style). Tests:
+      `test_memory_context_pack.py`, `test_memory_semantic_recall.py`, new
+      `test_memory_display.py`. (mfr-09, mfr-10 won't-fix above.)
 
 The Critical + all 16 High + the Medium findings plus the full harness
 identification work and the Hermes setup command are complete and tested (full
