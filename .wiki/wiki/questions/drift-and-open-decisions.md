@@ -38,6 +38,22 @@ sources:
 
 ## Resolved Decisions
 
+- Harness identification (2026-06-14): added `chimera_memory/harness.py`
+  `detect_harness()` and wired it into `server.get_default_jsonl_dir`,
+  `indexer.Indexer` parser selection, and the active-harness lease. The runtime
+  no longer silently defaults to Claude for Codex/Hermes. Precedence: explicit
+  `CHIMERA_CLIENT`/`TRANSCRIPT_JSONL_DIR` → process-injected running-harness env
+  (`CLAUDECODE`/`CODEX_SANDBOX`; install-location vars like `HERMES_HOME`/
+  `CODEX_HOME` are intentionally ignored because they persist in every shell) →
+  on-disk session-dir signature → per-file JSONL content sniff at index time →
+  Claude-Code default. Hermes writes Claude-format JSONL, so detected `hermes`
+  maps to the Claude parser; a native Hermes parser is still open. README harness
+  rows and the "first-class transcript source" claim were corrected to match.
+- Persona transcript DB resolution unified (2026-06-14): the MCP query tools, the
+  maintenance-lock path, and all five startup workers now share
+  `server._resolve_transcript_db_path()`. Previously the workers ignored persona
+  identity and split-brained indexing into the shared default DB while persona
+  queries read the per-persona DB.
 - Multi-project live watcher coverage is now covered: every configured
   `CHIMERA_MEMORY_PROJECT_ROOTS` entry is scheduled, create events under each
   root index as the matching `project:<id>`, and no-persona Codex/project mode

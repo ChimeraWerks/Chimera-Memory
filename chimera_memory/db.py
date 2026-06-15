@@ -239,8 +239,13 @@ class TranscriptDB:
         conn.execute("PRAGMA cache_size=-65536")  # 64MB cache
         try:
             yield conn
-            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
         finally:
+            # Checkpoint in finally so an exception mid-bulk-import still flushes
+            # the WAL back into the main DB instead of leaving a large pending WAL.
+            try:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except sqlite3.Error:
+                pass
             conn.close()
 
     def execute_with_retry(self, conn: sqlite3.Connection, sql: str, params=(),
@@ -556,6 +561,32 @@ class TranscriptDB:
         conn.execute("DROP TRIGGER IF EXISTS transcript_ai")
         conn.execute("DROP TRIGGER IF EXISTS transcript_ad")
         conn.execute("DROP TRIGGER IF EXISTS transcript_au")
+
+    def ensure_fts_triggers(self, conn: sqlite3.Connection) -> bool:
+        """Restore FTS triggers (and rebuild the index) if they are missing.
+
+        A bulk import commits the trigger DROP before it rebuilds. If the process
+        is hard-killed mid-import, the triggers stay dropped, so every later
+        transcript insert silently skips FTS and those rows become unsearchable.
+        A serve/watcher startup calls this to detect that state and recover by
+        rebuilding (which also re-creates the triggers). Returns True if a repair
+        was needed. Cheap when healthy: one sqlite_master lookup.
+        """
+        required = {"transcript_ai", "transcript_ad", "transcript_au"}
+        try:
+            present = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
+                    "('transcript_ai','transcript_ad','transcript_au')"
+                ).fetchall()
+            }
+        except sqlite3.Error:
+            return False
+        if required <= present:
+            return False
+        self.rebuild_fts(conn)
+        return True
 
     def rebuild_fts(self, conn: sqlite3.Connection):
         """Rebuild FTS index and re-create triggers. Call after bulk import."""

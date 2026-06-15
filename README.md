@@ -412,10 +412,32 @@ Each PA apply writes a backup, a receipt, and updates the install-state ledger .
 
 ### Transcript Layer (everything the harness wrote)
 
-Codex Desktop/CLI, Claude Code, and Hermes are first-class transcript sources.
+Codex Desktop/CLI and Claude Code are first-class transcript sources with native
+parsers. The active harness is auto-identified (see Harness Detection below), so
+Codex `~/.codex/sessions` rollouts and Claude `~/.claude/projects` logs are picked
+up and parsed correctly without per-launch `CHIMERA_CLIENT`/`TRANSCRIPT_JSONL_DIR`.
+Hermes runs inside Claude Code and writes Claude-format JSONL, so its transcripts
+are indexed via the Claude parser (a native Hermes line schema is not yet a
+separate parser); Hermes also integrates as an MCP server and memory provider.
+
 The `discord_*` tools below are legacy compatibility helpers for Discord-shaped
 transcript rows and older imports; they are not required for Codex Desktop/CLI
 operation and do not imply that a Discord runtime is active.
+
+#### Harness Detection
+
+ChimeraMemory identifies the active harness so indexing finds the right session
+directory and parser. Precedence (each step only fills what the previous left
+unset; explicit overrides always win):
+
+1. Explicit `CHIMERA_CLIENT` / `TRANSCRIPT_JSONL_DIR`.
+2. Process-injected "currently running" env signals (`CLAUDECODE` → Claude Code,
+   `CODEX_SANDBOX` → Codex). Install-location vars like `HERMES_HOME`/`CODEX_HOME`
+   are deliberately **not** used — they persist in every shell and would mislabel.
+3. On-disk session-directory signature (a Codex `~/.codex/sessions` tree).
+4. Per-file JSONL content sniffing at index time, so a Codex rollout is never
+   silently parsed as Claude (and vice-versa) even if the label is wrong.
+5. Default: Claude Code (historical behavior).
 
 | Tool | What it does |
 |------|-------------|
@@ -1090,13 +1112,13 @@ Priority: **environment variables > config file > defaults**.
 
 | Setting | Env Variable | Default |
 |---------|--------------|---------|
-| Database path | `TRANSCRIPT_DB_PATH` | `~/.chimera-memory/transcript.db` |
-| JSONL directory | `TRANSCRIPT_JSONL_DIR` | Auto-detected from CWD |
+| Database path | `TRANSCRIPT_DB_PATH` | Persona DB if a persona is set, else `~/.chimera-memory/transcript.db` |
+| JSONL directory | `TRANSCRIPT_JSONL_DIR` | Detected per harness (Claude `~/.claude/projects/<cwd>`, Codex `~/.codex/sessions`) |
 | Memory root | `MEMORY_ROOT` | Auto-detected |
 | Persona name | `TRANSCRIPT_PERSONA` | — |
 | Project memory id | `CHIMERA_MEMORY_PROJECT_ID` | Derived from project root |
 | Project memory root | `CHIMERA_MEMORY_PROJECT_ROOT` | — |
-| Client/parser | `CHIMERA_CLIENT` | Auto-detected / parser default |
+| Client/parser | `CHIMERA_CLIENT` | Detected harness (env signals → session-dir signature → JSONL content), else `claude-code` |
 | Retention (days) | `TRANSCRIPT_RETENTION_DAYS` | 90 |
 | Max DB size (MB) | `TRANSCRIPT_MAX_DB_SIZE_MB` | 1024 |
 | Embedding provider | `CHIMERA_MEMORY_EMBEDDING_PROVIDER` | `auto` |

@@ -53,7 +53,21 @@ class Indexer:
         self.db = db
         self.jsonl_dir = Path(jsonl_dir).expanduser()
         self.persona = persona
-        self.parser = get_parser(parser_format or os.environ.get("CHIMERA_CLIENT") or ".jsonl")
+        explicit_format = parser_format or os.environ.get("CHIMERA_CLIENT")
+        if explicit_format:
+            self.parser = get_parser(explicit_format)
+            self._format_forced = True
+        else:
+            # No explicit client: resolve the active harness so a Codex/Hermes
+            # launch is not silently parsed as Claude. Detection never raises.
+            try:
+                from .harness import detect_harness
+
+                detected = detect_harness().client
+            except Exception:  # pragma: no cover - detection must never break indexing
+                detected = None
+            self.parser = get_parser(detected or ".jsonl")
+            self._format_forced = False
         self.recursive = self.parser.recursive if recursive is None else recursive
         persona_root = os.environ.get("CHIMERA_PERSONA_ROOT")
         self.persona_root = self._normalize_path(persona_root) if persona_root else None
@@ -122,14 +136,18 @@ class Indexer:
             # Disable FTS triggers for bulk performance
             self.db.disable_fts_triggers(conn)
 
-            for i, path in enumerate(jsonl_files):
-                self._index_file(path, conn, is_backfill=True)
-                if progress_callback:
-                    progress_callback(i + 1, total)
-
-            # Rebuild FTS index after all imports
-            log.info("Rebuilding FTS index...")
-            self.db.rebuild_fts(conn)
+            try:
+                for i, path in enumerate(jsonl_files):
+                    self._index_file(path, conn, is_backfill=True)
+                    if progress_callback:
+                        progress_callback(i + 1, total)
+            finally:
+                # Always rebuild FTS and re-create triggers, even if a file mid
+                # batch raised. The trigger DROP above is committed by per-batch
+                # commits, so skipping the rebuild on error would leave triggers
+                # dropped and every later insert silently absent from FTS search.
+                log.info("Rebuilding FTS index...")
+                self.db.rebuild_fts(conn)
 
         log.info("Backfill complete: %d files processed", total)
 
@@ -171,11 +189,41 @@ class Indexer:
             self._index_file(path, conn, is_backfill=False)
             conn.commit()
 
+    def _parser_for_file(self, path: Path):
+        """Pick the parser for a single file, preferring its content signature.
+
+        Codex and Claude both use .jsonl, so a coarse client label can be wrong
+        (e.g. a Codex sessions dir indexed with the Claude default). Content is
+        authoritative over the label: a Codex rollout parsed as Claude yields
+        zero entries and silently advances import_log, permanently dropping that
+        session. Sniffing is bounded (a few lines) and only overrides when the
+        file's format is unambiguous and differs from the active parser.
+        """
+        try:
+            from .harness import sniff_jsonl_format
+
+            fmt = sniff_jsonl_format(path)
+        except Exception:  # pragma: no cover - sniff must never break indexing
+            fmt = None
+        if fmt and fmt != self.parser.format_name:
+            from .parser import get_parser
+
+            log.info(
+                "Parsing %s as %s by content signature (active parser is %s)",
+                path.name,
+                fmt,
+                self.parser.format_name,
+            )
+            return get_parser(fmt)
+        return self.parser
+
     def _index_file(self, path: Path, conn, is_backfill: bool = False):
         """Core file indexing logic with import log check."""
         if not self._should_index_file(path):
             log.debug("Skipping %s: session cwd does not match persona root", path)
             return
+
+        parser = self._parser_for_file(path)
 
         file_path_str = str(path.resolve())
         file_hash = get_file_hash(path)
@@ -198,7 +246,7 @@ class Indexer:
             start_offset = 0
 
         # Extract session metadata
-        session_meta = self.parser.extract_session_metadata(path)
+        session_meta = parser.extract_session_metadata(path)
         session_meta["persona"] = self.persona
         self.db.upsert_session(session_meta, conn)
 
@@ -206,7 +254,7 @@ class Indexer:
         entries = []
         final_pos = start_offset
         entries_seen = 0
-        parser_iter = self.parser.parse_file(path, start_offset=start_offset)
+        parser_iter = parser.parse_file(path, start_offset=start_offset)
         while True:
             try:
                 entry = next(parser_iter)
@@ -274,6 +322,17 @@ class Indexer:
     def start_watching(self, poll_interval: float = 30.0):
         """Start file watching with watchdog + periodic poll safety net."""
         self._stop_event.clear()
+
+        # A prior backfill that was hard-killed (SIGKILL/power loss) can leave the
+        # FTS triggers dropped; restore them before we start tailing so new rows
+        # are searchable. Cheap no-op when healthy.
+        try:
+            with self.db.connection() as conn:
+                if self.db.ensure_fts_triggers(conn):
+                    conn.commit()
+                    log.warning("FTS triggers were missing (interrupted import?); rebuilt FTS index")
+        except Exception:
+            log.exception("FTS trigger consistency check failed")
 
         # Try watchdog first
         try:

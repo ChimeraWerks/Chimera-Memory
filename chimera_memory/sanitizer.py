@@ -9,7 +9,9 @@ log = logging.getLogger(__name__)
 SECRET_PATTERNS = [
     # API keys and tokens
     (re.compile(r'sk-ant-[a-zA-Z0-9_-]{20,}'), '<REDACTED:anthropic-key>'),
-    (re.compile(r'sk-[a-zA-Z0-9]{20,}'), '<REDACTED:api-key>'),
+    # Allow '-'/'_' so modern scoped keys (sk-proj-, sk-svcacct-) are caught,
+    # not just legacy sk-<alnum> keys. Anthropic sk-ant- is handled above first.
+    (re.compile(r'sk-[a-zA-Z0-9_-]{20,}'), '<REDACTED:api-key>'),
     (re.compile(r'MTQ[a-zA-Z0-9+/=.]{20,}'), '<REDACTED:discord-token>'),
     (re.compile(r'xoxb-[a-zA-Z0-9-]+'), '<REDACTED:slack-token>'),
     (re.compile(r'ghp_[a-zA-Z0-9]{36,}'), '<REDACTED:github-pat>'),

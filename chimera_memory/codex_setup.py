@@ -877,19 +877,26 @@ def _write_codex_toml_server(path: Path, server_name: str, server: Mapping[str, 
 
 
 def _remove_codex_toml_server_blocks(text: str, server_names: set[str]) -> str:
-    skip_tables = set()
+    # Roots of the chimera-memory server subtree to remove. Prefix-matching the
+    # root also drops nested tables like `.env` (and any deeper child) without
+    # enumerating them.
+    skip_roots: set[str] = set()
     for name in server_names:
         for key in {_toml_table_key(name), name, name.replace("-", "_")}:
-            skip_tables.add(f"mcp_servers.{key}")
-            skip_tables.add(f"mcp_servers.{key}.env")
+            skip_roots.add(f"mcp_servers.{key}")
 
     kept: list[str] = []
     skipping = False
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            table = stripped.strip("[]").strip()
-            skipping = table in skip_tables
+        # Match a table header even with a trailing inline comment, e.g.
+        # `[profiles.work]  # notes`, and array-of-tables `[[...]]`. The old
+        # `endswith("]")` check missed commented headers, so skipping never reset
+        # and the entire following table was silently dropped (codex-setup-1).
+        header = re.match(r"^\[\[?\s*([^\[\]]*?)\s*\]\]?", stripped)
+        if header:
+            table = header.group(1).strip()
+            skipping = any(table == root or table.startswith(root + ".") for root in skip_roots)
         if not skipping:
             kept.append(line)
     return "\n".join(kept).rstrip()

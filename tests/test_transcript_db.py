@@ -125,3 +125,46 @@ def test_repair_session_rollups_creates_orphans_and_updates_counts(tmp_path: Pat
         "ended_at": "2026-05-19T10:00:02Z",
         "exchange_count": 1,
     }
+
+
+def test_ensure_fts_triggers_recovers_from_interrupted_backfill(tmp_path: Path) -> None:
+    """A hard-killed backfill leaves FTS triggers dropped; recovery rebuilds them."""
+    db = TranscriptDB(tmp_path / "transcript.db")
+    db.insert_entries(
+        [
+            {
+                "session_id": "s1",
+                "entry_type": "user_message",
+                "timestamp": "2026-05-19T10:00:00Z",
+                "content": "umbrella research notes",
+                "persona": "asa",
+                "source": "cli",
+            }
+        ]
+    )
+
+    with db.connection() as conn:
+        # Simulate the committed trigger-drop from a crashed bulk import, plus a
+        # row inserted while triggers were gone (absent from FTS).
+        db.disable_fts_triggers(conn)
+        conn.commit()
+        conn.execute(
+            "INSERT INTO transcript (session_id, entry_type, timestamp, content, source) "
+            "VALUES ('s2', 'user_message', '2026-05-19T11:00:00Z', 'second umbrella entry', 'cli')"
+        )
+        conn.commit()
+        missing = conn.execute(
+            "SELECT COUNT(*) FROM transcript_fts WHERE transcript_fts MATCH 'umbrella'"
+        ).fetchone()[0]
+        assert missing < 2  # the post-drop insert never reached FTS
+
+        repaired = db.ensure_fts_triggers(conn)
+        conn.commit()
+        assert repaired is True
+        found = conn.execute(
+            "SELECT COUNT(*) FROM transcript_fts WHERE transcript_fts MATCH 'umbrella'"
+        ).fetchone()[0]
+        assert found == 2  # rebuild recovered both rows
+
+        # Healthy on the second call.
+        assert db.ensure_fts_triggers(conn) is False

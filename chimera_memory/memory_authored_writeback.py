@@ -95,10 +95,15 @@ def build_authored_memory_write_plan(
     memory_payload = request["memory_payload"]
     memory_type = str(normalized.get("memory_type") or "procedural")
     memory_id = _slugify(memory_payload.get("memory_id") or normalized.get("summary") or "authored-memory")
+    # Include scope + project in the default key: it backs a UNIQUE index, so a
+    # scope-agnostic key collides when the same memory_id is authored in both
+    # global and project scope, raising IntegrityError on write and aborting a
+    # full_reindex over both files (wcp-01). Same-scope writes stay deterministic,
+    # so idempotent updates are preserved. An explicit caller key still wins.
     idempotency_key = str(
         memory_payload.get("idempotency_key")
         or payload.get("idempotency_key")
-        or f"authored-memory:{persona}:{memory_id}"
+        or f"authored-memory:{persona}:{selected_scope}:{selected_project_id or ''}:{memory_id}"
     ).strip()
     target_relative_path = _relative_path_for(memory_type, memory_id, relative_path)
     frontmatter = _frontmatter_from_payload(

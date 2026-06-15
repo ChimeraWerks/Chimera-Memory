@@ -539,7 +539,14 @@ def memory_entity_index(
     file_ids = [int(row[0]) for row in rows]
     if file_ids:
         placeholders = ",".join("?" * len(file_ids))
-        conn.execute(f"DELETE FROM memory_file_entities WHERE file_id IN ({placeholders})", file_ids)
+        # Rebuild only the frontmatter-derived links. Provider-enhancement links
+        # (source='enhancement', written by the queue) are additive sidecar data
+        # this frontmatter pass does not regenerate; deleting them here silently
+        # dropped enhancement entity graph edges on every reindex (cm-ent-001).
+        conn.execute(
+            f"DELETE FROM memory_file_entities WHERE file_id IN ({placeholders}) AND source != 'enhancement'",
+            file_ids,
+        )
 
     link_count = 0
     for file_id in file_ids:

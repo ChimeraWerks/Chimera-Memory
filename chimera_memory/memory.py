@@ -671,6 +671,22 @@ def index_file(conn: sqlite3.Connection, persona: str, relative_path: str,
     fm, body = parse_frontmatter(content)
     payload_text = memory_payload_index_text(fm)
     idempotency_key = str(fm.get("idempotency_key") or "").strip() or None
+    if idempotency_key:
+        # idempotency_key backs a UNIQUE index. If a different file already owns
+        # this key (e.g. legacy scope-agnostic authored keys colliding across
+        # scopes), writing it here raises IntegrityError and aborts the entire
+        # reindex. Degrade this row to no key + a warning instead of crashing
+        # the run (wcp-01); the owning file keeps the key.
+        conflict = conn.execute(
+            "SELECT 1 FROM memory_files WHERE idempotency_key = ? AND path != ? LIMIT 1",
+            (idempotency_key, path_str),
+        ).fetchone()
+        if conflict:
+            log.warning(
+                "idempotency_key already owned by another memory file; indexing %s without it",
+                relative_path,
+            )
+            idempotency_key = None
     tags_json = json.dumps(fm.get("tags", []))
     governance = governance_from_frontmatter(fm)
     exclude_from_default_search = _frontmatter_bool(fm.get("exclude_from_default_search"), False)
@@ -1653,7 +1669,9 @@ def memory_recall(
             "importance": item["importance"],
             "status": item["status"],
             "about": item["about"],
-            "similarity": item["similarity"],
+            # FTS-only candidates never receive a semantic score; coalesce None
+            # to 0.0 so the MCP formatter's f"{similarity:.3f}" cannot crash.
+            "similarity": float(item.get("similarity") or 0.0),
             "ranking_score": item.get("ranking_score"),
             "memory_scope": item["memory_scope"],
             "project_id": item["project_id"],

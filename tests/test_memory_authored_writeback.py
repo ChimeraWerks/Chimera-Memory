@@ -95,7 +95,7 @@ def test_build_authored_memory_write_plan_uses_nested_fixture_shape() -> None:
         "Each wire-level axis should be checked independently."
     )
     assert plan["frontmatter"]["idempotency_key"] == (
-        "authored-memory:sarah:hermes-as-acceptance-fixture-not-prior-art"
+        "authored-memory:sarah:persona::hermes-as-acceptance-fixture-not-prior-art"
     )
     assert plan["idempotency_key"] == plan["frontmatter"]["idempotency_key"]
     assert plan["request_payload"]["source_refs"][0]["kind"] == "discord-msg"
@@ -156,7 +156,7 @@ def test_memory_authored_writeback_writes_indexes_and_queues(tmp_path: Path) -> 
         (result["file_id"],),
     ).fetchone()
     assert row[1] == result["relative_path"]
-    assert row[2] == "authored-memory:sarah:hermes-as-acceptance-fixture-not-prior-art"
+    assert row[2] == "authored-memory:sarah:persona::hermes-as-acceptance-fixture-not-prior-art"
 
     job = result["enrichment_job"]["job"]
     assert job["file_id"] == result["file_id"]

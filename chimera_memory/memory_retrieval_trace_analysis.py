@@ -16,6 +16,7 @@ from .memory_enhancement_provider import (
     resolve_enhancement_provider_plan,
     safe_provider_receipt,
 )
+from .memory_display import safe_memory_relative_path_display
 from .memory_observability import (
     _json_object,
     _safe_audit_payload,
@@ -202,9 +203,12 @@ def _fetch_traces(
                 "ranking_score": item[2],
                 "returned": bool(item[3]),
                 "used": bool(item[4]),
-                "ignored_reason": item[5],
+                # ignored_reason and relative_path flow on to the analysis LLM via
+                # _safe_trace_summary; sanitize at the source so no raw path or
+                # secret-shaped reason text leaves the machine.
+                "ignored_reason": _safe_audit_payload(item[5]),
                 "persona": item[7],
-                "relative_path": item[8],
+                "relative_path": safe_memory_relative_path_display(item[8], default=""),
                 "type": item[9],
                 "metadata": _safe_item_metadata(_json_object(item[10])),
             }

@@ -22,7 +22,9 @@ _STOPWORDS = {
     "through", "use", "was", "what", "when", "where", "which", "with",
     "would", "you", "your",
 }
-_BLOCKED_LIFECYCLE = {"disputed", "rejected"}
+# Keep in sync with memory_context_pack._BLOCKED_LIFECYCLE: a 'superseded'
+# memory has been retired by a newer one and must not be surfaced as a live lead.
+_BLOCKED_LIFECYCLE = {"disputed", "rejected", "superseded"}
 
 
 def _clamp_limit(value: object, *, default: int = 5, maximum: int = 50) -> int:

@@ -188,8 +188,12 @@ def test_codex_project_mcp_memory_tools_use_project_and_global_scope(monkeypatch
     payload = json.loads(diagnose)
     assert payload["resolved"]["transcript_persona"] is None
     assert payload["resolved"]["project_id"] == "ChimeraMemory"
-    assert payload["resolved"]["project_root"] == str(paths["project"])
-    assert payload["resolved"]["global_root"] == str(paths["global"])
+    # MCP whereami output must not leak raw local paths (smr-03): path fields are
+    # collapsed to safe references, so the raw absolute path is never present.
+    assert str(paths["project"]) not in payload["resolved"]["project_root"]
+    assert "local-path:" in payload["resolved"]["project_root"]
+    assert str(paths["global"]) not in payload["resolved"]["global_root"]
+    assert "local-path:" in payload["resolved"]["global_root"]
     assert payload["provenance"]["global_root"] == {"source": "env", "key": "CHIMERA_MEMORY_GLOBAL_ROOT"}
 
     context_status = _tool_fn(mcp, "memory_diagnose")(mode="context")

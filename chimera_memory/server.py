@@ -90,27 +90,32 @@ def _mcp_instructions_for_surface(surface: object) -> str:
 
 
 def get_default_jsonl_dir() -> Path:
-    """Auto-detect the JSONL directory from CWD-based project path."""
-    home = Path.home()
-    cwd = Path.cwd().resolve()
+    """Auto-detect the JSONL directory for the active harness.
 
-    # Claude Code project dir naming: non-alnum chars become hyphens
-    import re
-    project_key = re.sub(r'[^a-zA-Z0-9]', '-', str(cwd))
-    project_dir = home / ".claude" / "projects" / project_key
+    Delegates to harness.detect_harness() so Codex (~/.codex/sessions) and Hermes
+    (Claude-format under ~/.claude/projects) resolve correctly, not just Claude
+    Code. Explicit CHIMERA_CLIENT / TRANSCRIPT_JSONL_DIR still win upstream; with
+    no signal this returns the historical Claude project dir for the cwd.
+    """
+    from .harness import claude_projects_dir_for_cwd, detect_harness
 
-    if project_dir.exists():
-        return project_dir
+    try:
+        profile = detect_harness()
+        if profile.jsonl_dir is not None:
+            return profile.jsonl_dir
+    except Exception:  # pragma: no cover - detection must never break startup
+        log.debug("harness detection failed; falling back to Claude project dir", exc_info=True)
+    return claude_projects_dir_for_cwd()
 
-    # Try case-insensitive match on Windows
-    projects_dir = home / ".claude" / "projects"
-    if projects_dir.exists():
-        for d in projects_dir.iterdir():
-            if d.is_dir() and d.name.lower() == project_key.lower():
-                return d
 
-    # Fallback: return the expected path even if it doesn't exist yet
-    return project_dir
+def _detected_harness_name() -> str:
+    """Best-effort active-harness name for diagnostics/leases. Never raises."""
+    try:
+        from .harness import detect_harness
+
+        return detect_harness().name
+    except Exception:  # pragma: no cover - diagnostics must never break startup
+        return ""
 
 
 def get_default_db_path() -> Path:
@@ -118,6 +123,39 @@ def get_default_db_path() -> Path:
     db_dir = Path.home() / ".chimera-memory"
     db_dir.mkdir(parents=True, exist_ok=True)
     return db_dir / "transcript.db"
+
+
+def _resolve_transcript_db_path(identity: object | None = None) -> str:
+    """Single source of truth for the persona-aware transcript DB path.
+
+    Precedence: explicit TRANSCRIPT_DB_PATH (non-blank) wins; else a configured
+    persona maps to its per-persona DB under ~/.chimera-memory/personas/...; else
+    the shared default DB.
+
+    Scar: the MCP query tools (_get_db) and whereami resolved this persona-aware,
+    but the startup workers and the maintenance-lock path used a bare
+    `TRANSCRIPT_DB_PATH or default` that ignored persona AND mis-handled an empty
+    env var. On a persona deployment that split-brained indexing into one DB while
+    queries read another, so recall was silently empty. All sites now share this.
+    """
+    env_db = os.environ.get("TRANSCRIPT_DB_PATH", "").strip()
+    if env_db:
+        return env_db
+    if identity is None:
+        from .identity import load_identity_from_env
+
+        identity = load_identity_from_env()
+    persona_name = getattr(identity, "persona_name", None)
+    if persona_name:
+        from .paths import persona_transcript_db_path
+
+        return str(
+            persona_transcript_db_path(
+                persona_name,
+                persona_id=getattr(identity, "persona_id", None),
+            )
+        )
+    return str(get_default_db_path())
 
 
 @dataclass
@@ -149,7 +187,7 @@ class _StartupMaintenanceLease:
 
 def _startup_maintenance_lock_path() -> Path:
     """A stable lock path for one live maintenance owner per persona DB."""
-    db_path = os.environ.get("TRANSCRIPT_DB_PATH", "").strip() or str(get_default_db_path())
+    db_path = _resolve_transcript_db_path()
     persona = (
         os.environ.get("CHIMERA_PERSONA_ID", "").strip()
         or os.environ.get("TRANSCRIPT_PERSONA", "").strip()
@@ -401,11 +439,20 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             return tools
 
         async def call_tool(self, name, arguments):
-            return await self._timed_request(
-                "tools/call",
-                f"name={name}",
-                lambda: super(ChimeraMemoryMCP, self).call_tool(name, arguments),
-            )
+            try:
+                return await self._timed_request(
+                    "tools/call",
+                    f"name={name}",
+                    lambda: super(ChimeraMemoryMCP, self).call_tool(name, arguments),
+                )
+            except Exception as exc:
+                # _timed_request already logged the full traceback server-side.
+                # FastMCP stringifies a raised error straight into the client
+                # CallToolResult, so replace the message: raw exception text can
+                # carry local paths, provider stderr, or secrets (hard-rule leak).
+                raise RuntimeError(
+                    f"Tool '{name}' failed ({type(exc).__name__}); see the ChimeraMemory server log."
+                ) from None
 
         async def list_resources(self):
             return await self._timed_request(
@@ -548,19 +595,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
     def _get_db():
         if "db" not in _state:
             from .db import TranscriptDB
-            if os.environ.get("TRANSCRIPT_DB_PATH", "").strip():
-                db_path = os.environ["TRANSCRIPT_DB_PATH"]
-            elif _identity.persona_name:
-                from .paths import persona_transcript_db_path
-
-                db_path = str(
-                    persona_transcript_db_path(
-                        _identity.persona_name,
-                        persona_id=_identity.persona_id,
-                    )
-                )
-            else:
-                db_path = str(get_default_db_path())
+            db_path = _resolve_transcript_db_path(_identity)
             _state["db"] = TranscriptDB(db_path)
         return _state["db"]
 
@@ -576,7 +611,30 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
     @server.tool()
     def memory_whereami() -> str:
         """Show resolved Chimera Memory runtime paths, identity, and provenance."""
-        return json.dumps(resolve_memory_whereami(), indent=2)
+        data = resolve_memory_whereami()
+        # resolve_memory_whereami() keeps raw absolute paths for the local CLI
+        # operator. MCP output must not leak raw local paths, so collapse the
+        # path-valued fields to safe references before returning to the client.
+        resolved = data.get("resolved")
+        if isinstance(resolved, dict):
+            for field in (
+                "db_path",
+                "jsonl_dir",
+                "persona_root",
+                "personas_dir",
+                "shared_root",
+                "global_root",
+                "project_root",
+                "persona_db_root",
+            ):
+                if resolved.get(field):
+                    resolved[field] = _safe_reference_uri_display(resolved[field])
+        provenance = data.get("provenance")
+        if isinstance(provenance, dict):
+            for entry in provenance.values():
+                if isinstance(entry, dict) and entry.get("path"):
+                    entry["path"] = _safe_reference_uri_display(entry["path"])
+        return json.dumps(data, indent=2)
 
     @server.tool()
     def discord_recall(
@@ -985,7 +1043,12 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             db_path=db.db_path,
             lease_id=_state.get("active_harness_lease_id"),
             runtime_name="chimera-memory-mcp",
-            client=str(_config.get("client") or os.environ.get("CHIMERA_CLIENT") or ""),
+            client=str(
+                _config.get("client")
+                or os.environ.get("CHIMERA_CLIENT")
+                or _detected_harness_name()
+                or ""
+            ),
             persona_root=_identity.persona_root,
             metadata={"mcp_surface": _mcp_surface},
         )
@@ -1209,7 +1272,7 @@ def create_server(host: str = "127.0.0.1", port: int = 8000):
             project_text = f":{r.get('project_id')}" if r.get("project_id") else ""
             path_text = _safe_memory_path_display(r)
             lines.append(
-                f"[{r.get('similarity', 0):.3f}] {path_text} ({r['persona']} | {scope_text}{project_text}) — "
+                f"[{float(r.get('similarity') or 0):.3f}] {path_text} ({r['persona']} | {scope_text}{project_text}) — "
                 f"{_safe_memory_prose_display(r.get('about', ''))}"
             )
         return "\n".join(lines)
@@ -3883,7 +3946,7 @@ def _start_transcript_indexer() -> object | None:
         from .indexer import Indexer
         from .config import load_config
 
-        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db_path = _resolve_transcript_db_path()
         db = TranscriptDB(db_path)
         cfg = load_config()
         jsonl_dir = cfg.get("jsonl_dir") or os.environ.get("TRANSCRIPT_JSONL_DIR") or str(get_default_jsonl_dir())
@@ -3950,7 +4013,7 @@ def _start_transcript_embedding_worker() -> dict[str, object] | None:
         from .db import TranscriptDB
         from .embeddings import count_unembedded_transcript_entries, embed_transcript_entries
 
-        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db_path = _resolve_transcript_db_path()
         db = TranscriptDB(db_path)
         with db.connection() as conn:
             pending = count_unembedded_transcript_entries(conn)
@@ -4009,7 +4072,7 @@ def _start_memory_file_indexer() -> object | None:
         from .db import TranscriptDB
         from .memory import full_reindex, start_memory_watcher
 
-        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db_path = _resolve_transcript_db_path()
         personas_dir = _memory_personas_dir()
         db = TranscriptDB(db_path)
         with db.connection() as conn:
@@ -4084,7 +4147,7 @@ def _start_cm_health_worker(worker_states: dict[str, bool] | None = None) -> dic
         from .db import TranscriptDB
         from .memory_health import record_cm_health_snapshot
 
-        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db_path = _resolve_transcript_db_path()
         db = TranscriptDB(db_path)
         with db.connection() as conn:
             snapshot = record_cm_health_snapshot(
@@ -4180,7 +4243,7 @@ def _start_memory_enhancement_worker() -> dict[str, object] | None:
     def _run_once() -> None:
         from .db import TranscriptDB
 
-        db_path = os.environ.get("TRANSCRIPT_DB_PATH", str(get_default_db_path()))
+        db_path = _resolve_transcript_db_path()
         db = TranscriptDB(db_path)
         with db.connection() as conn:
             if mode == "provider":

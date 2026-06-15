@@ -40,12 +40,23 @@ def _slugify(value: str, fallback: str = "chatgpt-conversation") -> str:
     return (text or fallback)[:72].strip("-") or fallback
 
 
+def _as_float(value: object) -> float:
+    """Best-effort float; 0.0 for non-numeric values (e.g. ISO-string create_time)."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _iso_from_timestamp(value: object, fallback: str | None = None) -> str:
     try:
-        parsed = float(value)
-    except (TypeError, ValueError):
+        parsed = float(value)  # type: ignore[arg-type]
+        # fromtimestamp must be inside the guard: out-of-range epochs raise
+        # OverflowError/OSError (and ValueError on some platforms), which would
+        # otherwise abort the entire import over one malformed conversation.
+        return datetime.fromtimestamp(parsed, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    except (TypeError, ValueError, OverflowError, OSError):
         return fallback or _utc_now()
-    return datetime.fromtimestamp(parsed, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _safe_findings(content: str) -> tuple[list[dict], list[dict]]:
@@ -122,7 +133,7 @@ def _flatten_messages(conversation: dict) -> list[dict]:
                     "content": text,
                 }
             )
-    messages.sort(key=lambda item: (float(item.get("timestamp") or 0), item.get("role") or ""))
+    messages.sort(key=lambda item: (_as_float(item.get("timestamp")), item.get("role") or ""))
     return messages
 
 

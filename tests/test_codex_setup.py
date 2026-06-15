@@ -3200,3 +3200,28 @@ def test_codex_install_cli_provider_reuse_json(tmp_path: Path) -> None:
     assert receipt["provider_auth"]["status"] == "imported"
     assert "TEST_ONLY_OPENAI_ACCESS" not in proc.stdout
     assert "TEST_ONLY_OPENAI_REFRESH" not in proc.stdout
+
+
+def test_toml_server_removal_preserves_commented_table_after_block(tmp_path):
+    """A commented table header after the CM block must not be swallowed (codex-setup-1)."""
+    from chimera_memory.codex_setup import _remove_codex_toml_server_blocks
+
+    text = (
+        'model = "gpt-5"\n'
+        "\n"
+        "[mcp_servers.chimera-memory]\n"
+        'command = "chimera-memory"\n'
+        "\n"
+        "[mcp_servers.chimera-memory.env]\n"
+        'TRANSCRIPT_PERSONA = "asa"\n'
+        "\n"
+        "[profiles.work]  # work profile (inline comment)\n"
+        'approval_policy = "never"\n'
+    )
+    result = _remove_codex_toml_server_blocks(text, {"chimera-memory"})
+
+    assert "chimera-memory" not in result  # CM subtree removed
+    assert "TRANSCRIPT_PERSONA" not in result
+    assert 'model = "gpt-5"' in result  # top-level preserved
+    assert "[profiles.work]" in result  # following table preserved
+    assert 'approval_policy = "never"' in result  # and its keys

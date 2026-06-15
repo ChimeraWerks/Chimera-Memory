@@ -548,10 +548,27 @@ class MemoryEnhancementOAuthStore:
                 return credential
             if not credential.refresh_token:
                 raise MemoryEnhancementCredentialResolutionError("memory enhancement oauth refresh token unavailable")
-            refreshed = (refresher or refresh_memory_enhancement_oauth_credential)(credential)
-            if refreshed.name != credential.name or refreshed.provider_id != credential.provider_id:
-                raise ProtocolValidationError("memory enhancement oauth refresh returned mismatched credential")
-            current = _get_pooled_credential_from_store_payload(payload, credential.name, provider_id=credential.provider_id)
+
+        # Run the network token refresh OUTSIDE the store lock. The token
+        # endpoint can take tens of seconds; holding the exclusive file lock
+        # across it blocks every other reader past the lock timeout (oauth-01).
+        refreshed = (refresher or refresh_memory_enhancement_oauth_credential)(credential)
+        if refreshed.name != credential.name or refreshed.provider_id != credential.provider_id:
+            raise ProtocolValidationError("memory enhancement oauth refresh returned mismatched credential")
+
+        # Re-acquire to persist the rotated token. Re-read first: if another
+        # process refreshed while we were on the network, keep its still-valid
+        # stored token instead of clobbering it (compare-and-set).
+        with _store_lock(self.path):
+            payload = self._read_unlocked()
+            stored = _get_credential_from_store_payload(
+                payload, credential.name, provider_id=credential.provider_id
+            )
+            if not force_refresh and not stored.access_token_expiring(skew_ms=refresh_skew_ms):
+                return stored
+            current = _get_pooled_credential_from_store_payload(
+                payload, credential.name, provider_id=credential.provider_id
+            )
             _upsert_pooled_credential_in_payload(
                 payload,
                 MemoryEnhancementPooledCredential.from_oauth(refreshed, priority=current.priority),

@@ -446,31 +446,42 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "serve":
-        from .server import main as serve_main
-        serve_main(
-            transport=args.transport,
-            host=args.host,
-            port=args.port,
-            mount_path=args.mount_path or None,
+    try:
+        if args.command == "serve":
+            from .server import main as serve_main
+            serve_main(
+                transport=args.transport,
+                host=args.host,
+                port=args.port,
+                mount_path=args.mount_path or None,
+            )
+        elif args.command == "backfill":
+            _run_backfill(args)
+        elif args.command == "stats":
+            _run_stats(args)
+        elif args.command == "embed":
+            _run_embed(args)
+        elif args.command == "split-db":
+            _run_split_db(args)
+        elif args.command == "codex":
+            _run_codex(args)
+        elif args.command == "global":
+            _run_global(args)
+        elif args.command == "enhance":
+            _run_enhance(args)
+        else:
+            parser.print_help()
+            sys.exit(1)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except Exception as exc:  # top-level guard: never dump a raw traceback/paths
+        if os.environ.get("CHIMERA_MEMORY_DEBUG", "").strip().lower() in ("1", "true", "yes", "on"):
+            raise
+        sys.stderr.write(
+            f"chimera-memory: '{getattr(args, 'command', None) or 'command'}' failed "
+            f"({type(exc).__name__}). Re-run with CHIMERA_MEMORY_DEBUG=1 for the full traceback.\n"
         )
-    elif args.command == "backfill":
-        _run_backfill(args)
-    elif args.command == "stats":
-        _run_stats(args)
-    elif args.command == "embed":
-        _run_embed(args)
-    elif args.command == "split-db":
-        _run_split_db(args)
-    elif args.command == "codex":
-        _run_codex(args)
-    elif args.command == "global":
-        _run_global(args)
-    elif args.command == "enhance":
-        _run_enhance(args)
-    else:
-        parser.print_help()
-        sys.exit(1)
+        sys.exit(2)
 
 
 def _run_backfill(args):

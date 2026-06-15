@@ -1197,3 +1197,10 @@
   and wiki drift notes to reflect trusted automated promotion, Spark/OAuth
   sidecar operation, existing GitHub Actions, existing scripts, streamable HTTP,
   and current Codex/Hermes support.
+
+## 2026-06-14
+
+- Added harness auto-identification (`chimera_memory/harness.py` + wiring in server/indexer/lease) so Codex/Hermes are no longer silently parsed as Claude; per-file JSONL content sniffing prevents silent zero-entry imports. Tests: `tests/test_harness.py`.
+- Fixed the persona transcript-DB split-brain: unified `server._resolve_transcript_db_path()` across `_get_db`, the maintenance lock, and the 5 startup workers. Tests: `tests/test_db_resolution.py`.
+- Landed the audit High-severity set (frontmatter coercion, OpenAI key regex, live-retrieval superseded filter, recall similarity guard, ChatGPT importer crash guards, CLI top-level handler, MCP error/path-leak sanitizers, trace-analysis egress redaction, entity-link preservation, scope-aware idempotency key, OAuth lock-across-network, FTS staleness recovery, Codex TOML installer data loss).
+- Updated `.wiki` drift page and README harness rows to match the new detection behavior.
