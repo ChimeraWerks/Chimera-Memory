@@ -164,3 +164,7 @@ modules.
 ## Final Response
 
 Include what changed, key files, assumptions, risks, and useful next steps.
+
+## Ports
+
+Dev ports & Caddy hosts: see CHIMERA-PORTS.md.
